@@ -1,0 +1,7 @@
+bin/
+obj/
+*.user
+.vs/
+storage-dev/
+appsettings.*.local.json
+node_modules/

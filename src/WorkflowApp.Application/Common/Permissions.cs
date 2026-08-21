@@ -1,0 +1,85 @@
+namespace WorkflowApp.Application.Common;
+
+/// <summary>
+/// The complete catalog of permission keys. Roles are bundles of these. Server-side checks
+/// reference these constants so there is one authoritative list.
+/// </summary>
+public static class Permissions
+{
+    // Requests
+    public const string RequestCreate = "Request.Create";
+    public const string RequestViewOwn = "Request.ViewOwn";
+    public const string RequestViewAll = "Request.ViewAll";
+
+    // Triage
+    public const string TaskReview = "Task.Review";
+    public const string TaskApprove = "Task.Approve";
+
+    // Assignment
+    public const string TaskAssign = "Task.Assign";
+
+    // Execution
+    public const string TaskWork = "Task.Work";
+
+    // QC & closure
+    public const string TaskQCReview = "Task.QCReview";
+    public const string TaskClose = "Task.Close";
+    public const string TaskReopen = "Task.Reopen";
+    public const string TaskCancel = "Task.Cancel";
+    public const string TaskDefer = "Task.Defer";
+    public const string TaskOverride = "Task.Override";
+
+    // Workforce / management
+    public const string WorkforceViewAll = "Workforce.ViewAll";
+    public const string DashboardManagement = "Dashboard.Management";
+    public const string ReportsView = "Reports.View";
+
+    // Admin
+    public const string AdminManageUsers = "Admin.ManageUsers";
+    public const string AdminManageRoles = "Admin.ManageRoles";
+    public const string AdminManageConfig = "Admin.ManageConfig";
+    public const string AdminViewAudit = "Admin.ViewAudit";
+
+    public static readonly string[] All =
+    {
+        RequestCreate, RequestViewOwn, RequestViewAll,
+        TaskReview, TaskApprove, TaskAssign, TaskWork,
+        TaskQCReview, TaskClose, TaskReopen, TaskCancel, TaskDefer, TaskOverride,
+        WorkforceViewAll, DashboardManagement, ReportsView,
+        AdminManageUsers, AdminManageRoles, AdminManageConfig, AdminViewAudit
+    };
+}
+
+/// <summary>Default seeded roles and the permissions they grant. Used by the Phase 1 seeder.</summary>
+public static class DefaultRoles
+{
+    public const string Administrator = "Administrator";
+    public const string Requester = "Requester";
+    public const string Reviewer = "Reviewer";
+    public const string AssignmentManager = "AssignmentManager";
+    public const string Worker = "Worker";
+    public const string QC = "QC";
+    public const string Management = "Management";
+
+    public static readonly IReadOnlyDictionary<string, string[]> Map = new Dictionary<string, string[]>
+    {
+        [Administrator] = Permissions.All,
+        [Requester] = new[] { Permissions.RequestCreate, Permissions.RequestViewOwn },
+        [Reviewer] = new[]
+        {
+            Permissions.RequestViewAll, Permissions.TaskReview, Permissions.TaskApprove, Permissions.TaskDefer
+        },
+        [AssignmentManager] = new[]
+        {
+            Permissions.RequestViewAll, Permissions.TaskAssign, Permissions.WorkforceViewAll,
+            Permissions.DashboardManagement
+        },
+        [Worker] = new[] { Permissions.TaskWork },
+        [QC] = new[] { Permissions.TaskQCReview, Permissions.TaskClose },
+        [Management] = new[]
+        {
+            Permissions.RequestViewAll, Permissions.WorkforceViewAll,
+            Permissions.DashboardManagement, Permissions.ReportsView
+        },
+    };
+}
