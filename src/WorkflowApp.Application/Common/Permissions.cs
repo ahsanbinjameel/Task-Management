@@ -31,6 +31,19 @@ public static class Permissions
 
     // Workforce / management
     public const string WorkforceViewAll = "Workforce.ViewAll";
+
+    /// <summary>Act on someone else's shift — force-end an abandoned one, correct a state.</summary>
+    public const string WorkforceManageOthers = "Workforce.ManageOthers";
+
+    /// <summary>
+    /// This user's attendance is tracked: they start and end shifts and set their availability.
+    /// Held by people who execute tasks. Reviewers, coordinators, requesters and management use the
+    /// system without their hours being measured, so they never open a shift.
+    ///
+    /// Deliberately its own permission rather than a side effect of <see cref="TaskWork"/> — who is
+    /// on the clock is an operational decision, changeable in the role editor without a deploy.
+    /// </summary>
+    public const string WorkforceTrackShift = "Workforce.TrackShift";
     public const string DashboardManagement = "Dashboard.Management";
     public const string ReportsView = "Reports.View";
 
@@ -45,7 +58,7 @@ public static class Permissions
         RequestCreate, RequestViewOwn, RequestViewAll,
         TaskReview, TaskApprove, TaskAssign, TaskWork,
         TaskQCReview, TaskClose, TaskReopen, TaskCancel, TaskDefer, TaskOverride,
-        WorkforceViewAll, DashboardManagement, ReportsView,
+        WorkforceViewAll, WorkforceManageOthers, WorkforceTrackShift, DashboardManagement, ReportsView,
         AdminManageUsers, AdminManageRoles, AdminManageConfig, AdminViewAudit
     };
 }
@@ -72,9 +85,10 @@ public static class DefaultRoles
         [AssignmentManager] = new[]
         {
             Permissions.RequestViewAll, Permissions.TaskAssign, Permissions.WorkforceViewAll,
-            Permissions.DashboardManagement
+            Permissions.WorkforceManageOthers, Permissions.DashboardManagement
         },
-        [Worker] = new[] { Permissions.TaskWork },
+        // Workers are the only default role on the clock — see Permissions.WorkforceTrackShift.
+        [Worker] = new[] { Permissions.TaskWork, Permissions.WorkforceTrackShift },
         [QC] = new[] { Permissions.TaskQCReview, Permissions.TaskClose },
         [Management] = new[]
         {

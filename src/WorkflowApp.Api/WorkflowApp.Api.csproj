@@ -3,6 +3,9 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Targets net8.0 (the IIS hosting bundle on the server provides it). Roll-forward only
+         matters on dev machines that have a newer shared runtime and no 8.x installed. -->
+    <RollForward>Major</RollForward>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.8" />

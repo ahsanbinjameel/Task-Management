@@ -22,6 +22,15 @@ public class ShiftSession : BaseEntity
     /// <summary>Set true when a shift is closed by cleanup rather than an explicit End Shift.</summary>
     public bool EndedImproperly { get; set; }
 
+    /// <summary>
+    /// Who closed the shift. Null when the employee ended it themselves; set when a supervisor
+    /// force-ended it. Automatic cleanup leaves it null and sets <see cref="EndedImproperly"/>.
+    /// </summary>
+    public long? EndedByUserId { get; set; }
+
+    /// <summary>Free-text note captured at close — mandatory when a supervisor force-ends a shift.</summary>
+    public string? EndNote { get; set; }
+
     public ICollection<ActivityEvent> Events { get; set; } = new List<ActivityEvent>();
 }
 

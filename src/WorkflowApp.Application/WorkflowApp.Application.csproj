@@ -5,6 +5,14 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Abstractions only: IWorkflowDbContext exposes DbSet<T> so use-case services stay
+         persistence-ignorant of the provider. The SQL Server provider lives in Infrastructure. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.8" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\WorkflowApp.Domain\WorkflowApp.Domain.csproj" />
   </ItemGroup>
 </Project>

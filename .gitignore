@@ -5,3 +5,5 @@ obj/
 storage-dev/
 appsettings.*.local.json
 node_modules/
+workflowapp-demo.db*
+storage-demo/

@@ -1,0 +1,243 @@
+using Microsoft.EntityFrameworkCore;
+using WorkflowApp.Application.Common;
+using WorkflowApp.Application.Common.Models;
+using WorkflowApp.Application.Identity.Dtos;
+using WorkflowApp.Domain.Enums;
+using Xunit;
+
+namespace WorkflowApp.Application.Tests;
+
+public class UserAdminServiceTests
+{
+    private static async Task<TestHarness> ReadyAsync()
+    {
+        var harness = new TestHarness();
+        await harness.SeedRolesAndPermissionsAsync();
+        return harness;
+    }
+
+    private static CreateUserRequest NewUser(string userName = "alice", params string[] roles) => new()
+    {
+        UserName = userName,
+        Email = $"{userName}@workflowapp.local",
+        DisplayName = userName,
+        Password = "InitialPass1",
+        Roles = roles
+    };
+
+    [Fact]
+    public async Task Create_user_assigns_roles_and_resolves_permissions()
+    {
+        using var h = await ReadyAsync();
+
+        var result = await h.UserAdmin.CreateUserAsync(NewUser("alice", DefaultRoles.Reviewer));
+
+        Assert.True(result.IsSuccess);
+        Assert.Contains(DefaultRoles.Reviewer, result.Value!.Roles);
+        Assert.Contains(Permissions.TaskApprove, result.Value.Permissions);
+        Assert.True(result.Value.IsActive);
+    }
+
+    [Fact]
+    public async Task Create_user_never_stores_the_password_in_clear()
+    {
+        using var h = await ReadyAsync();
+
+        await h.UserAdmin.CreateUserAsync(NewUser());
+
+        var stored = await h.Db.Users.FirstAsync();
+        Assert.NotEqual("InitialPass1", stored.PasswordHash);
+        Assert.Equal(
+            Common.Interfaces.PasswordVerification.Success,
+            h.PasswordHasher.Verify(stored.PasswordHash, "InitialPass1"));
+    }
+
+    [Fact]
+    public async Task Create_user_rejects_a_duplicate_username_or_email()
+    {
+        using var h = await ReadyAsync();
+        await h.UserAdmin.CreateUserAsync(NewUser("alice"));
+
+        var duplicateName = await h.UserAdmin.CreateUserAsync(NewUser("alice"));
+        Assert.Equal(ErrorType.Conflict, duplicateName.Error!.Type);
+        Assert.Equal("user.username_taken", duplicateName.Error.Code);
+
+        var duplicateEmail = await h.UserAdmin.CreateUserAsync(new CreateUserRequest
+        {
+            UserName = "alice2",
+            Email = "alice@workflowapp.local",
+            DisplayName = "Alice Two",
+            Password = "InitialPass1"
+        });
+        Assert.Equal("user.email_taken", duplicateEmail.Error!.Code);
+    }
+
+    [Fact]
+    public async Task Create_user_rejects_an_unknown_role_without_creating_the_user()
+    {
+        using var h = await ReadyAsync();
+
+        var result = await h.UserAdmin.CreateUserAsync(NewUser("alice", "NotARealRole"));
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("role.unknown", result.Error!.Code);
+        Assert.False(await h.Db.Users.AnyAsync());
+    }
+
+    [Fact]
+    public async Task Create_user_enforces_the_password_policy()
+    {
+        using var h = await ReadyAsync();
+
+        var result = await h.UserAdmin.CreateUserAsync(new CreateUserRequest
+        {
+            UserName = "alice",
+            Email = "alice@workflowapp.local",
+            DisplayName = "Alice",
+            Password = "alllowercase"
+        });
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("password.too_weak", result.Error!.Code);
+    }
+
+    [Fact]
+    public async Task Assign_roles_replaces_the_previous_set()
+    {
+        using var h = await ReadyAsync();
+        var created = await h.UserAdmin.CreateUserAsync(NewUser("alice", DefaultRoles.Worker));
+
+        var result = await h.UserAdmin.AssignRolesAsync(
+            created.Value!.Id, new[] { DefaultRoles.QC, DefaultRoles.Management });
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(2, result.Value!.Roles.Count);
+        Assert.DoesNotContain(DefaultRoles.Worker, result.Value.Roles);
+        Assert.DoesNotContain(Permissions.TaskWork, result.Value.Permissions);
+        Assert.Contains(Permissions.TaskQCReview, result.Value.Permissions);
+    }
+
+    [Fact]
+    public async Task Assign_roles_to_an_empty_set_strips_every_permission()
+    {
+        using var h = await ReadyAsync();
+        var created = await h.UserAdmin.CreateUserAsync(NewUser("alice", DefaultRoles.Administrator));
+
+        var result = await h.UserAdmin.AssignRolesAsync(created.Value!.Id, Array.Empty<string>());
+
+        Assert.True(result.IsSuccess);
+        Assert.Empty(result.Value!.Roles);
+        Assert.Empty(result.Value.Permissions);
+    }
+
+    [Fact]
+    public async Task Deactivating_a_user_revokes_their_live_sessions_immediately()
+    {
+        using var h = await ReadyAsync();
+        var created = await h.UserAdmin.CreateUserAsync(NewUser("alice", DefaultRoles.Worker));
+
+        var login = await h.Auth.LoginAsync(new LoginRequest { UserName = "alice", Password = "InitialPass1" });
+        Assert.True(login.IsSuccess);
+
+        var deactivate = await h.UserAdmin.SetActiveAsync(created.Value!.Id, false);
+        Assert.True(deactivate.IsSuccess);
+
+        // Deactivation must not wait for the access token to expire.
+        Assert.Equal(0, await h.Db.RefreshTokens.CountAsync(t => t.RevokedAt == null));
+
+        var refresh = await h.Auth.RefreshAsync(new RefreshTokenRequest { RefreshToken = login.Value!.RefreshToken });
+        Assert.True(refresh.IsFailure);
+
+        var reloaded = await h.Db.Users.FirstAsync(u => u.Id == created.Value.Id);
+        Assert.Equal(WorkforceState.NotLoggedIn, reloaded.WorkforceState);
+    }
+
+    [Fact]
+    public async Task Reactivating_a_user_lets_them_log_in_again()
+    {
+        using var h = await ReadyAsync();
+        var created = await h.UserAdmin.CreateUserAsync(NewUser("alice"));
+
+        await h.UserAdmin.SetActiveAsync(created.Value!.Id, false);
+        Assert.True((await h.Auth.LoginAsync(new LoginRequest { UserName = "alice", Password = "InitialPass1" })).IsFailure);
+
+        await h.UserAdmin.SetActiveAsync(created.Value.Id, true);
+        Assert.True((await h.Auth.LoginAsync(new LoginRequest { UserName = "alice", Password = "InitialPass1" })).IsSuccess);
+    }
+
+    [Fact]
+    public async Task Admin_password_reset_clears_lockout_and_revokes_sessions()
+    {
+        using var h = await ReadyAsync();
+        var created = await h.UserAdmin.CreateUserAsync(NewUser("alice"));
+
+        await h.Auth.LoginAsync(new LoginRequest { UserName = "alice", Password = "InitialPass1" });
+
+        for (var i = 0; i < h.AuthOptions.MaxFailedLoginAttempts; i++)
+            await h.Auth.LoginAsync(new LoginRequest { UserName = "alice", Password = "wrong-password" });
+
+        var reset = await h.UserAdmin.ResetPasswordAsync(created.Value!.Id, "ResetPass99");
+        Assert.True(reset.IsSuccess);
+
+        var reloaded = await h.Db.Users.FirstAsync(u => u.Id == created.Value.Id);
+        Assert.Null(reloaded.LockoutEndAt);
+        Assert.Equal(0, reloaded.FailedLoginCount);
+        Assert.Equal(0, await h.Db.RefreshTokens.CountAsync(t => t.RevokedAt == null));
+
+        Assert.True((await h.Auth.LoginAsync(new LoginRequest { UserName = "alice", Password = "ResetPass99" })).IsSuccess);
+    }
+
+    [Fact]
+    public async Task List_users_pages_filters_and_searches()
+    {
+        using var h = await ReadyAsync();
+        for (var i = 1; i <= 7; i++)
+            await h.UserAdmin.CreateUserAsync(NewUser($"user{i}"));
+
+        await h.UserAdmin.SetActiveAsync((await h.Db.Users.FirstAsync(u => u.UserName == "user3")).Id, false);
+
+        var firstPage = await h.UserAdmin.ListUsersAsync(new PageQuery { Page = 1, PageSize = 5 });
+        Assert.Equal(5, firstPage.Items.Count);
+        Assert.Equal(7, firstPage.TotalCount);
+        Assert.Equal(2, firstPage.TotalPages);
+
+        var activeOnly = await h.UserAdmin.ListUsersAsync(new PageQuery(), isActive: true);
+        Assert.Equal(6, activeOnly.TotalCount);
+
+        var searched = await h.UserAdmin.ListUsersAsync(new PageQuery(), search: "user3");
+        Assert.Single(searched.Items);
+    }
+
+    [Fact]
+    public void Page_query_clamps_hostile_values()
+    {
+        var query = new PageQuery { Page = -4, PageSize = 100_000 };
+
+        Assert.Equal(1, query.NormalizedPage);
+        Assert.Equal(200, query.NormalizedPageSize);
+        Assert.Equal(0, query.Skip);
+    }
+
+    [Fact]
+    public async Task List_roles_reports_the_seeded_permission_grants()
+    {
+        using var h = await ReadyAsync();
+
+        var roles = await h.UserAdmin.ListRolesAsync();
+
+        var administrator = Assert.Single(roles, r => r.Name == DefaultRoles.Administrator);
+        Assert.Equal(Permissions.All.Length, administrator.Permissions.Count);
+
+        var worker = Assert.Single(roles, r => r.Name == DefaultRoles.Worker);
+        // Workers execute tasks and are the only default role on the clock.
+        Assert.Contains(Permissions.TaskWork, worker.Permissions);
+        Assert.Contains(Permissions.WorkforceTrackShift, worker.Permissions);
+
+        // Nobody else is shift-tracked by default.
+        foreach (var role in roles.Where(r =>
+                     r.Name != DefaultRoles.Worker && r.Name != DefaultRoles.Administrator))
+        {
+            Assert.DoesNotContain(Permissions.WorkforceTrackShift, role.Permissions);
+        }
+    }
+}

@@ -119,6 +119,11 @@ public class ShiftSessionConfig : IEntityTypeConfiguration<ShiftSession>
     {
         b.HasOne(s => s.User).WithMany().HasForeignKey(s => s.UserId).OnDelete(DeleteBehavior.Restrict);
         b.HasIndex(s => new { s.UserId, s.ShiftStart });
+        b.Property(s => s.EndNote).HasMaxLength(500);
+        b.Property(s => s.StartDeviceInfo).HasMaxLength(512);
+        b.Property(s => s.StartIpAddress).HasMaxLength(64);
+        // The stale-shift sweep scans for open shifts across all users.
+        b.HasIndex(s => s.ShiftEnd);
         // One open shift per user at a time (ShiftEnd IS NULL).
         b.HasIndex(s => s.UserId)
             .IsUnique()
@@ -134,8 +139,12 @@ public class AttachmentConfig : IEntityTypeConfiguration<Attachment>
     {
         b.Property(a => a.OriginalFileName).HasMaxLength(400).IsRequired();
         b.Property(a => a.StoredPath).HasMaxLength(500).IsRequired();
+        b.Property(a => a.ContentType).HasMaxLength(200).IsRequired();
+        // Hex-encoded SHA-256 of the file — fixed 64 characters, used for duplicate detection.
+        b.Property(a => a.Sha256).HasMaxLength(64).IsFixedLength().IsRequired();
         b.HasIndex(a => a.RequestId);
         b.HasIndex(a => a.TaskId);
+        b.HasIndex(a => a.Sha256);
     }
 }
 
