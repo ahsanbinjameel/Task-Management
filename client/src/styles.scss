@@ -1,0 +1,184 @@
+@use '@angular/material' as mat;
+
+html {
+  color-scheme: light;
+  @include mat.theme((
+    color: (primary: mat.$azure-palette, tertiary: mat.$blue-palette),
+    typography: Roboto,
+    density: -1,
+  ));
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Design tokens.
+
+   Status colour is the workhorse of this UI: an operations tool is mostly lists, and the thing
+   people scan for is "is this moving, stuck, or done". Six semantic tones cover every status,
+   priority and workforce state, so a chip means the same thing wherever it appears.
+   --------------------------------------------------------------------------------------------- */
+:root {
+  --surface: #ffffff;
+  --surface-sunken: #f4f6f9;
+  --surface-raised: #ffffff;
+  --border: #e2e6ec;
+  --border-strong: #cbd2dc;
+  --text: #16202c;
+  --text-muted: #5b6875;
+
+  --tone-neutral-bg: #eaeef4;   --tone-neutral-fg: #3d4b5c;
+  --tone-running-bg: #dbeafe;   --tone-running-fg: #1d4ed8;
+  --tone-good-bg:    #d9f2e4;   --tone-good-fg:    #17603a;
+  --tone-warn-bg:    #fdf0d5;   --tone-warn-fg:    #8a5a06;
+  --tone-danger-bg:  #fde3e1;   --tone-danger-fg:  #a52318;
+  --tone-review-bg:  #ede4fd;   --tone-review-fg:  #5b2ec4;
+  --tone-done-bg:    #e3e8ee;   --tone-done-fg:    #48566a;
+  --tone-muted-bg:   #eef1f5;   --tone-muted-fg:   #77828f;
+
+  --radius: 10px;
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.08);
+  --shell-width: 244px;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--surface-sunken);
+  color: var(--text);
+  font-family: Roboto, 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+* { box-sizing: border-box; }
+
+/* --- status chips --------------------------------------------------------------------------- */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  white-space: nowrap;
+  background: var(--tone-neutral-bg);
+  color: var(--tone-neutral-fg);
+}
+
+@each $tone in (neutral, running, good, warn, danger, review, done, muted) {
+  .chip.tone-#{$tone} {
+    background: var(--tone-#{$tone}-bg);
+    color: var(--tone-#{$tone}-fg);
+  }
+}
+
+.chip.dot::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* --- layout helpers ------------------------------------------------------------------------- */
+
+.page {
+  padding: 24px 28px 48px;
+  max-width: 1500px;
+  margin: 0 auto;
+}
+
+.card {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+}
+
+.card-pad { padding: 20px; }
+
+.card-title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin: 0 0 14px;
+}
+
+.grid {
+  display: grid;
+  gap: 16px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.row-wrap { flex-wrap: wrap; }
+.spacer { flex: 1 1 auto; }
+.muted { color: var(--text-muted); }
+.small { font-size: 12.5px; }
+.mono { font-variant-numeric: tabular-nums; }
+.nowrap { white-space: nowrap; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.stack { display: flex; flex-direction: column; gap: 16px; }
+.stack-sm { display: flex; flex-direction: column; gap: 8px; }
+
+/* --- tables --------------------------------------------------------------------------------- */
+
+table.mat-mdc-table {
+  background: transparent;
+  width: 100%;
+}
+
+.mat-mdc-header-cell {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.mat-mdc-row:hover { background: var(--surface-sunken); }
+.mat-mdc-row.clickable { cursor: pointer; }
+
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* --- toasts --------------------------------------------------------------------------------- */
+
+.toast-error {
+  --mdc-snackbar-container-color: #7f1d1d;
+  --mat-snack-bar-button-color: #fecaca;
+}
+
+.toast-success {
+  --mdc-snackbar-container-color: #14532d;
+  --mat-snack-bar-button-color: #bbf7d0;
+}
+
+/* --- misc ----------------------------------------------------------------------------------- */
+
+.overdue { color: var(--tone-danger-fg); font-weight: 600; }
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 4px 16px;
+}
+
+.full-span { grid-column: 1 / -1; }
+
+@media (max-width: 900px) {
+  .page { padding: 16px 14px 40px; }
+}

@@ -78,9 +78,13 @@ public static class DefaultRoles
     {
         [Administrator] = Permissions.All,
         [Requester] = new[] { Permissions.RequestCreate, Permissions.RequestViewOwn },
+        // Reopen sits with the reviewer, not QC: it is a judgement about whether the delivered work
+        // answers the original request, which is the same call they make at triage. QC's remit is to
+        // pass or fail a submission, not to un-close finished work.
         [Reviewer] = new[]
         {
-            Permissions.RequestViewAll, Permissions.TaskReview, Permissions.TaskApprove, Permissions.TaskDefer
+            Permissions.RequestViewAll, Permissions.TaskReview, Permissions.TaskApprove,
+            Permissions.TaskDefer, Permissions.TaskReopen
         },
         [AssignmentManager] = new[]
         {

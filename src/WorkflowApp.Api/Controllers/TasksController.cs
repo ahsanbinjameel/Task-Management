@@ -20,6 +20,12 @@ public sealed class TasksController : ApiControllerBase
     private readonly ITaskWorkflowService _workflow;
     private readonly ITaskAssignmentService _assignment;
     private readonly IWorkSessionService _sessions;
+    private readonly IQCService _qc;
+    private readonly IClosureService _closure;
+    private readonly ITaskCommentService _comments;
+    private readonly ITaskDependencyService _dependencies;
+    private readonly IScopeChangeService _scope;
+    private readonly ITaskCreationService _creation;
     private readonly IAttachmentService _attachments;
 
     public TasksController(
@@ -27,12 +33,24 @@ public sealed class TasksController : ApiControllerBase
         ITaskWorkflowService workflow,
         ITaskAssignmentService assignment,
         IWorkSessionService sessions,
+        IQCService qc,
+        IClosureService closure,
+        ITaskCommentService comments,
+        ITaskDependencyService dependencies,
+        IScopeChangeService scope,
+        ITaskCreationService creation,
         IAttachmentService attachments)
     {
         _queries = queries;
         _workflow = workflow;
         _assignment = assignment;
         _sessions = sessions;
+        _qc = qc;
+        _closure = closure;
+        _comments = comments;
+        _dependencies = dependencies;
+        _scope = scope;
+        _creation = creation;
         _attachments = attachments;
     }
 
@@ -204,6 +222,159 @@ public sealed class TasksController : ApiControllerBase
     [ProducesResponseType(typeof(TaskDetailDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> Interrupt([FromBody] InterruptDto dto, CancellationToken ct)
         => FromResult(await _sessions.InterruptAsync(CurrentUserId, dto, ct));
+
+    // --- QC ------------------------------------------------------------------------------
+
+    /// <summary>Completed work waiting for a reviewer.</summary>
+    [HttpGet("qc-queue")]
+    [HasPermission(Permissions.TaskQCReview)]
+    [ProducesResponseType(typeof(PagedResult<TaskSummaryDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> QCQueue(
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken ct = default)
+        => Ok(await _qc.QueueAsync(new PageQuery { Page = page, PageSize = pageSize }, ct));
+
+    /// <summary>Claims the task for QC. The assignee may not review their own work.</summary>
+    [HttpPost("{id:long}/qc/start")]
+    [HasPermission(Permissions.TaskQCReview)]
+    [ProducesResponseType(typeof(TaskDetailDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> StartQC(long id, CancellationToken ct)
+        => FromResult(await _qc.StartReviewAsync(id, CurrentUserId, ct));
+
+    /// <summary>
+    /// Records a QC verdict. Passing requires every acceptance criterion to be evaluated and met;
+    /// failing requires comments and sends the task back for rework.
+    /// </summary>
+    [HttpPost("{id:long}/qc/review")]
+    [HasPermission(Permissions.TaskQCReview)]
+    [ProducesResponseType(typeof(TaskDetailDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> SubmitQC(long id, [FromBody] SubmitQCReviewDto dto, CancellationToken ct)
+        => FromResult(await _qc.SubmitAsync(id, CurrentUserId, dto, ct));
+
+    /// <summary>Every QC attempt on the task, oldest first.</summary>
+    [HttpGet("{id:long}/qc")]
+    [ProducesResponseType(typeof(IReadOnlyList<QCReviewDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> QCHistory(long id, CancellationToken ct)
+        => Ok(await _qc.HistoryAsync(id, ct));
+
+    /// <summary>The task's acceptance criteria with the latest verdict against each.</summary>
+    [HttpGet("{id:long}/acceptance-criteria")]
+    [ProducesResponseType(typeof(AcceptanceCriteriaDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Criteria(long id, CancellationToken ct)
+        => FromResult(await _qc.CriteriaAsync(id, ct));
+
+    // --- closure -------------------------------------------------------------------------
+
+    /// <summary>What still stands between this task and closure.</summary>
+    [HttpGet("{id:long}/closure-check")]
+    [HasPermission(Permissions.TaskClose)]
+    [ProducesResponseType(typeof(ClosureChecklistDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ClosureCheck(long id, CancellationToken ct)
+        => FromResult(await _closure.EvaluateAsync(id, ct));
+
+    /// <summary>Closes the task, once every closure requirement is satisfied.</summary>
+    [HttpPost("{id:long}/close")]
+    [HasPermission(Permissions.TaskClose)]
+    [ProducesResponseType(typeof(TaskDetailDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Close(long id, [FromBody] CloseTaskDto? dto, CancellationToken ct)
+        => FromResult(await _closure.CloseAsync(id, CurrentUserId, dto ?? new CloseTaskDto(), ct));
+
+    /// <summary>Puts closed work back in play. Always requires a reason.</summary>
+    [HttpPost("{id:long}/reopen")]
+    [HasPermission(Permissions.TaskReopen)]
+    [ProducesResponseType(typeof(TaskDetailDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Reopen(long id, [FromBody] ReopenTaskDto dto, CancellationToken ct)
+        => FromResult(await _closure.ReopenAsync(id, CurrentUserId, dto, ct));
+
+    // --- comments ------------------------------------------------------------------------
+
+    /// <summary>
+    /// The comments the caller may see. A requester viewing their own task gets only the
+    /// customer-facing ones; the filtering is server-side, not a UI convention.
+    /// </summary>
+    [HttpGet("{id:long}/comments")]
+    [ProducesResponseType(typeof(IReadOnlyList<TaskCommentDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Comments(long id, CancellationToken ct)
+        => FromResult(await _comments.ListAsync(id, CurrentUserId, ct));
+
+    [HttpPost("{id:long}/comments")]
+    [ProducesResponseType(typeof(TaskCommentDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> AddComment(long id, [FromBody] AddCommentDto dto, CancellationToken ct)
+        => FromResult(await _comments.AddAsync(id, CurrentUserId, dto, ct));
+
+    // --- dependencies --------------------------------------------------------------------
+
+    [HttpGet("{id:long}/dependencies")]
+    [ProducesResponseType(typeof(TaskDependencyGraphDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Dependencies(long id, CancellationToken ct)
+        => FromResult(await _dependencies.GraphAsync(id, ct));
+
+    /// <summary>Declares a dependency. Circular ordering is refused.</summary>
+    [HttpPost("{id:long}/dependencies")]
+    [HasPermission(Permissions.TaskAssign)]
+    [ProducesResponseType(typeof(TaskDependencyGraphDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> AddDependency(long id, [FromBody] AddDependencyDto dto, CancellationToken ct)
+        => FromResult(await _dependencies.AddAsync(id, CurrentUserId, dto, ct));
+
+    [HttpDelete("{id:long}/dependencies/{dependencyId:long}")]
+    [HasPermission(Permissions.TaskAssign)]
+    [ProducesResponseType(typeof(TaskDependencyGraphDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> RemoveDependency(long id, long dependencyId, CancellationToken ct)
+        => FromResult(await _dependencies.RemoveAsync(id, dependencyId, CurrentUserId, ct));
+
+    // --- subtasks ------------------------------------------------------------------------
+
+    [HttpGet("{id:long}/subtasks")]
+    [ProducesResponseType(typeof(PagedResult<TaskSummaryDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Subtasks(long id, CancellationToken ct)
+        => Ok(await _queries.ListAsync(
+            new TaskQuery { ParentTaskId = id }, new PageQuery { PageSize = 100 }, ct));
+
+    /// <summary>
+    /// Breaks the task down. The subtask is a task in its own right, with its own number, assignee,
+    /// timer and history — and the parent cannot close until it is finished.
+    /// </summary>
+    [HttpPost("{id:long}/subtasks")]
+    [HasPermission(Permissions.TaskAssign)]
+    [ProducesResponseType(typeof(TaskDetailDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> CreateSubtask(long id, [FromBody] CreateSubtaskDto dto, CancellationToken ct)
+    {
+        var created = await _creation.CreateSubtaskAsync(id, CurrentUserId, dto, ct);
+        return created.IsFailure
+            ? Problem(created.Error!)
+            : FromResult(await _queries.GetAsync(created.Value!.Id, ct));
+    }
+
+    // --- scope changes -------------------------------------------------------------------
+
+    [HttpGet("{id:long}/scope-changes")]
+    [ProducesResponseType(typeof(IReadOnlyList<ScopeChangeDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ScopeChanges(long id, CancellationToken ct)
+        => Ok(await _scope.ListAsync(id, ct));
+
+    /// <summary>Records that the work has changed shape. The task's numbers do not move yet.</summary>
+    [HttpPost("{id:long}/scope-changes")]
+    [ProducesResponseType(typeof(ScopeChangeDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> RequestScopeChange(
+        long id, [FromBody] RequestScopeChangeDto dto, CancellationToken ct)
+        => FromResult(await _scope.RequestAsync(id, CurrentUserId, dto, ct));
+
+    /// <summary>Accepts the change and applies its estimate and deadline impact.</summary>
+    [HttpPost("scope-changes/{scopeChangeId:long}/approve")]
+    [HasPermission(Permissions.TaskApprove)]
+    [ProducesResponseType(typeof(ScopeChangeDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> ApproveScopeChange(long scopeChangeId, CancellationToken ct)
+        => FromResult(await _scope.ApproveAsync(scopeChangeId, CurrentUserId, ct));
 
     // --- attachments ---------------------------------------------------------------------
 

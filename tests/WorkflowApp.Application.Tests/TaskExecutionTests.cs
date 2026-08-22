@@ -464,28 +464,6 @@ public class TaskExecutionTests
     }
 
     [Fact]
-    public async Task Failed_QC_returns_to_rework_and_the_attempt_is_kept()
-    {
-        var f = await AssignedAndOnShiftAsync();
-        using var _d = f.H;
-        await f.H.WorkSessions.StartAsync(f.TaskId, f.WorkerId);
-        await f.H.WorkSessions.CompleteAsync(f.TaskId, f.WorkerId, "done");
-
-        await f.H.TaskWorkflow.TransitionAsync(f.TaskId, f.WorkerId,
-            new TransitionTaskDto { To = WorkTaskStatus.QCReview });
-
-        var failed = await f.H.TaskWorkflow.TransitionAsync(f.TaskId, f.WorkerId,
-            new TransitionTaskDto { To = WorkTaskStatus.QCFailedRework, Reason = "Still wrong on 30% of cases" });
-
-        // Rework, not closed.
-        Assert.Equal(WorkTaskStatus.QCFailedRework, failed.Value!.Status);
-
-        var back = await f.H.TaskWorkflow.TransitionAsync(f.TaskId, f.WorkerId,
-            new TransitionTaskDto { To = WorkTaskStatus.InProgress });
-        Assert.Equal(WorkTaskStatus.InProgress, back.Value!.Status);
-    }
-
-    [Fact]
     public async Task Leaving_in_progress_closes_the_open_session()
     {
         var f = await AssignedAndOnShiftAsync();
@@ -582,16 +560,14 @@ public class TaskExecutionTests
         f.H.Clock.Advance(TimeSpan.FromHours(3));
         await f.H.WorkSessions.CompleteAsync(f.TaskId, f.WorkerId, "Template corrected.");
 
-        foreach (var step in new[]
-                 {
-                     WorkTaskStatus.QCReview, WorkTaskStatus.QCPassed,
-                     WorkTaskStatus.ReadyForClosure, WorkTaskStatus.Closed
-                 })
-        {
-            var moved = await f.H.TaskWorkflow.TransitionAsync(f.TaskId, f.WorkerId,
-                new TransitionTaskDto { To = step });
-            Assert.True(moved.IsSuccess, $"Failed moving to {step}: {moved.Error?.Message}");
-        }
+        // QC and closure have their own services; the generic transition cannot reach those states.
+        f.H.ActingAsAdmin(f.CoordinatorId);
+        await f.H.QC.StartReviewAsync(f.TaskId, f.CoordinatorId);
+        await f.H.QC.SubmitAsync(f.TaskId, f.CoordinatorId,
+            new SubmitQCReviewDto { Result = QCResult.Passed });
+
+        var closed = await f.H.Closure.CloseAsync(f.TaskId, f.CoordinatorId, new CloseTaskDto());
+        Assert.True(closed.IsSuccess, closed.Error?.Message);
 
         var final = await f.H.TaskQueries.GetAsync(f.TaskId);
         Assert.Equal(WorkTaskStatus.Closed, final.Value!.Status);

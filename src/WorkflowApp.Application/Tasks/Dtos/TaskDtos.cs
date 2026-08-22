@@ -156,6 +156,10 @@ public sealed record TaskDetailDto(
     IReadOnlyList<StatusHistoryDto> StatusHistory,
     IReadOnlyList<AssignmentHistoryDto> AssignmentHistory,
     IReadOnlyList<TaskActivityDto> Activity,
+    IReadOnlyList<QCReviewDto> QCReviews,
+    IReadOnlyList<long> SubTaskIds,
+    // Task numbers of unfinished work this task is waiting on. Non-empty blocks the timer.
+    IReadOnlyList<string> BlockedBy,
     string? RowVersion);
 
 public sealed record PauseReasonDto(long Id, string Name, bool RequiresComment, bool IsBlocker);

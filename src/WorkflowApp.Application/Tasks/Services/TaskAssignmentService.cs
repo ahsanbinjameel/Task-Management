@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using WorkflowApp.Application.Common.Interfaces;
 using WorkflowApp.Application.Common.Models;
 using WorkflowApp.Application.Common.Services;
+using WorkflowApp.Application.Notifications;
 using WorkflowApp.Application.Tasks.Dtos;
 using WorkflowApp.Domain.Entities.Tasks;
 using WorkflowApp.Domain.Enums;
@@ -35,17 +36,20 @@ public sealed class TaskAssignmentService : ITaskAssignmentService
 {
     private readonly IWorkflowDbContext _db;
     private readonly ITaskQueryService _queries;
+    private readonly INotificationService _notifications;
     private readonly IDateTimeProvider _clock;
     private readonly ILogger<TaskAssignmentService> _logger;
 
     public TaskAssignmentService(
         IWorkflowDbContext db,
         ITaskQueryService queries,
+        INotificationService notifications,
         IDateTimeProvider clock,
         ILogger<TaskAssignmentService> logger)
     {
         _db = db;
         _queries = queries;
+        _notifications = notifications;
         _clock = clock;
         _logger = logger;
     }
@@ -154,6 +158,12 @@ public sealed class TaskAssignmentService : ITaskAssignmentService
             OccurredAt = now,
             Description = DescribeAssignment(previousAssignee, request.AssigneeUserId, request.Reason)
         });
+
+        // Being given work is the one thing nobody should have to discover by refreshing.
+        _notifications.RaiseFor(
+            new long?[] { request.AssigneeUserId }, actingUserId,
+            $"{task.TaskNumber} assigned to you",
+            task.Title, NotificationService.LinkTask, task.Id);
 
         try
         {

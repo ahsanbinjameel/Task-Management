@@ -2,10 +2,13 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using WorkflowApp.Application.Common;
+using WorkflowApp.Application.Common.Events;
 using WorkflowApp.Application.Common.Interfaces;
 using WorkflowApp.Application.Common.Options;
 using WorkflowApp.Application.Common.Services;
 using WorkflowApp.Application.Identity.Services;
+using WorkflowApp.Application.Notifications;
+using WorkflowApp.Application.Reporting;
 using WorkflowApp.Application.Requests.Services;
 using WorkflowApp.Application.Tasks.Services;
 using WorkflowApp.Application.Workforce.Services;
@@ -14,6 +17,7 @@ using WorkflowApp.Domain.Entities.Workforce;
 using WorkflowApp.Domain.Enums;
 using WorkflowApp.Infrastructure.Identity;
 using WorkflowApp.Infrastructure.Persistence;
+using WorkflowApp.Infrastructure.Persistence.Interceptors;
 
 namespace WorkflowApp.Application.Tests;
 
@@ -25,6 +29,18 @@ public sealed class FixedClock : IDateTimeProvider
     public DateTimeOffset UtcNow { get; set; }
 
     public void Advance(TimeSpan by) => UtcNow = UtcNow.Add(by);
+}
+
+/// <summary>Captures what would have gone out over SignalR, so routing-free tests can assert on it.</summary>
+public sealed class RecordingEventPublisher : IIntegrationEventPublisher
+{
+    public List<IntegrationEvent> Published { get; } = new();
+
+    public Task PublishAsync(IReadOnlyList<IntegrationEvent> events, CancellationToken ct = default)
+    {
+        Published.AddRange(events);
+        return Task.CompletedTask;
+    }
 }
 
 public sealed class TestCurrentUser : ICurrentUser
@@ -50,14 +66,24 @@ public sealed class TestHarness : IDisposable
     {
         Clock = new FixedClock(now ?? new DateTimeOffset(2026, 1, 1, 9, 0, 0, TimeSpan.Zero));
 
+        EventQueue = new IntegrationEventQueue();
+        Events = new RecordingEventPublisher();
+        CurrentUser = new TestCurrentUser();
+
         var options = new DbContextOptionsBuilder<WorkflowDbContext>()
             // A unique name per harness keeps parallel test classes isolated.
             .UseInMemoryDatabase($"workflow-tests-{Guid.NewGuid():N}")
+            // The production interceptors. The auditing one matters beyond convenience: without it
+            // CreatedAt would come from the wall clock while everything else came from FixedClock,
+            // and any test that measures an elapsed time would be comparing two different clocks.
+            .AddInterceptors(
+                new AuditableEntityInterceptor(CurrentUser, Clock),
+                new IntegrationEventDispatchInterceptor(
+                    EventQueue, Events, NullLogger<IntegrationEventDispatchInterceptor>.Instance))
             .Options;
 
         Db = new WorkflowDbContext(options);
 
-        CurrentUser = new TestCurrentUser();
         PasswordHasher = new PasswordHasherAdapter();
 
         AuthOptions = new AuthOptions
@@ -108,10 +134,15 @@ public sealed class TestHarness : IDisposable
             Db, Activity, Audit, Clock, Options.Create(WorkforceOptions),
             NullLogger<ShiftMaintenanceService>.Instance);
 
+        Notifications = new NotificationService(Db, Clock);
+        Dashboards = new DashboardService(Db, Calendar, Clock);
+        Reports = new ReportService(Db, Calendar, Clock);
+        AuditQueries = new AuditQueryService(Db);
         Numbers = new NumberGenerator(Db);
         Requests = new RequestService(Db, Numbers, Clock);
         TaskCreation = new TaskCreationService(Db, Numbers, Clock);
-        TaskQueries = new TaskQueryService(Db, CurrentUser);
+        Dependencies = new TaskDependencyService(Db, Clock);
+        TaskQueries = new TaskQueryService(Db, CurrentUser, Dependencies);
 
         Triage = new RequestTriageService(
             Db, Requests, TaskCreation, Audit, Clock, NullLogger<RequestTriageService>.Instance);
@@ -120,14 +151,25 @@ public sealed class TestHarness : IDisposable
             Db, CurrentUser, Audit, Activity, Clock, TaskQueries, NullLogger<TaskWorkflowService>.Instance);
 
         Assignment = new TaskAssignmentService(
-            Db, TaskQueries, Clock, NullLogger<TaskAssignmentService>.Instance);
+            Db, TaskQueries, Notifications, Clock, NullLogger<TaskAssignmentService>.Instance);
 
         WorkSessions = new WorkSessionService(
-            Db, TaskQueries, Activity, Clock, NullLogger<WorkSessionService>.Instance);
+            Db, TaskQueries, Dependencies, Activity, Clock, NullLogger<WorkSessionService>.Instance);
+
+        QC = new QCService(
+            Db, TaskQueries, Activity, Audit, Notifications, Clock, NullLogger<QCService>.Instance);
+
+        Closure = new ClosureService(
+            Db, TaskQueries, Activity, Audit, Notifications, Clock, NullLogger<ClosureService>.Instance);
+
+        Comments = new TaskCommentService(Db, CurrentUser, Clock);
+        ScopeChanges = new ScopeChangeService(Db, Audit, Clock);
     }
 
     public FixedClock Clock { get; }
     public WorkflowDbContext Db { get; }
+    public IIntegrationEventQueue EventQueue { get; }
+    public RecordingEventPublisher Events { get; }
     public TestCurrentUser CurrentUser { get; }
     public IPasswordHasher PasswordHasher { get; }
     public ITokenService TokenService { get; }
@@ -150,6 +192,15 @@ public sealed class TestHarness : IDisposable
     public ITaskWorkflowService TaskWorkflow { get; }
     public ITaskAssignmentService Assignment { get; }
     public IWorkSessionService WorkSessions { get; }
+    public IQCService QC { get; }
+    public IClosureService Closure { get; }
+    public ITaskDependencyService Dependencies { get; }
+    public INotificationService Notifications { get; }
+    public IDashboardService Dashboards { get; }
+    public IReportService Reports { get; }
+    public IAuditQueryService AuditQueries { get; }
+    public ITaskCommentService Comments { get; }
+    public IScopeChangeService ScopeChanges { get; }
 
     /// <summary>
     /// Sets the ambient caller. Services read permissions from <see cref="ICurrentUser"/>, so a test

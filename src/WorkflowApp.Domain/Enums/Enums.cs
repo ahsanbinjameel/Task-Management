@@ -104,5 +104,8 @@ public enum ActivityType
     PriorityChanged, AssignmentChanged, CollaboratorAdded, TaskStarted,
     TaskPaused, TaskResumed, TaskBlocked, TaskUnblocked, ScopeChanged,
     TaskCompleted, QCStarted, QCFailed, QCPassed, TaskClosed, TaskReopened,
-    TaskInterrupted
+    TaskInterrupted,
+
+    // Phase 8. Appended, never reordered - the values are persisted as ints.
+    CommentAdded, DependencyAdded, DependencyRemoved, SubtaskCreated, ScopeChangeApproved
 }

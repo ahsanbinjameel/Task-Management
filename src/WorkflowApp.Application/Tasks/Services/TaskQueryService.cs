@@ -16,6 +16,9 @@ public sealed record TaskQuery
     public WorkTaskStatus? Status { get; init; }
     public Priority? Priority { get; init; }
     public bool? Unassigned { get; init; }
+
+    /// <summary>Only the children of this task.</summary>
+    public long? ParentTaskId { get; init; }
     public string? Search { get; init; }
 
     /// <summary>Excludes Closed / Cancelled / Duplicate — the default for working views.</summary>
@@ -56,11 +59,14 @@ public sealed class TaskQueryService : ITaskQueryService
 
     private readonly IWorkflowDbContext _db;
     private readonly ICurrentUser _currentUser;
+    private readonly ITaskDependencyService _dependencies;
 
-    public TaskQueryService(IWorkflowDbContext db, ICurrentUser currentUser)
+    public TaskQueryService(
+        IWorkflowDbContext db, ICurrentUser currentUser, ITaskDependencyService dependencies)
     {
         _db = db;
         _currentUser = currentUser;
+        _dependencies = dependencies;
     }
 
     public async Task<Result<TaskDetailDto>> GetAsync(long taskId, CancellationToken ct = default)
@@ -107,6 +113,23 @@ public sealed class TaskQueryService : ITaskQueryService
             .Select(a => new TaskActivityDto(a.Id, a.Type, a.ActorUserId, a.OccurredAt, a.Description))
             .ToListAsync(ct);
 
+        var qcReviews = await _db.QCReviews.AsNoTracking()
+            .Where(q => q.TaskId == taskId)
+            .OrderBy(q => q.AttemptNumber)
+            .ToListAsync(ct);
+
+        var reviewerNames = await _db.Users.AsNoTracking()
+            .Where(u => qcReviews.Select(q => q.ReviewerUserId).Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
+
+        var subTaskIds = await _db.Tasks.AsNoTracking()
+            .Where(t => t.ParentTaskId == taskId)
+            .OrderBy(t => t.Id)
+            .Select(t => t.Id)
+            .ToListAsync(ct);
+
+        var blockedBy = await _dependencies.BlockersAsync(taskId, ct);
+
         var collaborators = await _db.TaskCollaborators.AsNoTracking()
             .Where(c => c.TaskId == taskId)
             .Select(c => c.UserId)
@@ -134,6 +157,13 @@ public sealed class TaskQueryService : ITaskQueryService
             collaborators,
             sessions.Select(s => ToDto(s, pauseReasons)).ToList(),
             statusHistory, assignmentHistory, activity,
+            qcReviews.Select(q => new QCReviewDto(
+                q.Id, q.TaskId, q.AttemptNumber, q.ReviewerUserId,
+                reviewerNames.TryGetValue(q.ReviewerUserId, out var reviewerName) ? reviewerName : null,
+                q.ReviewedAt, q.Result, q.Comments, q.Environment, q.BuildVersion,
+                AcceptanceCriteria.Deserialize(q.AcceptanceCriteriaResults))).ToList(),
+            subTaskIds,
+            blockedBy,
             EncodeRowVersion(task.RowVersion)));
     }
 
@@ -144,6 +174,9 @@ public sealed class TaskQueryService : ITaskQueryService
 
         if (query.AssigneeUserId is { } assigneeId)
             tasks = tasks.Where(t => t.PrimaryAssigneeUserId == assigneeId);
+
+        if (query.ParentTaskId is { } parentId)
+            tasks = tasks.Where(t => t.ParentTaskId == parentId);
 
         if (query.Unassigned == true)
             tasks = tasks.Where(t => t.PrimaryAssigneeUserId == null);

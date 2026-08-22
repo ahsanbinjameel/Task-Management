@@ -34,6 +34,21 @@ public interface ITaskWorkflowService
 /// </summary>
 public sealed class TaskWorkflowService : ITaskWorkflowService
 {
+    /// <summary>
+    /// Statuses that carry a record beyond the status change itself, and so may only be reached
+    /// through the service that writes it: a QC verdict must leave a numbered attempt behind, and a
+    /// closure must have passed the closure checklist. Letting the generic endpoint set them would
+    /// make both of those trails optional. An explicit override still gets through, because that
+    /// path already demands <c>Task.Override</c>, a reason, and an audit entry.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<WorkTaskStatus, string> GuardedDestinations =
+        new Dictionary<WorkTaskStatus, string>
+        {
+            [WorkTaskStatus.QCPassed] = "Submit a QC review instead: POST /api/tasks/{id}/qc/review.",
+            [WorkTaskStatus.QCFailedRework] = "Submit a QC review instead: POST /api/tasks/{id}/qc/review.",
+            [WorkTaskStatus.Closed] = "Close the task instead: POST /api/tasks/{id}/close."
+        };
+
     private readonly IWorkflowDbContext _db;
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
@@ -117,6 +132,11 @@ public sealed class TaskWorkflowService : ITaskWorkflowService
 
             return Result<TaskDetailDto>.Failure(error);
         }
+
+        if (!request.IsOverride && GuardedDestinations.TryGetValue(request.To, out var useInstead))
+            return Result<TaskDetailDto>.Failure(Error.Conflict(
+                "workflow.dedicated_endpoint_required",
+                $"{Humanize(request.To)} cannot be set directly. {useInstead}"));
 
         // Leaving InProgress must not strand an open work session; close it with the same reason.
         if (from == WorkTaskStatus.InProgress && request.To != WorkTaskStatus.InProgress)

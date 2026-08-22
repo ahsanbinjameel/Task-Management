@@ -57,6 +57,7 @@ public sealed class WorkSessionService : IWorkSessionService
 {
     private readonly IWorkflowDbContext _db;
     private readonly ITaskQueryService _queries;
+    private readonly ITaskDependencyService _dependencies;
     private readonly IActivityLogger _activity;
     private readonly IDateTimeProvider _clock;
     private readonly ILogger<WorkSessionService> _logger;
@@ -64,12 +65,14 @@ public sealed class WorkSessionService : IWorkSessionService
     public WorkSessionService(
         IWorkflowDbContext db,
         ITaskQueryService queries,
+        ITaskDependencyService dependencies,
         IActivityLogger activity,
         IDateTimeProvider clock,
         ILogger<WorkSessionService> logger)
     {
         _db = db;
         _queries = queries;
+        _dependencies = dependencies;
         _activity = activity;
         _clock = clock;
         _logger = logger;
@@ -112,6 +115,14 @@ public sealed class WorkSessionService : IWorkSessionService
                 "worksession.already_active",
                 $"You are already working on {otherNumber}. Pause it first, or use the interrupt action."));
         }
+
+        // A declared dependency that is not finished is a real reason not to start, not just a
+        // badge in the UI. Blocking it here is what makes the graph worth maintaining.
+        var blockers = await _dependencies.BlockersAsync(taskId, ct);
+        if (blockers.Count > 0)
+            return Result<TaskDetailDto>.Failure(Error.Conflict(
+                "task.blocked_by_dependency",
+                $"{task.TaskNumber} is waiting on {string.Join(", ", blockers)}."));
 
         // ReadyToStart is a scheduling step, not a separate user action — bridge it here so the
         // assignee does not have to press two buttons. It is still recorded: every status change
@@ -383,35 +394,9 @@ public sealed class WorkSessionService : IWorkSessionService
             user.WorkforceState = WorkforceState.Available;
     }
 
-    /// <summary>Applies a status change and appends to both history streams.</summary>
+    /// <summary>Applies a status change and appends to every history stream.</summary>
     private void MoveTo(
         WorkTask task, WorkTaskStatus to, long userId, DateTimeOffset now,
-        string? reason, ActivityType activityType, string description)
-    {
-        var from = task.Status;
-        task.Status = to;
-
-        _db.StatusHistories.Add(new StatusHistory
-        {
-            TaskId = task.Id,
-            FromStatus = from,
-            ToStatus = to,
-            ChangedByUserId = userId,
-            ChangedAt = now,
-            Reason = reason
-        });
-
-        _db.TaskActivities.Add(new TaskActivity
-        {
-            TaskId = task.Id,
-            Type = activityType,
-            ActorUserId = userId,
-            OccurredAt = now,
-            Description = description
-        });
-
-        // Echo onto the workforce timeline so the daily view is complete.
-        _activity.Record(userId, $"Task {task.TaskNumber} — {TaskWorkflowService.Humanize(to)}",
-            resultingState: null, relatedTaskId: task.Id, note: reason, occurredAt: now);
-    }
+        string? reason, ActivityType activityType, string description) =>
+        TaskStatusJournal.Write(_db, _activity, task, to, userId, now, reason, activityType, description);
 }

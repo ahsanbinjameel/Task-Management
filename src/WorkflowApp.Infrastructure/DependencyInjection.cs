@@ -40,6 +40,9 @@ public static class DependencyInjection
         // Scoped: the interceptor reads the per-request ICurrentUser.
         services.AddScoped<AuditableEntityInterceptor>();
 
+        // Scoped too: it drains the per-request integration-event queue after the save commits.
+        services.AddScoped<IntegrationEventDispatchInterceptor>();
+
         var provider = configuration.GetValue("Database:Provider", DatabaseProvider.SqlServer);
         var connectionString = configuration.GetConnectionString("Default");
 
@@ -58,7 +61,9 @@ public static class DependencyInjection
                     break;
             }
 
-            options.AddInterceptors(sp.GetRequiredService<AuditableEntityInterceptor>());
+            options.AddInterceptors(
+                sp.GetRequiredService<AuditableEntityInterceptor>(),
+                sp.GetRequiredService<IntegrationEventDispatchInterceptor>());
         });
 
         // The Application layer only ever sees the interface.

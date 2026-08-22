@@ -7,3 +7,10 @@ appsettings.*.local.json
 node_modules/
 workflowapp-demo.db*
 storage-demo/
+publish/
+
+# Generated per release by scripts/deploy.ps1; the committed baseline is 001-InitialCreate.
+scripts/sql/release.sql
+
+# The Angular client builds into the API's wwwroot; it is output, not source.
+src/WorkflowApp.Api/wwwroot/

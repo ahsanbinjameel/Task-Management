@@ -56,6 +56,19 @@ public static class AuditActions
 
     public const string AttachmentUploaded = "Attachment.Uploaded";
     public const string AttachmentDownloaded = "Attachment.Downloaded";
+
+    /// <summary>A QC attempt was recorded. Every attempt is audited, passed or failed.</summary>
+    public const string QCPassed = "Task.QCPassed";
+    public const string QCFailed = "Task.QCFailed";
+
+    /// <summary>The task met every closure requirement and was closed.</summary>
+    public const string TaskClosed = "Task.Closed";
+
+    /// <summary>Closed work was put back in play. Always carries a reason.</summary>
+    public const string TaskReopened = "Task.Reopened";
+
+    /// <summary>A scope change was accepted and the estimate or deadline moved because of it.</summary>
+    public const string ScopeChangeApproved = "Task.ScopeChangeApproved";
 }
 
 public sealed class AuditService : IAuditService

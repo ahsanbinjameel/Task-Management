@@ -1,160 +1,400 @@
-# WorkflowApp — Task Management & Workforce Workflow
+# WorkflowApp
 
-Internal operations system enforcing: **Request → Review → Approval → Assignment →
-Execution → QC → Closure**, with shift/attendance tracking and real-time updates.
+Internal operations system enforcing **Request → Review → Approval → Assignment → Execution → QC →
+Closure**, with shift/attendance tracking, dashboards, notifications and real-time updates.
 
-## Stack
-ASP.NET Core 8 Web API · SignalR · EF Core (SQL Server) · Angular (frontend, added later) ·
-IIS deployment.
+**Angular 21 + Angular Material** front end · ASP.NET Core 8 Web API · EF Core 8 · SQL Server ·
+SignalR · IIS. The client builds into the API's `wwwroot`, so a deployment is a single artifact.
 
-## Solution layout
-```
-WorkflowApp.sln
-src/
-  WorkflowApp.Domain          entities, enums, workflow state machine (no dependencies)
-  WorkflowApp.Application      use-case services, permission catalog, transition validation
-  WorkflowApp.Infrastructure   EF Core DbContext + configurations
-  WorkflowApp.Api              host: controllers, SignalR hubs, DI, config
-docs/
-  01-ARCHITECTURE.md          full design rationale
-  02-PHASE-PLAN.md            phase checklist + business rules + edge cases
-```
+---
 
-## Phase 0 — Foundation (complete)
-- Layered project structure + solution + project references
-- Domain entities: identity, workforce (shift/activity), requests, tasks, sessions, QC,
-  history, comments, dependencies, scope changes, notifications, audit
-- Enums incl. the enforced task status set
-- **Workflow state machine** (`Domain/Workflow/TaskWorkflow.cs`) — the allowed-transition map
-- **Transition validation service** (`Application/Common/TaskTransitionService.cs`) — pure,
-  testable, checks workflow + permission + reason
-- Permission catalog + default role→permission map
-- DbContext + EF configurations, including two critical DB constraints:
-  - `UX_WorkSession_OneActivePerUser` — one active work session per user
-  - `UX_ShiftSession_OneOpenPerUser` — one open shift per user
-- Program.cs host skeleton, appsettings for base/dev
+## Which of these are you trying to do?
 
-## Phase 1 — Identity & Authorization (code complete)
-- Custom identity tables (`User`/`Role`/`Permission`/`UserRole`/`RolePermission`) with ASP.NET
-  Core Identity's PBKDF2 password hashing behind an adapter
-- JWT access tokens carrying role + `permission` claims; opaque refresh tokens stored **hashed**,
-  rotated on every use, with token-reuse detection that revokes the whole family
-- Endpoints: `POST /api/auth/login|refresh|logout|change-password`, `GET /api/auth/me`,
-  `GET|POST /api/users`, `PUT /api/users/{id}/active|roles`, `POST /api/users/{id}/reset-password`,
-  `GET /api/roles`, `GET /api/roles/permissions`, `GET /health`
-- Permission-based authorization: `[HasPermission(Permissions.X)]` + a policy provider that
-  materialises `perm:{key}` policies on demand — no per-permission startup registration
-- Account protection: login-attempt log, failed-count lockout, IP-partitioned rate limiting on
-  the credential endpoints
-- Idempotent seeder: permission catalog, system roles + grants, pause reasons, bootstrap admin
-- `AuditableEntityInterceptor` stamps CreatedAt/UpdatedAt/By on every save
-- Global `ProblemDetails` exception middleware (workflow violations → 400, concurrency → 409)
-- `InitialCreate` migration + reviewable idempotent script at `scripts/sql/`
+| Goal                                                | Go to                                              |
+| --------------------------------------------------- | -------------------------------------------------- |
+| See it working in 2 minutes, no database to install | [A. Demo mode](#a-demo-mode--no-sql-server-needed) |
+| Develop against a real SQL Server                   | [B. Dev server](#b-dev-server--sql-server)         |
+| Work on the Angular front end                        | [B4. Front-end development](#b4-front-end-development) |
+| Deploy to IIS                                       | [C. IIS deployment](#c-iis-deployment)             |
+| Something broke                                     | [Troubleshooting](#troubleshooting)                |
 
-## Phase 2 — Shift & Workforce States (code complete)
-- **Workforce state machine** (`Domain/Workflow/WorkforceStateMachine.cs`) — the availability
-  counterpart to `TaskWorkflow`. Each transition carries the label written to the timeline
-- Three separate session concepts kept genuinely separate: logging in does **not** open a shift,
-  logging out does **not** close one, and a shift cannot be closed while a work session is running
-- `Working` and `ShiftEnded` are reachable but not self-settable — `Working` comes from starting a
-  task, so availability can never claim work that is not happening
-- Endpoints: `GET /api/shifts/current`, `POST /api/shifts/start|end`, `PUT /api/shifts/state`,
-  `GET /api/shifts/timeline|activity|history`; supervisory `GET /api/workforce/active`,
-  `GET /api/workforce/{id}/status|timeline|activity|shifts`, `POST /api/workforce/{id}/end-shift`
-- **Daily timeline** built from the activity stream, with business-timezone day boundaries and
-  overnight carry-over so a night shift's hours land on both days rather than vanishing
-- **Improper-logout handling**: a background sweep closes shifts left open past
-  `Workforce:MaxShiftHours`, ending them at the user's last recorded activity rather than at sweep
-  time, flagging `EndedImproperly` and writing both a timeline entry and an audit record
+---
 
-## Phases 3-6 — The pipeline (code complete)
+## Prerequisites
 
-**Phase 3 · Request intake & triage** — request CRUD, attachments on disk (generated names,
-traversal guard, extension allow-list, SHA-256, authorized+audited download), the review queue,
-all six triage outcomes, and the clarification loop. Five of the six outcomes end a request without
-producing any work at all.
+|                                   | Demo |   Dev    |        IIS         |
+| --------------------------------- | :--: | :------: | :----------------: |
+| .NET 8 SDK                        |  ✅  |    ✅    | build machine only |
+| **Node.js 20+ and npm**           |  —   |    ✅    | build machine only |
+| SQL Server 2019+                  |  —   |    ✅    |         ✅         |
+| ASP.NET Core 8 **Hosting Bundle** |  —   |    —     |    ✅ (server)     |
+| `dotnet-ef` global tool           |  —   | optional |      optional      |
 
-**Phase 4 · Task creation & workflow engine** — `TaskCreationService` is the only place a task is
-born, and triage approval is its only caller. `TaskWorkflowService` persists transitions, appends to
-both history streams, echoes onto the workforce timeline, closes stranded sessions, honours
-idempotency keys, and records overrides.
-
-**Phase 5 · Assignment & queue** — assignment guarded by the row version, collaborators plus
-reviewer/QC roles, ordered per-assignee queues, append-only assignment history, and a workload view.
-
-**Phase 6 · Work sessions & timer** — start/pause/resume/block/complete, configurable pause reasons,
-the single-active-session rule, the emergency interruption flow, and totals summed from closed
-sessions. Work requires an open shift; completing lands in QC, never Closed.
-
-## Try it without SQL Server
-
-There is a **Demo** profile that runs against a SQLite file and seeds sample people and a pipeline,
-so you can click around before the database exists:
+Check what you have:
 
 ```bash
-dotnet run --project src/WorkflowApp.Api --launch-profile Demo
-# then open http://localhost:5099
+dotnet --list-sdks          # need an 8.x SDK (a newer one also builds net8.0)
+dotnet --list-runtimes      # need Microsoft.AspNetCore.App 8.x to *run* the API
+sqlcmd -S localhost -E -Q "SELECT @@VERSION"
 ```
 
-That serves a plain-HTML **dev console** (`wwwroot/index.html`) with dashboard, requests, triage,
-assignment, my-work and workforce views. It is a throwaway harness for exercising the API, not a
-design — the Angular front end has not been started, and this file is meant to be deleted when it
-is. Swagger is at `/swagger`.
+`dotnet-ef` is **not** installed by default. You only need it to generate migration scripts:
 
-Demo accounts, all with password `Demo!Pass123`:
+```bash
+dotnet tool install --global dotnet-ef --version 8.*
+```
 
-| User | Role |
-|---|---|
-| `rachel` | Requester |
-| `victor` | Reviewer |
-| `amara` | Assignment coordinator |
-| `wu`, `priya` | Workers |
-| `quentin` | QC |
-| `morgan` | Management |
+---
 
-> Demo mode is for local evaluation only: SQLite, a shared well-known password, and
-> `EnsureCreated` instead of migrations. SQL Server remains the deployment target and the only
-> store the migrations are authored for.
+## A. Demo mode — no SQL Server needed
 
-## Getting it running
+The fastest way to see the whole pipeline. Runs against a local SQLite file and seeds sample
+people and a populated pipeline.
+
+```bash
+git clone <repo> && cd Task-Management
+dotnet run --project src/WorkflowApp.Api --launch-profile Demo
+```
+
+Open **<http://localhost:5099>** — the full Angular client. Swagger is at `/swagger`.
+
+> The client is served from `wwwroot`, which is **build output and gitignored**. On a fresh clone
+> run `cd client && npm ci && npm run build` once, or the API will serve nothing.
+
+Sign in with any of these, password `Demo!Pass123`:
+
+| User          | Role                   | Can do                      |
+| ------------- | ---------------------- | --------------------------- |
+| `rachel`      | Requester              | Raise requests              |
+| `victor`      | Reviewer               | Triage, approve, reopen     |
+| `amara`       | Assignment coordinator | Assign work, see workload   |
+| `wu`, `priya` | Workers                | Run the timer, track shifts |
+| `quentin`     | QC                     | Review and close            |
+| `morgan`      | Management             | Dashboards and reports      |
+
+Plus `admin` / `ChangeMe!2024` for everything.
+
+**A five-minute tour:** sign in as `rachel` → raise a request → sign in as `victor` → review queue →
+approve → as `amara` assign it to `wu` → as `wu` start a shift, start the task, complete it → as
+`quentin` QC it and close it.
+
+> ⚠️ **Demo mode is for local evaluation only.** SQLite, a shared well-known password, and
+> `EnsureCreated()` instead of migrations. SQLite has no `ROWVERSION`, so the concurrency guards run
+> as code but are not enforced by the database. Never run anything that matters on it.
+
+To reset: stop the app and delete `workflowapp-demo.db`.
+
+---
+
+## B. Dev server — SQL Server
+
+### 1. Build and test
 
 ```bash
 dotnet restore
 dotnet build
-dotnet test          # 190 tests, none of which need SQL Server
+dotnet test          # 258 tests; none of them need SQL Server
 ```
 
-The `InitialCreate` migration is already committed. To create the database (needs SQL Server):
+### 2. Point at your SQL Server
+
+`src/WorkflowApp.Api/appsettings.Development.json` ships with:
+
+```json
+"Default": "Server=localhost;Database=WorkflowApp_Dev;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true"
+```
+
+Change `Server=` if your instance is elsewhere (e.g. `.\SQLEXPRESS`, or `(localdb)\MSSQLLocalDB`).
+
+### 3. Build the client, once
+
+```bash
+cd client
+npm ci
+npm run build          # compiles into ../src/WorkflowApp.Api/wwwroot
+cd ..
+```
+
+### 4. Run it
+
+```bash
+dotnet run --project src/WorkflowApp.Api --launch-profile Development
+```
+
+That's the whole step. In **Development only**, `Database:ApplyMigrationsOnStartup` is `true`, so
+starting the API **creates the database, applies migrations, and seeds it** automatically.
+
+- App: **<https://localhost:7099>**
+- Swagger: **<https://localhost:7099/swagger>**
+- Health: `/health`, `/health/ready`
+
+Sign in as `admin` / `ChangeMe!2024`.
+
+### Creating the schema by hand instead
+
+If you would rather not have the app touch the schema:
+
+```bash
+# Option 1: EF
+cd src/WorkflowApp.Api
+dotnet ef database update --project ../WorkflowApp.Infrastructure --startup-project .
+
+# Option 2: the committed SQL script (review it first)
+sqlcmd -S localhost -E -I -d WorkflowApp_Dev -i scripts/sql/001-InitialCreate.idempotent.sql -b
+```
+
+⚠️ **`sqlcmd` needs `-I`.** The schema has filtered indexes, which require `QUOTED_IDENTIFIER ON`;
+`sqlcmd` defaults it **off** and the script will fail partway with error 1934, leaving a
+half-created database. SSMS sets it on by default, so this only bites from the command line.
+
+### B4. Front-end development
+
+For UI work, run the Angular dev server instead of rebuilding into `wwwroot` each time. It serves on
+:4200 with hot reload and proxies `/api` and `/hubs` to the API on :7099 (`client/proxy.conf.json`):
+
+```bash
+# terminal 1
+dotnet run --project src/WorkflowApp.Api --launch-profile Development
+
+# terminal 2
+cd client && npm start        # http://localhost:4200
+```
+
+The client lives in `client/`:
+
+```
+src/app/
+  core/       models mirroring the API DTOs, ApiService, auth + refresh interceptor, SignalR
+  shared/     chips, empty states, the shared task table, confirm/reason dialogs
+  layout/     shell, permission-filtered navigation, notification bell, shift widget
+  features/   one folder per area: dashboard, tasks, requests, qc, workforce, reports, admin, me
+```
+
+Two conventions worth knowing before changing anything:
+
+- **The menu and every action button are filtered by permission**, read from the JWT. That is a
+  usability decision, not a security one — the API re-checks everything, so never rely on a hidden
+  button.
+- **Real-time events are pointers, not records.** A SignalR message says *what changed*; the screen
+  re-fetches. Never patch local state from an event payload.
+
+### Adding a migration
 
 ```bash
 cd src/WorkflowApp.Api
-dotnet ef database update --project ../WorkflowApp.Infrastructure --startup-project .
-dotnet run           # Swagger UI at /swagger in Development
+dotnet ef migrations add <Name> --project ../WorkflowApp.Infrastructure --startup-project . \
+  --output-dir Persistence/Migrations
 ```
 
-If `dotnet ef` is missing: `dotnet tool install --global dotnet-ef`.
-Prefer to review the DDL first? `scripts/sql/001-InitialCreate.idempotent.sql` is the same
-migration as a re-runnable script you can open in SSMS.
+---
 
-In Development, `Database:ApplyMigrationsOnStartup` is `true`, so running the API migrates and
-seeds automatically. It is `false` everywhere else — deployed environments apply migrations from
-the pipeline, not from app startup.
+## C. IIS deployment
 
-**First login:** the seeder creates `admin` / `ChangeMe!2024` only when the database has no users
-at all. Change it immediately, and override `Auth:DefaultAdminPassword` before any real deployment.
+### 1. Prepare the server, once
 
-> The projects target `net8.0`. If your machine only has a newer shared runtime, the test projects
-> already set `RollForward=Major`; to run the API itself you will need the .NET 8 runtime installed
-> (which is what the IIS hosting bundle provides on the server anyway).
+```powershell
+# ASP.NET Core 8 Hosting Bundle — the runtime alone is not enough, IIS needs the module.
+# Download from https://dotnet.microsoft.com/download/dotnet/8.0
 
-## Next: Phase 7 (QC & Closure) — see docs/02-PHASE-PLAN.md.
+Install-WindowsFeature Web-WebSockets       # SignalR falls back to polling without it
+```
 
-## Non-negotiable business rules (see phase plan for full list)
-1. A request never auto-becomes a task.
-2. One active primary work session per user.
-2b. Shifts are tracked only for people who execute tasks (`Workforce.TrackShift`).
-3. No status transition outside `TaskWorkflow.Transitions`.
-4. Every mutating transition is permission-checked server-side.
-5. Reason mandatory for: reject, pause, block, QC fail, reopen, override, reassign.
-6. History is append-only.
-7. DB is source of truth; SignalR only notifies.
+App pool: **No Managed Code**, `LoadUserProfile = true`.
+
+### 2. Create the database
+
+```powershell
+sqlcmd -S localhost -E -I -Q "IF DB_ID('WorkflowApp') IS NULL CREATE DATABASE [WorkflowApp];"
+sqlcmd -S localhost -E -I -d WorkflowApp -i scripts\sql\001-InitialCreate.idempotent.sql -b
+```
+
+### 3. Give the app pool a SQL login
+
+The connection string uses `Trusted_Connection=True`, so the app connects **as the app pool
+identity**. That login does not exist by default — this is the single most common cause of a working
+build that cannot read anything:
+
+```sql
+CREATE LOGIN [IIS APPPOOL\DefaultAppPool] FROM WINDOWS;
+USE [WorkflowApp];
+CREATE USER [IIS APPPOOL\DefaultAppPool] FOR LOGIN [IIS APPPOOL\DefaultAppPool];
+ALTER ROLE db_datareader ADD MEMBER [IIS APPPOOL\DefaultAppPool];
+ALTER ROLE db_datawriter ADD MEMBER [IIS APPPOOL\DefaultAppPool];
+```
+
+Substitute your pool name if it is not `DefaultAppPool`.
+
+### 4. Build the release
+
+```powershell
+./scripts/deploy.ps1            # builds the Angular client, runs tests, publishes to .\publish
+```
+
+This builds the client first, on purpose: it compiles into `wwwroot`, and `dotnet publish` collects
+whatever is there. Skipping it ships yesterday's front end.
+
+### 5. Configure it — the app will not start otherwise
+
+Edit **`publish\web.config`** and set the environment variables inside
+`<aspNetCore><environmentVariables>`:
+
+| Variable                     | Notes                                                                                                               |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `ASPNETCORE_ENVIRONMENT`     | `Production`                                                                                                        |
+| `Jwt__SigningKey`            | **Required.** ≥ 32 bytes of real entropy. Startup _refuses_ to run with the placeholder                             |
+| `ConnectionStrings__Default` | Your production database                                                                                            |
+| `Workforce__TimeZoneId`      | ⚠️ Defaults to UTC. A wrong value silently skews every daily report and puts overnight shifts on the wrong date     |
+| `FileStorage__Root`          | A directory outside the site folder, e.g. `C:\WorkflowApp\storage`                                                  |
+| `Cors__Origins__0`           | The client origin. Credentials are allowed, so no wildcards                                                         |
+| `Security__RequireHttps`     | Leave unset (defaults `true`). Set `false` **only** on an internal HTTP-only host or behind a TLS-terminating proxy |
+
+Generate a signing key:
+
+```powershell
+$b = New-Object byte[] 48
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
+[Convert]::ToBase64String($b)
+```
+
+> `dotnet publish` **overwrites `web.config`**. Keep the configured copy in `.\publish` and let
+> step 6 carry it across, or you will lose these settings on every deployment.
+
+### 6. Install it — needs an elevated PowerShell
+
+```powershell
+./scripts/install-iis.ps1 -Target C:\inetpub\wwwroot\publish
+```
+
+It stops the app pool (so the DLLs are not locked), copies the files, creates the attachment store
+and log directory, grants the app pool identity access, and restarts the pool.
+
+### 7. Confirm
+
+```powershell
+curl http://<host>:<port>/health         # liveness  — no database call
+curl http://<host>:<port>/health/ready   # readiness — proves the database is reachable
+```
+
+Then sign in as `admin` / `ChangeMe!2024` and **change that password immediately**.
+
+Full operational detail — backups, log messages to watch, rollback — is in
+[`docs/03-RUNBOOK.md`](docs/03-RUNBOOK.md).
+
+---
+
+## Troubleshooting
+
+### `HTTP Error 500.30 — ASP.NET Core app failed to start`
+
+The app threw during startup. IIS will not tell you why; get the real exception:
+
+```powershell
+cd C:\inetpub\wwwroot\publish
+$env:ASPNETCORE_ENVIRONMENT="Production"; dotnet WorkflowApp.Api.dll
+```
+
+The exception prints immediately. Or enable `stdoutLogEnabled="true"` in `web.config` and read
+`.\logs\stdout_*.log`.
+
+**By far the most likely cause:**
+
+```
+System.InvalidOperationException: Jwt:SigningKey is unset or still the placeholder.
+```
+
+This is deliberate — the app refuses to run outside Development with a known signing key. Set
+`Jwt__SigningKey` (step C5).
+
+### The site loads, but every request 500s
+
+The app started but cannot reach the database. Check `/health/ready`, then:
+
+- Does the database exist? `SELECT name FROM sys.databases`
+- Does the app pool identity have a login? (step C3)
+- Is the connection string right? Remember Production uses `WorkflowApp`, Development uses
+  `WorkflowApp_Dev` — they are different databases.
+
+### The browser redirects to `https://` and nothing answers
+
+Production forces an HTTPS redirect. If you are serving plain HTTP on an internal host, set
+`Security__RequireHttps` to `false` — or bind a certificate, which is the better answer.
+
+### `error 1934 ... QUOTED_IDENTIFIER` when running the SQL script
+
+Add `-I` to `sqlcmd`. See the warning in section B. The database is now half-created: drop it and
+re-run from scratch.
+
+### The page is blank, or you get a bare 404 at the root
+
+`wwwroot` is build output and is gitignored, so a fresh clone has no client in it:
+
+```bash
+cd client && npm ci && npm run build
+```
+
+### Deep links 404 after deploying
+
+The API serves the SPA with a fallback route. If `/tasks/5` 404s but `/` works, the deployed build
+predates that fallback — republish.
+
+### `You must install or update .NET to run this application`
+
+The .NET 8 runtime is missing. On a server, install the **Hosting Bundle**, not just the runtime.
+
+### Logged in, but everything returns 403
+
+Permissions live on the JWT and are refreshed only when a token is issued. After a role change,
+sign out and back in.
+
+### Port already in use
+
+```bash
+dotnet run --project src/WorkflowApp.Api --no-launch-profile --urls http://localhost:5199
+```
+
+---
+
+## What exists today
+
+**The server side is complete** — all twelve phases: identity and permissions, shifts and
+attendance, request intake and triage, the task workflow engine, assignment and queues, the work
+timer, QC and closure, comments/dependencies/subtasks/scope/reopen, SignalR, dashboards and reports,
+notifications and audit, and the hardening pass.
+
+**The Angular client** covers the whole pipeline: role-aware dashboards, request intake and triage,
+task queues, the work timer, QC review with the acceptance-criteria checklist, the closure checklist,
+comments, dependencies, subtasks, scope changes, shifts and availability, workforce views, reports
+with CSV export, notifications, user administration and the audit log.
+
+### Layout
+
+```
+client/                       Angular 21 + Material front end (builds into the API's wwwroot)
+src/
+  WorkflowApp.Domain          entities, enums, workflow state machines. Zero dependencies.
+  WorkflowApp.Application     use-case services, DTOs, permission catalog
+  WorkflowApp.Infrastructure  EF Core, migrations, JWT, hashing, seeding, file storage
+  WorkflowApp.Api             controllers, SignalR hub, middleware, DI, serves the client
+tests/                        258 tests, none requiring SQL Server
+docs/
+  01-ARCHITECTURE.md          why the system is shaped this way
+  02-PHASE-PLAN.md            what was built, phase by phase
+  03-RUNBOOK.md               deploy and operate
+scripts/
+  deploy.ps1                  build + test + publish + migration script
+  install-iis.ps1             install a staged publish into IIS (elevated)
+  sql/                        reviewable idempotent schema scripts
+CLAUDE.md                     the project context map — read this before changing code
+```
+
+### Rules the code will not let you break
+
+1. A request never auto-becomes a task — approval creates it, explicitly and in one place.
+2. One active work session per user, enforced three ways including a database index.
+3. No status transition outside the allowed map.
+4. Every mutating transition is permission-checked server-side. Hiding a button is not security.
+5. A reason is mandatory for: reject, pause, block, QC fail, reopen, override, reassign.
+6. History is append-only — nothing overwrites a comment, session, QC attempt or status change.
+7. The database is the source of truth; SignalR only notifies.
+8. QC verdicts and closures can only be reached through their own endpoints, so each always leaves
+   its record behind.

@@ -70,40 +70,95 @@ Each phase is independently shippable. Complete a phase, verify, then move on.
 - [x] Total time is the sum of closed sessions, not start-to-finish elapsed
 - [x] Work requires an open shift; only the assignee can run the timer
 
-## Phase 7 — QC & Closure
-- [ ] QC review entity, pass/fail/rework with history
-- [ ] Acceptance criteria + evaluation
-- [ ] Closure requirement rules
+## Phase 7 — QC & Closure (DONE — verified against SQL Server)
+- [x] `QCService` — claim, verdict, history. Numbered attempts, append-only: a pass never erases
+      an earlier failure
+- [x] Segregation of duties: the assignee cannot QC their own work, and a nominated QC owner
+      cannot be displaced mid-review
+- [x] Acceptance criteria parsed line-by-line from the task; every one must be evaluated and met
+      before QC can pass; the evaluation is stored on the attempt
+- [x] Failure requires comments and returns the task to rework, never to closed. A QC query is
+      recorded as an attempt and leaves the task under review
+- [x] `ClosureService` — a named, inspectable checklist (QC passed, criteria still met, resolution
+      written, no running timer, no open subtasks) exposed as its own read endpoint
+- [x] QCPassed / QCFailedRework / Closed cannot be reached through the generic transition endpoint,
+      so those states always have their record behind them. An explicit override still can
 
-## Phase 8 — Comments / Dependencies / Subtasks / Scope / Reopen
-- [ ] Categorized comments + visibility rules
-- [ ] Dependency graph + blocked-by UI signal
-- [ ] Subtasks with own assignee/history
-- [ ] Scope-change records
-- [ ] Controlled reopen with reason
+## Phase 8 — Comments / Dependencies / Subtasks / Scope / Reopen (DONE — verified against SQL Server)
+- [x] Categorized comments, append-only. Visibility defaults come from the category, so an internal
+      note is hidden unless somebody deliberately shares it; filtering happens server-side on read
+- [x] Management notes are readable and writable only with `Dashboard.Management`
+- [x] Dependency graph. Only `DependsOn`/`Blocks` impose an order, so only those are cycle-checked
+      (breadth-first over the ordering edges) and only those produce a blocked signal
+- [x] Blocked is enforced, not just displayed: the timer refuses to start on a task waiting on
+      unfinished work (`task.blocked_by_dependency`)
+- [x] `ParentChild` rejected as a dependency type — parentage lives on `WorkTask.ParentTaskId`
+- [x] Subtasks are real tasks: own number, assignee, timer, history. One level deep, and the parent
+      cannot close while one is open
+- [x] Scope changes are recorded when requested and only move the estimate/deadline when approved,
+      so a bad estimate stays distinguishable from scope creep
+- [x] Controlled reopen: `Task.Reopen` (held by Reviewer), mandatory reason, audited — and a
+      reopened task needs a **fresh** QC pass before it can close again
 
-## Phase 9 — Real-Time (SignalR)
-- [ ] Hub + groups
-- [ ] Integration events after commit
-- [ ] Broadcaster mapping events → groups
-- [ ] Reconnect handling + client re-fetch
+## Phase 9 — Real-Time (SignalR) (DONE — verified against SQL Server)
+- [x] `WorkflowHub` at `/hubs/workflow`, notification-only: no method on it can change state.
+      Group membership is derived from the token, never from the client
+- [x] Groups: `user:{id}`, `task:{id}`, `perm:{key}`. Names built in one shared place so sender and
+      receiver cannot drift
+- [x] Integration events are derived from the change tracker in a `SaveChangesInterceptor`, so no
+      code path can forget to notify — and dispatched in `SavedChanges`, so nothing is announced for
+      a save that rolled back
+- [x] Publishing failures are logged and swallowed: a dropped notification must never fail the
+      transaction that caused it
+- [x] Payloads are thin (id, number, status, kind). Clients re-fetch — the DB is the source of truth
+- [x] Reconnect: `OnConnectedAsync` re-runs and re-joins the groups; the client re-fetches what it
+      missed. There is no server-side replay buffer, by design
 
-## Phase 10 — Dashboards & Reports
-- [ ] Requester / worker / admin / management dashboards
-- [ ] Daily user + team reports (stored procs)
-- [ ] Export/print
+## Phase 10 — Dashboards & Reports (DONE — verified against SQL Server)
+- [x] Four dashboards, one per audience: requester, worker, coordinator, management. The personal
+      ones are scoped to the caller's own id — no user parameter to tamper with
+- [x] Management view: throughput, QC pass rate, average cycle time, hours worked, open by
+      status/priority. Closures counted from the status trail, so a reopened-and-reclosed task is
+      not double-counted
+- [x] Daily user and team reports, sharing `DailyTimelineBuilder` with the workforce screens so a
+      report and a timeline can never disagree
+- [x] CSV export with proper quoting
+- [x] **Deviation:** written as EF queries, not stored procedures — one definition of the schema,
+      covered by the same test suite, no second artefact to keep in step through a migration
+- [ ] Print styling — belongs to the front end, which does not exist yet
 
-## Phase 11 — Notifications & Audit
-- [ ] In-app notifications
-- [ ] Activity timeline
-- [ ] Audit log stream
+## Phase 11 — Notifications & Audit (DONE — verified against SQL Server)
+- [x] In-app notifications: assignment, QC verdict, closure, reopen. A notification is a pointer
+      (title + link), not a copy, so it cannot go stale
+- [x] The actor is never notified of their own action
+- [x] Read/unread, unread count, mark-read scoped to the owner — another user's id marks nothing
+- [x] Every notification also goes out over SignalR to its recipient's group
+- [x] Audit stream with filters (action, entity, actor, date range), gated on `Admin.ViewAudit`,
+      and deliberately read-only: no route edits or deletes an entry
+- [x] Activity timeline was delivered in Phases 2 and 4 — the workforce stream
+      (`/api/shifts/activity`) and the per-task stream in the task detail
 
-## Phase 12 — Hardening
-- [ ] rowversion concurrency everywhere
-- [ ] Idempotency keys
-- [ ] Security pass (CSRF, XSS, upload validation, rate limiting)
-- [ ] Responsive UI polish
-- [ ] Deployment scripts + runbook
+## Phase 12 — Hardening (DONE, except the UI item)
+- [x] rowversion concurrency on every mutable aggregate: User, Request, WorkTask, WorkSession,
+      ShiftSession — verified as real `timestamp` columns on SQL Server
+- [x] Idempotency keys on task transitions
+- [x] Security headers: `nosniff`, `DENY` framing, Referrer-Policy, Permissions-Policy, and a CSP
+      that relaxes for inline script only where Swagger is actually served
+- [x] Global rate limit per user (falling back to IP), on top of the tighter credential-endpoint policy
+- [x] Upload validation: extension allow-list, size cap, generated stored names, path-traversal
+      guard, SHA-256 — built in Phase 3, re-checked here
+- [x] CSRF: **not applicable and deliberately not implemented** — auth is a bearer token in a header,
+      never a cookie, so a cross-site request cannot carry the caller's credentials. Revisit only if
+      anything moves to cookie auth
+- [x] Readiness probe (`/health/ready`) separate from liveness, so a database outage pulls the
+      instance from the load balancer instead of triggering a restart loop
+- [x] `scripts/deploy.ps1` and `docs/03-RUNBOOK.md`
+- [ ] Responsive UI polish — **blocked**: the Angular front end has not been started
+
+## Not started
+
+The Angular front end. Everything above is the server side; `wwwroot/index.html` is a throwaway dev
+console, not the product. A front end needs its own phase plan.
 
 ## Key Business Rules (guardrails for every phase)
 1. A request never auto-becomes a task.
@@ -122,3 +177,6 @@ Each phase is independently shippable. Complete a phase, verify, then move on.
 - ~~Interruption must preserve original task's paused session~~ → handled in `WorkSessionService.InterruptAsync`.
 - ~~Clarification reply must return request to review~~ → handled in `RequestTriageService`.
 - ~~Failed QC must land in rework, not Closed~~ → enforced by the workflow map.
+- ~~Closing work nobody signed off~~ → handled in Phase 7: the closure checklist.
+- ~~Criteria edited after QC passed~~ → handled: verdicts only carry over while the text matches,
+  so widening the criteria reopens the closure gate.

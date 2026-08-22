@@ -11,9 +11,11 @@ using System.Text;
 using System.Text.Json.Serialization;
 using WorkflowApp.Api.Authorization;
 using WorkflowApp.Api.Common;
+using WorkflowApp.Api.Hubs;
 using WorkflowApp.Api.Middleware;
 using WorkflowApp.Api.Services;
 using WorkflowApp.Application;
+using WorkflowApp.Application.Common.Events;
 using WorkflowApp.Application.Common.Interfaces;
 using WorkflowApp.Application.Common.Options;
 using WorkflowApp.Infrastructure;
@@ -97,6 +99,21 @@ builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
+    // A global ceiling per caller. Credential endpoints keep their own, much tighter, policy.
+    // Partitioned by user where we know who is calling, by IP where we do not, so one noisy client
+    // cannot spend everybody else's budget.
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                          ?? httpContext.Connection.RemoteIpAddress?.ToString()
+                          ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 300,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
+
     options.AddPolicy(RateLimitPolicies.Authentication, httpContext =>
         RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -114,6 +131,10 @@ builder.Services.AddHostedService<StaleShiftSweepService>();
 
 // --- Real-time (SignalR) ------------------------------------------------------------------
 builder.Services.AddSignalR();
+
+// Replaces the no-op publisher registered by AddApplication. The hub lives in this layer, so the
+// mapping from events to groups does too.
+builder.Services.AddSingleton<IIntegrationEventPublisher, SignalRIntegrationEventPublisher>();
 
 // --- API surface --------------------------------------------------------------------------
 builder.Services.AddControllers()
@@ -154,31 +175,51 @@ builder.Services.AddCors(o => o.AddPolicy("client", p => p
 var app = builder.Build();
 
 // --- Database bring-up --------------------------------------------------------------------
-// Off by default for SQL Server: applying migrations automatically is convenient in development
-// and a hazard in production, where migrations belong in the deployment pipeline.
-if (app.Configuration.GetValue("Database:ApplyMigrationsOnStartup", app.Environment.IsDevelopment()))
+// Two switches, deliberately independent, because they carry very different risk.
+//
+// Applying migrations rewrites the schema. That is convenient in development and a hazard in
+// production, where migrations belong in the deployment pipeline — so it is off by default outside
+// Development.
+//
+// Seeding only inserts rows the application cannot function without: the permission catalog, the
+// system roles and their grants, the pause reasons, the bootstrap administrator. It is idempotent
+// and safe to repeat, so it runs everywhere by default. These used to be nested, which meant a
+// production database came up with a perfectly good schema and no roles in it.
+var applyMigrations = app.Configuration.GetValue(
+    "Database:ApplyMigrationsOnStartup", app.Environment.IsDevelopment());
+var seedOnStartup = app.Configuration.GetValue("Database:SeedOnStartup", true);
+
+if (applyMigrations || seedOnStartup)
 {
     using var scope = app.Services.CreateScope();
-    var db = scope.ServiceProvider.GetRequiredService<WorkflowDbContext>();
 
-    if (app.Configuration.GetDatabaseProvider() == DatabaseProvider.Sqlite)
+    if (applyMigrations)
     {
-        // The migrations are authored for SQL Server, so the demo store is built straight from
-        // the model instead. Same schema shape, no migration history.
-        await db.Database.EnsureCreatedAsync();
+        var db = scope.ServiceProvider.GetRequiredService<WorkflowDbContext>();
+
+        if (app.Configuration.GetDatabaseProvider() == DatabaseProvider.Sqlite)
+        {
+            // The migrations are authored for SQL Server, so the demo store is built straight from
+            // the model instead. Same schema shape, no migration history.
+            await db.Database.EnsureCreatedAsync();
+        }
+        else
+        {
+            await db.Database.MigrateAsync();
+        }
     }
-    else
+
+    if (seedOnStartup)
     {
-        await db.Database.MigrateAsync();
+        await scope.ServiceProvider.GetRequiredService<DatabaseSeeder>().SeedAsync();
+
+        // Sample people, requests and tasks. Local evaluation only — see DemoDataSeeder.
+        if (app.Configuration.GetValue("Database:SeedDemoData", false))
+            await scope.ServiceProvider.GetRequiredService<DemoDataSeeder>().SeedAsync();
     }
-
-    await scope.ServiceProvider.GetRequiredService<DatabaseSeeder>().SeedAsync();
-
-    // Sample people, requests and tasks. Local evaluation only — see DemoDataSeeder.
-    if (app.Configuration.GetValue("Database:SeedDemoData", false))
-        await scope.ServiceProvider.GetRequiredService<DemoDataSeeder>().SeedAsync();
 }
 
+app.UseSecurityHeaders();
 app.UseWorkflowExceptionHandling();
 
 // Swagger is exposed in Development and in the local Demo environment, never in production.
@@ -191,12 +232,16 @@ if (isLocal)
 }
 
 // The Demo profile is plain HTTP on localhost; redirecting there would only produce a broken
-// hop to a port that is not listening.
-if (!app.Environment.IsEnvironment("Demo"))
+// hop to a port that is not listening. The same is true of an internal host that serves plain HTTP
+// on a LAN, or one sitting behind a proxy that already terminates TLS — hence the opt-out. It
+// defaults to true, so a deployment has to say out loud that it does not want the redirect.
+if (!app.Environment.IsEnvironment("Demo") &&
+    app.Configuration.GetValue("Security:RequireHttps", true))
+{
     app.UseHttpsRedirection();
+}
 
-// The dev console (wwwroot/index.html) — a plain HTML client for exercising the API until the
-// Angular front end exists.
+// The Angular client, built into wwwroot by `npm run build` in client/.
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
@@ -210,6 +255,45 @@ app.MapControllers();
 // Liveness only — deliberately no database call, so it still answers when SQL Server is down.
 app.MapGet("/health", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
 
-// TODO Phase 9: app.MapHub<WorkflowHub>("/hubs/workflow");
+// Readiness: can this instance actually serve traffic? Kept separate from liveness so a database
+// outage takes the instance out of the load balancer without the host being killed and restarted.
+app.MapGet("/health/ready", async (WorkflowDbContext db, CancellationToken ct) =>
+{
+    try
+    {
+        return await db.Database.CanConnectAsync(ct)
+            ? Results.Ok(new { status = "ready" })
+            : Results.Json(new { status = "database unreachable" }, statusCode: 503);
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { status = "database error", detail = ex.Message }, statusCode: 503);
+    }
+}).AllowAnonymous().DisableRateLimiting();
+
+// SPA fallback. Angular owns client-side routing, so a deep link like /tasks/5 is not a file on
+// disk — without this, refreshing anywhere but the root 404s. Registered after MapControllers and
+// the health endpoints so it only catches what nothing else claimed, and it deliberately excludes
+// the API and hub prefixes: an unknown /api path must still return 404, not an HTML page that a
+// fetch() would try to parse as JSON.
+app.MapFallbackToFile("index.html").Add(builder =>
+{
+    var original = builder.RequestDelegate!;
+    builder.RequestDelegate = context =>
+    {
+        var path = context.Request.Path;
+
+        if (path.StartsWithSegments("/api") || path.StartsWithSegments("/hubs") ||
+            path.StartsWithSegments("/swagger") || path.StartsWithSegments("/health"))
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            return Task.CompletedTask;
+        }
+
+        return original(context);
+    };
+});
+
+app.MapHub<WorkflowHub>("/hubs/workflow");
 
 app.Run();

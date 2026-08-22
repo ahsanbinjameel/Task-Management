@@ -1,6 +1,10 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using WorkflowApp.Application.Common.Events;
 using WorkflowApp.Application.Common.Services;
 using WorkflowApp.Application.Identity.Services;
+using WorkflowApp.Application.Notifications;
+using WorkflowApp.Application.Reporting;
 using WorkflowApp.Application.Requests.Services;
 using WorkflowApp.Application.Tasks.Services;
 using WorkflowApp.Application.Workforce.Services;
@@ -16,6 +20,11 @@ public static class DependencyInjection
     public static IServiceCollection AddApplication(this IServiceCollection services)
     {
         // Cross-cutting
+        // Scoped: one queue per unit of work, drained after that unit commits.
+        services.AddScoped<IIntegrationEventQueue, IntegrationEventQueue>();
+        // A no-op by default. The API host registers the SignalR publisher after this, and the
+        // later registration is the one resolved — so a host without SignalR still works.
+        services.TryAddSingleton<IIntegrationEventPublisher, NullIntegrationEventPublisher>();
         services.AddScoped<IAuditService, AuditService>();
         services.AddScoped<IActivityLogger, ActivityLogger>();
         services.AddScoped<INumberGenerator, NumberGenerator>();
@@ -43,6 +52,19 @@ public static class DependencyInjection
         services.AddScoped<ITaskWorkflowService, TaskWorkflowService>();
         services.AddScoped<ITaskAssignmentService, TaskAssignmentService>();
         services.AddScoped<IWorkSessionService, WorkSessionService>();
+        services.AddScoped<IQCService, QCService>();
+        services.AddScoped<IClosureService, ClosureService>();
+        services.AddScoped<ITaskCommentService, TaskCommentService>();
+        services.AddScoped<ITaskDependencyService, TaskDependencyService>();
+        services.AddScoped<IScopeChangeService, ScopeChangeService>();
+
+        // Notifications & audit
+        services.AddScoped<INotificationService, NotificationService>();
+        services.AddScoped<IAuditQueryService, AuditQueryService>();
+
+        // Dashboards & reports
+        services.AddScoped<IDashboardService, DashboardService>();
+        services.AddScoped<IReportService, ReportService>();
 
         return services;
     }

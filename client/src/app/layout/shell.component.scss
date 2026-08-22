@@ -1,0 +1,162 @@
+:host { display: block; height: 100%; }
+
+.shell {
+  display: grid;
+  grid-template-columns: var(--shell-width) 1fr;
+  height: 100vh;
+}
+
+/* --- sidebar --------------------------------------------------------------------------------- */
+
+.nav {
+  background: #10243b;
+  color: #cbd8e6;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 18px 16px;
+  font-size: 15.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #fff;
+}
+
+.brand mat-icon { color: #6aa9f5; }
+
+.nav nav { padding: 4px 10px 24px; }
+
+.section-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #6b8199;
+  padding: 16px 10px 6px;
+}
+
+.nav a {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 10px;
+  margin-bottom: 1px;
+  border-radius: 8px;
+  color: #cbd8e6;
+  text-decoration: none;
+  font-size: 13.5px;
+  font-weight: 500;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.nav a mat-icon {
+  font-size: 19px;
+  width: 19px;
+  height: 19px;
+  opacity: 0.8;
+}
+
+.nav a:hover { background: rgba(255, 255, 255, 0.07); color: #fff; }
+
+.nav a.active {
+  background: #1d69d4;
+  color: #fff;
+}
+
+.nav a.active mat-icon { opacity: 1; }
+
+/* --- main column ----------------------------------------------------------------------------- */
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 60px;
+  padding: 0 18px 0 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.burger { display: none; }
+
+main {
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+.user-button {
+  --mdc-text-button-label-text-color: var(--text);
+  padding-left: 6px;
+}
+
+.avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: #1d69d4;
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.user-name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 16px;
+}
+
+.scrim { display: none; }
+
+/* --- narrow screens: the sidebar becomes a drawer ---------------------------------------------- */
+
+@media (max-width: 1024px) {
+  .shell { grid-template-columns: 1fr; }
+
+  .nav {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: var(--shell-width);
+    z-index: 30;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+
+  .shell.nav-open .nav { transform: translateX(0); }
+
+  .shell.nav-open .scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    background: rgba(9, 18, 30, 0.45);
+  }
+
+  .burger { display: inline-flex; }
+  .user-name { display: none; }
+}
