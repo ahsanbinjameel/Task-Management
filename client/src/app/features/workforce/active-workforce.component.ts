@@ -1,4 +1,5 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { DestroyRef, Component, OnInit, inject, signal } from '@angular/core';
+import { syncOn } from '../../core/realtime-sync';
 import { DatePipe } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
@@ -10,7 +11,7 @@ import { ToastService } from '../../core/toast.service';
 import { RealtimeService } from '../../core/realtime.service';
 import { Perm } from '../../core/permissions';
 import { ActiveWorkforceDto, ActiveWorkerDto } from '../../core/models';
-import { ReasonDialog } from '../../shared/dialogs';
+import { ReasonDialog, ReasonData} from '../../shared/dialogs';
 import {
   ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent, StatComponent,
 } from '../../shared/ui';
@@ -85,6 +86,7 @@ import {
   `,
 })
 export class ActiveWorkforceComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(ApiService);
   private readonly auth = inject(AuthService);
   private readonly dialog = inject(MatDialog);
@@ -96,9 +98,12 @@ export class ActiveWorkforceComponent implements OnInit {
   readonly canManage = this.auth.has(Perm.workforceManageOthers);
 
   ngOnInit(): void {
-    this.load();
-    // Availability changes are pushed, so this screen stays live without polling.
-    this.realtime.workforceChanged.subscribe(() => this.load());
+   this.load();
+    // Re-fetch on the server's say-so; see syncOn for why it debounces and tears down.
+    syncOn(
+      [this.realtime.workforceChanged],
+      () => this.load(),
+      this.destroyRef);
   }
 
   load(): void {
@@ -110,23 +115,21 @@ export class ActiveWorkforceComponent implements OnInit {
 
   forceEnd(worker: ActiveWorkerDto): void {
     this.dialog
-      .open(ReasonDialog, {
+      .open<ReasonDialog, ReasonData>(ReasonDialog, {
         data: {
           title: `End ${worker.displayName}'s shift`,
-          message: 'This alters their attendance record, so it always carries a reason.',
-          label: 'Reason',
+          message: 'This changes their attendance record, so it always needs a reason.',
+          label: 'Why are you ending their shift?',
           confirmText: 'End shift',
           danger: true,
+          submit: (reason: string, ctx) => this.api.forceEndShift(worker.userId, reason, ctx),
         },
       })
       .afterClosed()
-      .subscribe((reason?: string) => {
-        if (!reason) return;
-
-        this.api.forceEndShift(worker.userId, reason).subscribe(() => {
-          this.toast.success(`Shift ended for ${worker.displayName}.`);
-          this.load();
-        });
+      .subscribe((done?: unknown) => {
+        if (!done) return;
+        this.toast.success(`Shift ended for ${worker.displayName}.`);
+        this.load();
       });
   }
 }

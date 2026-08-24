@@ -116,19 +116,68 @@ public sealed class DatabaseSeeder
     {
         if (await _db.PauseReasons.AnyAsync(ct)) return;
 
-        // IsBlocker distinguishes "I stepped away" (Paused) from "I cannot proceed" (Blocked) —
-        // the two land in different workflow states and read differently on a dashboard.
+        // Each reason answers two separate questions, and they are genuinely independent:
+        //
+        //   IsBlocker  — can the TASK still move on? Waiting for a client stops it; lunch does not,
+        //                because the task is still claimed and resumes when the worker returns.
+        //   AwayState  — where did the PERSON go? Set only for break/lunch/meeting. Every reason
+        //                that is about the work leaves it null: the worker is still on shift and
+        //                free to pick something else up.
+        //
+        // Getting these from one flag is what made a task look stalled because someone ate lunch,
+        // and left that someone marked Available while they were away from their desk.
         _db.PauseReasons.AddRange(
-            new PauseReason { Name = "Break", RequiresComment = false, IsBlocker = false },
-            new PauseReason { Name = "Lunch", RequiresComment = false, IsBlocker = false },
-            new PauseReason { Name = "Meeting", RequiresComment = false, IsBlocker = false },
-            new PauseReason { Name = "End of shift", RequiresComment = false, IsBlocker = false },
-            new PauseReason { Name = "Switched to higher priority task", RequiresComment = true, IsBlocker = false },
-            new PauseReason { Name = "Waiting for client response", RequiresComment = true, IsBlocker = true },
-            new PauseReason { Name = "Waiting for another team", RequiresComment = true, IsBlocker = true },
-            new PauseReason { Name = "Blocked by dependency", RequiresComment = true, IsBlocker = true },
-            new PauseReason { Name = "Environment or access issue", RequiresComment = true, IsBlocker = true },
-            new PauseReason { Name = "Awaiting clarification", RequiresComment = true, IsBlocker = true });
+            new PauseReason
+            {
+                Name = "Break", Category = PauseCategory.Break,
+                RequiresComment = false, IsBlocker = false, AwayState = WorkforceState.Break
+            },
+            new PauseReason
+            {
+                Name = "Lunch", Category = PauseCategory.Lunch,
+                RequiresComment = false, IsBlocker = false, AwayState = WorkforceState.Lunch
+            },
+            new PauseReason
+            {
+                Name = "Meeting", Category = PauseCategory.Meeting,
+                RequiresComment = false, IsBlocker = false, AwayState = WorkforceState.Meeting
+            },
+            // Deliberately no AwayState: only the end-shift operation may set ShiftEnded.
+            new PauseReason
+            {
+                Name = "End of shift", Category = PauseCategory.EndOfShift,
+                RequiresComment = false, IsBlocker = false
+            },
+            new PauseReason
+            {
+                Name = "Other work became urgent", Category = PauseCategory.OtherWorkUrgent,
+                RequiresComment = true, IsBlocker = false
+            },
+            new PauseReason
+            {
+                Name = "Waiting for client", Category = PauseCategory.WaitingForClient,
+                RequiresComment = true, IsBlocker = true
+            },
+            new PauseReason
+            {
+                Name = "Waiting for someone", Category = PauseCategory.WaitingForSomeone,
+                RequiresComment = true, IsBlocker = true
+            },
+            new PauseReason
+            {
+                Name = "Cannot continue — problem", Category = PauseCategory.CannotContinue,
+                RequiresComment = true, IsBlocker = true
+            },
+            new PauseReason
+            {
+                Name = "Waiting for access or environment", Category = PauseCategory.CannotContinue,
+                RequiresComment = true, IsBlocker = true
+            },
+            new PauseReason
+            {
+                Name = "Something else", Category = PauseCategory.Other,
+                RequiresComment = true, IsBlocker = false
+            });
 
         await _db.SaveChangesAsync(ct);
         _logger.LogInformation("Seeded default pause reasons");

@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using WorkflowApp.Application.Common;
 using WorkflowApp.Application.Common.Interfaces;
 using WorkflowApp.Application.Common.Models;
 using WorkflowApp.Application.Common.Services;
@@ -38,6 +39,15 @@ public abstract class ApiControllerBase : ControllerBase
             return calendar.ToBusinessDate(clock.UtcNow);
         }
     }
+
+    /// <summary>
+    /// How much of the workflow this caller is shown. Derived from their permissions, so it needs
+    /// no extra plumbing on the client and cannot be asked for by someone it does not belong to.
+    /// </summary>
+    protected StatusAudience Audience => StatusViews.AudienceFor(
+        User.Claims.Where(c => c.Type == AppClaimTypes.Permission)
+            .Select(c => c.Value)
+            .ToHashSet());
 
     /// <summary>
     /// Whether the caller holds a permission. Used where the check is conditional rather than a

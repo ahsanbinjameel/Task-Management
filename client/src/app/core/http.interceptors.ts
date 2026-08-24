@@ -4,6 +4,7 @@ import { Router } from '@angular/router';
 import { BehaviorSubject, Observable, catchError, filter, switchMap, take, throwError } from 'rxjs';
 import { AuthService } from './auth.service';
 import { ApiProblem } from './models';
+import { HANDLED_LOCALLY, looksTechnical, messageForStatus } from './form-errors';
 import { ToastService } from './toast.service';
 
 /** Endpoints that must not carry a token, and must not trigger a refresh when they 401. */
@@ -70,13 +71,19 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
  * Turns a ProblemDetails response into a toast, once, at the edge — so no component has to
  * remember to. 401 is excluded: the interceptor above is already handling it, and a "session
  * expired" toast during a successful silent refresh would be a lie.
+ *
+ * Requests marked `HANDLED_LOCALLY` are skipped. A form that shows its own inline errors would
+ * otherwise report the same failure twice, once beside the field and once in a toast floating
+ * outside the dialog.
  */
 export const errorInterceptor: HttpInterceptorFn = (req, next) => {
   const toast = inject(ToastService);
 
   return next(req).pipe(
     catchError((error: unknown) => {
-      if (error instanceof HttpErrorResponse && error.status !== 401) {
+      const handledByCaller = req.context.get(HANDLED_LOCALLY);
+
+      if (error instanceof HttpErrorResponse && error.status !== 401 && !handledByCaller) {
         toast.error(describe(error));
       }
       return throwError(() => error);
@@ -88,28 +95,34 @@ function withToken(req: HttpRequest<unknown>, token: string | null): HttpRequest
   return token ? req.clone({ setHeaders: { Authorization: `Bearer ${token}` } }) : req;
 }
 
-/** Prefers the server's own message; falls back to something honest about what went wrong. */
+/**
+ * Prefers the server's own message, and falls back to plain language rather than a status code.
+ *
+ * Nothing here may surface a number, an exception name or a constraint name: those go to the log,
+ * where someone who can act on them will look. What reaches the screen has to say what happened
+ * and what to do next.
+ */
 export function describe(error: HttpErrorResponse): string {
   if (error.status === 0) {
-    return 'Cannot reach the server. Check that the API is running.';
+    return 'Cannot reach the system right now. Check your connection and try again.';
   }
 
   const problem = error.error as ApiProblem | string | null;
 
-  if (typeof problem === 'string' && problem.trim()) return problem;
+  if (typeof problem === 'string' && problem.trim() && !looksTechnical(problem)) return problem;
 
   if (problem && typeof problem === 'object') {
     const detail = problem.detail?.trim();
-    if (detail) return detail;
+    if (detail && !looksTechnical(detail)) return detail;
 
     const title = problem.title?.trim();
-    if (title) return title;
+    if (title && !looksTechnical(title)) return title;
   }
 
-  return error.status === 403
-    ? 'You do not have permission to do that.'
-    : `Request failed (${error.status}).`;
+  return messageForStatus(error.status);
 }
+
+
 
 /** The stable error code, for the rare case a caller needs to branch on the reason. */
 export function problemCode(error: unknown): string | null {

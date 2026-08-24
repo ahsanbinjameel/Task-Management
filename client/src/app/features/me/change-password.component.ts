@@ -27,9 +27,8 @@ const matching = (group: AbstractControl): ValidationErrors | null =>
         </mat-form-field>
 
         <mat-form-field class="full">
-          <mat-label>New password</mat-label>
+          <mat-label>New password (at least 10 characters)</mat-label>
           <input matInput type="password" formControlName="newPassword" autocomplete="new-password" />
-          <mat-hint>At least 10 characters.</mat-hint>
         </mat-form-field>
 
         <mat-form-field class="full">

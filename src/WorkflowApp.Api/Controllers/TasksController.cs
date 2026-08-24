@@ -60,26 +60,73 @@ public sealed class TasksController : ApiControllerBase
     [ProducesResponseType(typeof(PagedResult<TaskSummaryDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> List(
         [FromQuery] WorkTaskStatus? status,
+        [FromQuery] string? view,
         [FromQuery] Priority? priority,
         [FromQuery] long? assigneeUserId,
         [FromQuery] bool? unassigned,
+        [FromQuery] long? clientId,
         [FromQuery] bool openOnly = true,
         [FromQuery] string? search = null,
+        [FromQuery] string? sortBy = null,
+        [FromQuery] bool sortDescending = true,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 25,
         CancellationToken ct = default)
     {
+        // Anyone who coordinates, reviews, checks or reports on work needs the whole picture.
+        // Everyone else sees the work they are part of.
+        var seesEverything =
+            HasPermission(Permissions.TaskAssign)
+            || HasPermission(Permissions.TaskReview)
+            || HasPermission(Permissions.TaskQCReview)
+            || HasPermission(Permissions.WorkforceViewAll)
+            || HasPermission(Permissions.RequestViewAll)
+            || HasPermission(Permissions.DashboardManagement);
+
         var query = new TaskQuery
         {
+            VisibleToUserId = seesEverything ? null : CurrentUserId,
             Status = status,
+            View = view,
+            Audience = Audience,
             Priority = priority,
             AssigneeUserId = assigneeUserId,
             Unassigned = unassigned,
+            ClientId = clientId,
             OpenOnly = openOnly,
-            Search = search
+            Search = search,
+            SortBy = sortBy,
+            SortDescending = sortDescending
         };
 
         return Ok(await _queries.ListAsync(query, new PageQuery { Page = page, PageSize = pageSize }, ct));
+    }
+
+    /// <summary>Counts for the status tiles above the list, under the caller's own visibility.</summary>
+    [HttpGet("status-counts")]
+    [ProducesResponseType(typeof(IReadOnlyList<StatusCountDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> StatusCounts(
+        [FromQuery] long? clientId,
+        [FromQuery] string? search,
+        [FromQuery] bool openOnly = true,
+        CancellationToken ct = default)
+    {
+        var seesEverything =
+            HasPermission(Permissions.TaskAssign)
+            || HasPermission(Permissions.TaskReview)
+            || HasPermission(Permissions.TaskQCReview)
+            || HasPermission(Permissions.WorkforceViewAll)
+            || HasPermission(Permissions.RequestViewAll)
+            || HasPermission(Permissions.DashboardManagement);
+
+        return Ok(await _queries.StatusCountsAsync(new TaskQuery
+        {
+            VisibleToUserId = seesEverything ? null : CurrentUserId,
+            Audience = Audience,
+            ClientId = clientId,
+            Search = search,
+            OpenOnly = openOnly,
+        }, ct));
     }
 
     [HttpGet("{id:long}")]

@@ -265,7 +265,6 @@ namespace WorkflowApp.Infrastructure.Persistence.Migrations
                         .HasColumnType("nvarchar(200)");
 
                     b.Property<string>("Email")
-                        .IsRequired()
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
 
@@ -310,7 +309,9 @@ namespace WorkflowApp.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("Email")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasDatabaseName("UX_User_Email")
+                        .HasFilter("[Email] IS NOT NULL");
 
                     b.HasIndex("UserName")
                         .IsUnique();
@@ -533,6 +534,12 @@ namespace WorkflowApp.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
+                    b.Property<int?>("AwayState")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Category")
+                        .HasColumnType("int");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
 
@@ -711,6 +718,53 @@ namespace WorkflowApp.Infrastructure.Persistence.Migrations
                     b.HasIndex("Status");
 
                     b.ToTable("Requests");
+                });
+
+            modelBuilder.Entity("WorkflowApp.Domain.Entities.Requests.RequestActivity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<long>("ActorUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long?>("CreatedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long>("RequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<byte[]>("RowVersion")
+                        .HasColumnType("varbinary(max)");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long?>("UpdatedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequestId", "OccurredAt");
+
+                    b.ToTable("RequestActivities");
                 });
 
             modelBuilder.Entity("WorkflowApp.Domain.Entities.Requests.RequestClarification", b =>
@@ -1426,6 +1480,11 @@ namespace WorkflowApp.Infrastructure.Persistence.Migrations
                         .HasPrecision(9, 2)
                         .HasColumnType("decimal(9,2)");
 
+                    b.Property<bool>("IsRequired")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
                     b.Property<long?>("ModuleId")
                         .HasColumnType("bigint");
 
@@ -1488,8 +1547,6 @@ namespace WorkflowApp.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ParentTaskId");
-
                     b.HasIndex("Status");
 
                     b.HasIndex("TaskNumber")
@@ -1498,6 +1555,8 @@ namespace WorkflowApp.Infrastructure.Persistence.Migrations
                     b.HasIndex("PrimaryAssigneeUserId", "QueueOrder");
 
                     b.HasIndex("PrimaryAssigneeUserId", "Status");
+
+                    b.HasIndex("ParentTaskId", "IsRequired", "Status");
 
                     b.ToTable("Tasks");
                 });

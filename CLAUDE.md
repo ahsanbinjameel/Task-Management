@@ -106,6 +106,7 @@ script for SSMS.
 |---|---|---|
 | `Common/Permissions.cs` | ✅ | `Permissions.*` key catalog + `DefaultRoles.Map` (role → permission bundles) |
 | `Common/TaskTransitionService.cs` | ✅ | Pure transition validation (workflow map + permission + reason + override) |
+| `Common/StatusViews.cs` | ✅ | **Who is shown which statuses.** Groups internal states into per-audience views (requester / worker / coordinator), resolves the audience from permissions, and folds a request's status onto its task |
 | `Common/Interfaces/IWorkflowDbContext.cs` | ✅ | The persistence surface the Application layer sees (all DbSets + `Database` + `SaveChangesAsync`) |
 | `Common/Interfaces/IIdentityAbstractions.cs` | ✅ | `ICurrentUser`, `IDateTimeProvider`, `IPasswordHasher`, `ITokenService`, `AccessToken`, `IssuedRefreshToken` |
 | `Common/Models/Result.cs` | ✅ | `Result` / `Result<T>` / `Error` / `ErrorType` — expected failures are returned, not thrown |
@@ -295,6 +296,10 @@ script for SSMS.
 | `src/app/core/guards.ts` | `authGuard`, `requirePermission(...)` |
 | `src/app/core/format.ts` | TimeSpan parsing, status→tone mapping, CSV/blob download |
 | `src/app/shared/` | Chips, stats, empty/loading states, the shared task table, confirm + reason dialogs |
+| `src/app/shared/search-select.component.ts` | `app-search-select` — **the** dropdown. Type-to-filter, single or multi (chips). Works with `ngModel` and `formControlName`; `enumOptions()` builds the options for enum lists |
+| `src/app/shared/list-views.ts` | Columns + primary action per status view. The server says which statuses a view covers; this says what is worth showing once you are in it |
+| `src/app/shared/attachments.component.ts` | `app-attachments` (thumbnails, file rows) and the image viewer dialog — zoom, pan, next/previous. Download is secondary |
+| `src/app/shared/file-drop.component.ts` | `app-file-drop` — choose / drag / **paste** (Win+Shift+S → Ctrl+V), with previews before anything is submitted |
 | `src/app/layout/` | Shell, permission-filtered nav, notification bell, shift widget |
 | `src/app/features/` | One folder per area: dashboard, tasks (+ `panels/`), requests, qc, workforce, reports, admin, me |
 | `proxy.conf.json` | Dev-server proxy for `/api`, `/hubs`, `/health` |
@@ -433,6 +438,47 @@ script for SSMS.
 - **Fonts and icons are self-hosted** (`@fontsource/roboto`, `material-icons`). The CSP is
   `'self'`-only and an internal LAN box may have no internet; a CDN font that silently fails leaves
   an icon set rendered as raw words.
+- **How much of the workflow you see depends on what you do.** `StatusViews` groups the twenty-two
+  task states into six for a worker, ten for a coordinator, and ten plain-language ones for a
+  requester. The state machine is untouched — this is only about what is *shown*. It lives on the
+  server because the filter has to run in the database (counting tiles on the client would only
+  ever count the page you can already see) and because two copies of the mapping would drift. The
+  audience comes from permissions, never from a role name, so renaming a role changes nothing.
+- **A requester's status follows the task, not the request.** A request stops moving once it is
+  approved; everything after that happens on the task. So the request's row, tiles and detail all
+  report the task's state. Paused reads as "In Progress" and a failed quality check reads as
+  "In Progress" — the work is in hand, and a status that flickers with a worker's day only invites
+  chasing. Coordinators still see paused, blocked and rework separately, because acting on that
+  difference is their job.
+- **The grid follows the view, not the screen.** `list-views.ts` names the columns and the one
+  primary action per view. A fixed column set is wrong nearly everywhere: worked time on a queue
+  nobody has started is a column of dashes. Everything the new columns need was already in the
+  history tables — "waiting since" is the `StatusHistory` row that put the task where it is,
+  "started" is the first `WorkSession`, "checked by" is the latest `QCReview` — so no schema
+  changed.
+- **Neither side has to read the other's screen.** `RequestProgressDto` reads the task back onto
+  the request (who has it, how far, what QC is doing, why it is waiting, the latest shared note);
+  `RequestContextDto` carries the request's own words and screenshots onto the task. Both are
+  summaries, not copies: `Request ≠ Task` still holds, and a second staler copy of either would be
+  worse than the trip it saves.
+- **Screenshots are looked at, not downloaded.** Thumbnails inline, a viewer with zoom/pan, paste
+  and drag-drop on the way in. Attachments are fetched as blobs because an `<img src>` cannot carry
+  a bearer token, which is why `img-src` in the CSP allows `blob:` — those URLs are same-origin,
+  unguessable, and live only as long as the page.
+- **The New Request form asks for four things.** Optional detail (business impact, expected result,
+  what happens instead, steps to reproduce) is a row of chips, suggested by request type. Closing a
+  chip clears the field: a value the requester can no longer see must never be submitted on their
+  behalf. Project and Module are deliberately *not* on the form — client alone is enough for
+  intake.
+- **Every dropdown is `app-search-select`; `mat-select` is not used anywhere.** A plain select is
+  fine for four options and unusable for two hundred people, and two controls doing the same job
+  means the user has to work out which one they are looking at before they can use it. The text box
+  is a *filter*, never a value: it empties on focus (the current value stays on as the placeholder),
+  typing narrows the list, and anything unmatched is discarded on blur — so the value can still only
+  ever be one of the options. Two Material details are load-bearing: `displayWith` has to map the
+  option object back to its label, or the raw object is written into the box behind Angular's back;
+  and Material re-focuses the input after a selection, which is why the clear-on-focus is skipped
+  once after picking.
 - **Angular Material 21 needs no `@angular/animations`.** It uses native CSS animations, and
   `provideAnimationsAsync()` would fail to resolve its lazy import.
 - **Activity events ordered by `(OccurredAt, Id)` everywhere.** Two events can share a timestamp;
@@ -494,6 +540,21 @@ All on EF Core InMemory or pure functions, so the suite runs with no SQL Server.
 SQL Server 2019 Developer Edition runs on the `localhost` default instance. `WorkflowApp_Dev` has
 been created, migrated and seeded, and every phase has been driven end to end over HTTP.
 
+> **Second dev machine (DESKTOP-2E2D7JE) has no default instance.** It exposes
+> `localhost\SQLEXPRESS` (SQL Server 2022 Express) and `(localdb)\MSSQLLocalDB` (2025 Express)
+> instead, so `Server=localhost` fails there with a Named Pipes error. Do **not** edit the tracked
+> `appsettings.Development.json` for it - that would break the primary machine. It is configured
+> with **user-secrets** instead, which override per machine and are not in the repo:
+>
+>     dotnet user-secrets set "ConnectionStrings:Default" 'Server=(localdb)\MSSQLLocalDB;Database=WorkflowApp_Dev;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true' --project src/WorkflowApp.Api
+>
+> `WorkflowApp.Api.csproj` therefore carries a `UserSecretsId`. On the primary machine no secret is
+> set, so `appsettings.Development.json` still wins and nothing changes there.
+>
+> `wwwroot/` is gitignored and was never committed, but `WebApplication.CreateBuilder` throws
+> `DirectoryNotFoundException` when it is absent - a fresh clone cannot start the API until the
+> directory exists. `mkdir src/WorkflowApp.Api/wwwroot` is enough.
+
 Verified:
 
 - [x] `InitialCreate` applied and recorded in `__EFMigrationsHistory`. Phases 7-12 added no schema
@@ -512,6 +573,19 @@ Verified:
       daily reports and the CSV; the audit stream and its permission gate; security headers and the
       readiness probe
 
+- [x] Refresh rotation verified: a rotated token is rejected as `auth.refresh_token_reused`, and
+      reuse revokes the whole family by design (`AuthService` L169-172), so the replacement token
+      dies with it. A clean chain of 3 rotations succeeds
+- [x] **ROWVERSION race confirmed on real SQL Server.** Two simultaneous assignments carrying the
+      same stale `rowVersion`: one 200, one 409 `task.concurrency_conflict`
+- [x] Stale-shift sweep closes an artificially old open shift, stamping `EndedImproperly=1` and a
+      `Workforce.ShiftAutoClosed` audit row. It ends the shift at the last sign of life, not at
+      sweep time - a 20h-old shift closed at its own start timestamp
+- [x] `UX_ShiftSession_OneOpenPerUser` rejects a second open shift at the database level, not just
+      in the service. (Raw inserts need `sqlcmd -I`; filtered indexes require `QUOTED_IDENTIFIER ON`)
+- [x] Phase 2 timeline renders labelled intervals per state. Note `Break -> Lunch` is *not* a legal
+      move: away states reach each other only via Available or Working, per `WorkforceStateMachine`
+- [x] Placeholder `Jwt:SigningKey` refuses to boot outside Development, as intended
 Still outstanding before this is anything but a dev box:
 
 - [ ] Change the bootstrap admin password away from `ChangeMe!2024`
@@ -519,13 +593,6 @@ Still outstanding before this is anything but a dev box:
       the placeholder outside Development
 - [ ] Set a real `Workforce:TimeZoneId` - it defaults to UTC, which will skew daily reports
 - [ ] Point `FileStorage:Root` at a real directory for non-Development environments
-- [ ] Exercise refresh rotation and confirm replaying an old refresh token is rejected
-- [ ] Confirm the ROWVERSION concurrency guard actually fires on *concurrent* assignment - the
-      column is real now, but nothing has raced against it
-- [ ] Phase 2: step a shift through Break/Lunch/Meeting and check the timeline totals against the
-      wall clock
-- [ ] Phase 2: confirm the stale-shift sweep closes an artificially old open shift
-      (set `Workforce:MaxShiftHours` low to force it)
 - [ ] Phase 9: connect a real SignalR client and watch a task update arrive. Only the negotiate
       handshake has been exercised so far, not an actual pushed message
 - [ ] Phase 9: SignalR group membership is per-process. Running more than one instance needs a

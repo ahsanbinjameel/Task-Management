@@ -7,7 +7,7 @@ import { AuthService } from '../../../core/auth.service';
 import { ToastService } from '../../../core/toast.service';
 import { Perm } from '../../../core/permissions';
 import { ClosureChecklistDto, TaskDetailDto } from '../../../core/models';
-import { ReasonDialog } from '../../../shared/dialogs';
+import { ReasonDialog, ReasonData} from '../../../shared/dialogs';
 
 /**
  * The closure checklist.
@@ -116,23 +116,21 @@ export class TaskClosureComponent implements OnInit {
 
   reopen(): void {
     this.dialog
-      .open(ReasonDialog, {
+      .open<ReasonDialog, ReasonData>(ReasonDialog, {
         data: {
-          title: 'Reopen this task',
-          message: 'It will need a fresh QC pass before it can be closed again.',
-          label: 'Why is this being reopened?',
-          confirmText: 'Reopen',
+          title: 'Open this task again',
+          message: 'It will need to pass a fresh quality check before it can be closed again.',
+          label: 'Why does this need more work?',
+          confirmText: 'Open again',
           danger: true,
+          submit: (reason: string, ctx) => this.api.reopenTask(this.task().id, reason, ctx),
         },
       })
       .afterClosed()
-      .subscribe((reason?: string) => {
-        if (!reason) return;
-
-        this.api.reopenTask(this.task().id, reason).subscribe(() => {
-          this.toast.success('Task reopened.');
-          this.changed.emit();
-        });
+      .subscribe((done?: unknown) => {
+        if (!done) return;
+        this.toast.success('This task is open again.');
+        this.changed.emit();
       });
   }
 }

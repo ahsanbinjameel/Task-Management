@@ -1,4 +1,6 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { DestroyRef, Component, OnInit, inject, signal } from '@angular/core';
+import { RealtimeService } from '../../core/realtime.service';
+import { syncOn } from '../../core/realtime-sync';
 import { RouterLink } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -51,7 +53,7 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
               </ng-container>
 
               <ng-container matColumnDef="blocked">
-                <th mat-header-cell *matHeaderCellDef>Blocked</th>
+                <th mat-header-cell *matHeaderCellDef>Cannot continue</th>
                 <td mat-cell *matCellDef="let r" class="mono"
                     [class.overdue]="r.blockedCount > 0">{{ r.blockedCount }}</td>
               </ng-container>
@@ -82,13 +84,22 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
   `,
 })
 export class WorkloadComponent implements OnInit {
+  private readonly realtime = inject(RealtimeService);
+  private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(ApiService);
 
   readonly rows = signal<WorkloadDto[]>([]);
   readonly loading = signal(true);
   readonly columns = ['name', 'state', 'open', 'running', 'blocked', 'hours', 'now'];
 
-  ngOnInit(): void { this.load(); }
+  ngOnInit(): void {
+   this.load();
+    // Re-fetch on the server's say-so; see syncOn for why it debounces and tears down.
+    syncOn(
+      [this.realtime.taskChanged, this.realtime.workforceChanged],
+      () => this.load(),
+      this.destroyRef);
+  }
 
   load(): void {
     this.api.workload().subscribe({

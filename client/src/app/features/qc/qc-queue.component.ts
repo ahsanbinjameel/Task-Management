@@ -1,4 +1,5 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { DestroyRef, Component, OnInit, inject, signal } from '@angular/core';
+import { syncOn } from '../../core/realtime-sync';
 import { Router } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -22,7 +23,7 @@ import { TaskTableComponent } from '../../shared/task-table.component';
   ],
   template: `
     <div class="page">
-      <app-page-header title="QC queue" subtitle="Completed work waiting for review.">
+      <app-page-header title="Quality checks" subtitle="Completed work waiting for review.">
         <button matButton (click)="load()"><mat-icon>refresh</mat-icon> Refresh</button>
       </app-page-header>
 
@@ -44,6 +45,7 @@ import { TaskTableComponent } from '../../shared/task-table.component';
   `,
 })
 export class QcQueueComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(ApiService);
   private readonly router = inject(Router);
   private readonly toast = inject(ToastService);
@@ -54,8 +56,12 @@ export class QcQueueComponent implements OnInit {
     { items: [], page: 1, pageSize: 25, totalCount: 0, totalPages: 0 });
 
   ngOnInit(): void {
-    this.load();
-    this.realtime.taskChanged.subscribe(() => this.load());
+   this.load();
+    // Re-fetch on the server's say-so; see syncOn for why it debounces and tears down.
+    syncOn(
+      [this.realtime.taskChanged],
+      () => this.load(),
+      this.destroyRef);
   }
 
   load(): void {

@@ -147,6 +147,7 @@ public sealed class TaskCreationService : ITaskCreationService
         {
             TaskNumber = await _numbers.NextAsync(NumberSequences.Task, NumberSequences.TaskPrefix, ct),
             ParentTaskId = parent.Id,
+            IsRequired = request.IsRequired,
 
             // Provenance follows the parent, so a subtask still traces back to what was asked for.
             RequestId = parent.RequestId,

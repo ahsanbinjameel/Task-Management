@@ -62,9 +62,13 @@ public sealed class JwtTokenService : ITokenService
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("N")),
             new(ClaimTypes.NameIdentifier, user.Id.ToString()),
             new(ClaimTypes.Name, user.UserName),
-            new(ClaimTypes.Email, user.Email),
             new(AppClaimTypes.DisplayName, user.DisplayName)
         };
+
+        // Email is optional. Claim values may not be null, so the claim is omitted entirely rather
+        // than carrying an empty string that consumers would have to special-case anyway.
+        if (!string.IsNullOrWhiteSpace(user.Email))
+            claims.Add(new Claim(ClaimTypes.Email, user.Email));
 
         claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));
         claims.AddRange(permissions.Select(p => new Claim(AppClaimTypes.Permission, p)));

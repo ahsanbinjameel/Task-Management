@@ -28,21 +28,25 @@ public static class TaskTransitionService
         if (req.IsOverride)
         {
             if (!req.ActorPermissions.Contains(Permissions.TaskOverride))
-                return new(false, "Override requires Task.Override permission.", false);
+                return new(false, "You do not have permission to force this change.", false);
             if (string.IsNullOrWhiteSpace(req.Reason))
-                return new(false, "Override requires a reason.", false);
+                return new(false, "Please give a reason for forcing this change.", false);
             return new(true, null, true);
         }
 
         var transition = TaskWorkflow.Find(req.From, req.To);
         if (transition is null)
-            return new(false, $"Transition {req.From} → {req.To} is not allowed.", false);
+            return new(false,
+                $"This cannot be moved from \"{StatusLabels.For(req.From)}\" to "
+                + $"\"{StatusLabels.For(req.To)}\". Refresh the page to see the current options — "
+                + "someone may have changed it already.", false);
 
         if (!req.ActorPermissions.Contains(transition.RequiredPermission))
-            return new(false, $"Missing permission: {transition.RequiredPermission}.", false);
+            return new(false, "You do not have permission to make this change.", false);
 
         if (transition.ReasonRequired && string.IsNullOrWhiteSpace(req.Reason))
-            return new(false, $"A reason is required to move from {req.From} to {req.To}.", false);
+            return new(false,
+                $"Please give a reason before moving this to \"{StatusLabels.For(req.To)}\".", false);
 
         return new(true, null, true);
     }
@@ -53,7 +57,7 @@ public static class TaskTransitionService
         var d = Validate(req);
         if (!d.Allowed)
         {
-            if (d.Error?.Contains("reason is required", StringComparison.OrdinalIgnoreCase) == true)
+            if (d.Error?.Contains("give a reason", StringComparison.OrdinalIgnoreCase) == true)
                 throw new TransitionReasonRequiredException(req.From, req.To);
             throw new InvalidWorkflowTransitionException(req.From, req.To);
         }

@@ -47,8 +47,12 @@ public sealed class SecurityHeadersMiddleware
             ? "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
             : "script-src 'self'; style-src 'self'";
 
+        // blob: is on img-src for the attachment thumbnails and the image viewer. An attachment is
+        // fetched with the caller's bearer token — an <img src> cannot carry one — so the bytes are
+        // turned into a blob URL by our own script. Those URLs are same-origin, unguessable and
+        // last only as long as the page: they cannot pull in anything from anywhere else.
         headers["Content-Security-Policy"] =
-            $"default-src 'self'; {scriptSrc}; img-src 'self' data:; " +
+            $"default-src 'self'; {scriptSrc}; img-src 'self' data: blob:; " +
             // The SignalR WebSocket connects back to this origin and nowhere else.
             "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
 

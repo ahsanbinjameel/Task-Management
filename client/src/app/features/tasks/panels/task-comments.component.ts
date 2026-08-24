@@ -5,7 +5,6 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
-import { MatSelectModule } from '@angular/material/select';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { ApiService } from '../../../core/api.service';
@@ -13,6 +12,7 @@ import { AuthService } from '../../../core/auth.service';
 import { Perm } from '../../../core/permissions';
 import { CommentCategory, TaskCommentDto } from '../../../core/models';
 import { humanizeEnum } from '../../../core/format';
+import { enumOptions, SearchSelectComponent } from '../../../shared/search-select.component';
 import { EmptyComponent } from '../../../shared/ui';
 
 /** Customer-facing by default; everything else is internal unless deliberately shared. */
@@ -25,7 +25,7 @@ const VISIBLE_BY_DEFAULT: CommentCategory[] = [
   standalone: true,
   imports: [
     DatePipe, FormsModule, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule,
-    MatSelectModule, MatSlideToggleModule, MatTooltipModule, EmptyComponent,
+    MatSlideToggleModule, MatTooltipModule, EmptyComponent, SearchSelectComponent,
   ],
   template: `
     <div class="stack">
@@ -37,14 +37,8 @@ const VISIBLE_BY_DEFAULT: CommentCategory[] = [
         </mat-form-field>
 
         <div class="row row-wrap">
-          <mat-form-field class="category">
-            <mat-label>Category</mat-label>
-            <mat-select [(ngModel)]="category" (selectionChange)="onCategoryChange()">
-              @for (c of categories; track c) {
-                <mat-option [value]="c">{{ label(c) }}</mat-option>
-              }
-            </mat-select>
-          </mat-form-field>
+          <app-search-select class="category" label="Category" [options]="categoryOptions"
+                             [(ngModel)]="category" (valueChange)="onCategoryChange()" />
 
           <mat-slide-toggle [(ngModel)]="visibleToRequester"
                             matTooltip="Whether the person who raised the request can read this">
@@ -109,6 +103,8 @@ export class TaskCommentsComponent implements OnInit {
     'ProgressUpdate', 'QCNote', 'ResolutionNote',
     ...(this.auth.has(Perm.dashboardManagement) ? ['ManagementNote' as CommentCategory] : []),
   ];
+
+  readonly categoryOptions = enumOptions(this.categories);
 
   label = (value: string) => humanizeEnum(value);
 

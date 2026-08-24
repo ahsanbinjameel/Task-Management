@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using WorkflowApp.Application.Common;
 using WorkflowApp.Application.Common.Interfaces;
 using WorkflowApp.Application.Common.Models;
 using WorkflowApp.Application.Common.Services;
+using WorkflowApp.Application.Notifications;
 using WorkflowApp.Application.Requests.Dtos;
 using WorkflowApp.Application.Tasks.Services;
 using WorkflowApp.Domain.Entities.Requests;
@@ -40,6 +42,8 @@ public sealed class RequestTriageService : IRequestTriageService
     private readonly IRequestService _requests;
     private readonly ITaskCreationService _taskCreation;
     private readonly IAuditService _audit;
+    private readonly INotificationService _notifications;
+    private readonly ILookupService _lookups;
     private readonly IDateTimeProvider _clock;
     private readonly ILogger<RequestTriageService> _logger;
 
@@ -48,6 +52,8 @@ public sealed class RequestTriageService : IRequestTriageService
         IRequestService requests,
         ITaskCreationService taskCreation,
         IAuditService audit,
+        INotificationService notifications,
+        ILookupService lookups,
         IDateTimeProvider clock,
         ILogger<RequestTriageService> logger)
     {
@@ -55,6 +61,8 @@ public sealed class RequestTriageService : IRequestTriageService
         _requests = requests;
         _taskCreation = taskCreation;
         _audit = audit;
+        _notifications = notifications;
+        _lookups = lookups;
         _clock = clock;
         _logger = logger;
     }
@@ -67,7 +75,7 @@ public sealed class RequestTriageService : IRequestTriageService
             return Result<RequestDetailDto>.Failure(Error.NotFound("request.not_found", "Request not found."));
 
         if (request.Status == RequestStatus.InReview)
-            return await _requests.GetAsync(requestId, ct);   // already claimed; idempotent
+            return await _requests.GetAsync(requestId, ct: ct);   // already claimed; idempotent
 
         if (request.Status is not (RequestStatus.Submitted or RequestStatus.ClarificationRequired))
             return Result<RequestDetailDto>.Failure(Error.Conflict(
@@ -76,7 +84,7 @@ public sealed class RequestTriageService : IRequestTriageService
         request.Status = RequestStatus.InReview;
         await _db.SaveChangesAsync(ct);
 
-        return await _requests.GetAsync(requestId, ct);
+        return await _requests.GetAsync(requestId, ct: ct);
     }
 
     public async Task<Result<TriageResult>> DecideAsync(
@@ -138,8 +146,15 @@ public sealed class RequestTriageService : IRequestTriageService
         // the reviewer still has to look at the answer.
         clarification.Request.Status = RequestStatus.Submitted;
 
+        // Back to the reviewer who asked. Addressed to them personally rather than the whole review
+        // group: they are waiting on this specific answer.
+        _notifications.RaiseFor(
+            new long?[] { clarification.AskedByUserId }, answeringUserId,
+            $"{clarification.Request.RequestNumber}: the requester has replied",
+            answer.Trim(), NotificationService.LinkRequest, clarification.RequestId);
+
         await _db.SaveChangesAsync(ct);
-        return await _requests.GetAsync(clarification.RequestId, ct);
+        return await _requests.GetAsync(clarification.RequestId, ct: ct);
     }
 
     // --- outcomes ------------------------------------------------------------------------
@@ -159,6 +174,11 @@ public sealed class RequestTriageService : IRequestTriageService
         // The requester's urgency is advisory; the approved priority is what schedules the work.
         var priority = decision.ApprovedPriority ?? MapUrgency(request.RequestedUrgency);
 
+        // Corrections land on the request, and the task inherits from it a line later. Writing to
+        // both separately is how the same task ends up filed under two different clients.
+        if (!string.IsNullOrWhiteSpace(decision.ClientName))
+            request.ClientId = await _lookups.ResolveClientAsync(decision.ClientName, ct);
+
         var task = await _taskCreation.CreateFromRequestAsync(
             request, reviewerId, priority, decision.EstimatedEffortHours, decision.DueDate,
             decision.AcceptanceCriteria, ct);
@@ -172,6 +192,18 @@ public sealed class RequestTriageService : IRequestTriageService
             entityType: nameof(Request),
             entityId: request.Id,
             newValues: new { TaskId = task.Id, task.TaskNumber, Priority = priority.ToString() });
+
+        // The requester has been waiting on this decision; the coordinators now have work to place.
+        _notifications.RaiseFor(
+            new long?[] { request.RequestedByUserId }, reviewerId,
+            $"Your request {request.RequestNumber} was approved",
+            $"It is now task {task.TaskNumber}: {task.Title}",
+            NotificationService.LinkRequest, request.Id);
+
+        await _notifications.RaiseForPermissionAsync(
+            Permissions.TaskAssign, reviewerId,
+            $"{task.TaskNumber} is Ready For Assignment",
+            task.Title, NotificationService.LinkTask, task.Id, ct);
 
         await _db.SaveChangesAsync(ct);
 
@@ -194,6 +226,12 @@ public sealed class RequestTriageService : IRequestTriageService
         });
 
         request.Status = RequestStatus.ClarificationRequired;
+
+        // Nothing moves until they answer, so this one has to reach them.
+        _notifications.RaiseFor(
+            new long?[] { request.RequestedByUserId }, reviewerId,
+            $"More information needed on {request.RequestNumber}",
+            question.Trim(), NotificationService.LinkRequest, request.Id);
 
         await _db.SaveChangesAsync(ct);
         return Result<TriageResult>.Success(new TriageResult(RequestStatus.ClarificationRequired, null, null));
@@ -255,6 +293,13 @@ public sealed class RequestTriageService : IRequestTriageService
             entityType: nameof(Request),
             entityId: request.Id,
             newValues: new { Status = status.ToString(), Reason = reason });
+
+        _notifications.RaiseFor(
+            new long?[] { request.RequestedByUserId }, reviewerId,
+            status == RequestStatus.Rejected
+                ? $"Your request {request.RequestNumber} was not approved"
+                : $"Your request {request.RequestNumber} was {status.ToString().ToLowerInvariant()}",
+            reason, NotificationService.LinkRequest, request.Id);
 
         await _db.SaveChangesAsync(ct);
         return Result<TriageResult>.Success(new TriageResult(status, null, null));

@@ -1,4 +1,5 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { DestroyRef, Component, OnInit, computed, inject, signal } from '@angular/core';
+import { syncOn } from '../core/realtime-sync';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatMenuModule } from '@angular/material/menu';
@@ -6,7 +7,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatDividerModule } from '@angular/material/divider';
 import { ApiService } from '../core/api.service';
 import { AuthService } from '../core/auth.service';
-import { RealtimeService } from '../core/realtime.service';
+import { RealtimeService, WorkforceChangedEvent } from '../core/realtime.service';
 import { ToastService } from '../core/toast.service';
 import { WorkforceState, WorkforceStatusDto } from '../core/models';
 import { humanizeEnum, workforceTone } from '../core/format';
@@ -65,6 +66,7 @@ import { humanizeEnum, workforceTone } from '../core/format';
   `,
 })
 export class ShiftWidgetComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(ApiService);
   private readonly auth = inject(AuthService);
   private readonly realtime = inject(RealtimeService);
@@ -84,12 +86,13 @@ export class ShiftWidgetComponent implements OnInit {
   });
 
   ngOnInit(): void {
-    this.load();
-
-    // Starting a task sets Working server-side; this keeps the badge honest without polling.
-    this.realtime.workforceChanged.subscribe((e) => {
-      if (e.userId === this.auth.user()?.id) this.load();
-    });
+   this.load();
+    // Re-fetch on the server's say-so; see syncOn for why it debounces and tears down.
+    syncOn<WorkforceChangedEvent>(
+      [this.realtime.workforceChanged],
+      () => this.load(),
+      this.destroyRef,
+      { filter: (e) => e.userId === this.auth.user()?.id });
   }
 
   load(): void {

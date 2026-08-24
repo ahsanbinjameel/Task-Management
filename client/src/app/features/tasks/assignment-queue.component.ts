@@ -1,4 +1,5 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { DestroyRef, Component, OnInit, inject, signal } from '@angular/core';
+import { syncOn } from '../../core/realtime-sync';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatDialog } from '@angular/material/dialog';
@@ -76,6 +77,7 @@ import { AssignDialogComponent, AssignDialogResult } from './assign-dialog.compo
   `,
 })
 export class AssignmentQueueComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(ApiService);
   private readonly dialog = inject(MatDialog);
   private readonly toast = inject(ToastService);
@@ -87,8 +89,12 @@ export class AssignmentQueueComponent implements OnInit {
   readonly workload = signal<WorkloadDto[]>([]);
 
   ngOnInit(): void {
-    this.load();
-    this.realtime.taskChanged.subscribe(() => this.load());
+   this.load();
+    // Re-fetch on the server's say-so; see syncOn for why it debounces and tears down.
+    syncOn(
+      [this.realtime.taskChanged],
+      () => this.load(),
+      this.destroyRef);
   }
 
   load(): void {
@@ -105,13 +111,12 @@ export class AssignmentQueueComponent implements OnInit {
         data: { task, isReassign: false, currentAssigneeId: task.primaryAssigneeUserId },
       })
       .afterClosed()
-      .subscribe((result?: AssignDialogResult) => {
-        if (!result) return;
-
-        this.api.assign(task.id, result.assigneeUserId, result.reason).subscribe(() => {
-          this.toast.success(`${task.taskNumber} assigned.`);
-          this.load();
-        });
+      .subscribe((assigned?: AssignDialogResult) => {
+        // The dialog performs the assignment and only closes once it has succeeded, so reaching
+        // here means it is already saved.
+        if (!assigned) return;
+        this.toast.success(`${task.taskNumber} is now with ${assigned.primaryAssigneeDisplayName ?? 'the queue'}.`);
+        this.load();
       });
   }
 }

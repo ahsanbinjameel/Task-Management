@@ -54,7 +54,9 @@ public sealed class UserAdminService : IUserAdminService
     public async Task<Result<UserDto>> CreateUserAsync(CreateUserRequest request, CancellationToken ct = default)
     {
         var userName = request.UserName.Trim();
-        var email = request.Email.Trim();
+        // Empty and whitespace both mean "no address"; normalise to null so the filtered unique
+        // index sees them all the same way.
+        var email = string.IsNullOrWhiteSpace(request.Email) ? null : request.Email.Trim();
 
         if (PasswordPolicy.Validate(request.Password, _authOptions.MinimumPasswordLength) is { } policyError)
             return Result<UserDto>.Failure(policyError);
@@ -63,7 +65,7 @@ public sealed class UserAdminService : IUserAdminService
         if (await _db.Users.AnyAsync(u => u.UserName == userName, ct))
             return Result<UserDto>.Failure(Error.Conflict("user.username_taken", "That username is already in use."));
 
-        if (await _db.Users.AnyAsync(u => u.Email == email, ct))
+        if (email is not null && await _db.Users.AnyAsync(u => u.Email == email, ct))
             return Result<UserDto>.Failure(Error.Conflict("user.email_taken", "That email address is already in use."));
 
         var roles = await ResolveRolesAsync(request.Roles, ct);
@@ -122,7 +124,7 @@ public sealed class UserAdminService : IUserAdminService
             var term = search.Trim();
             query = query.Where(u =>
                 u.UserName.Contains(term) ||
-                u.Email.Contains(term) ||
+                (u.Email != null && u.Email.Contains(term)) ||
                 u.DisplayName.Contains(term));
         }
 

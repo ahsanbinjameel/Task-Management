@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using WorkflowApp.Application.Common;
 using WorkflowApp.Domain.Workflow;
 
 namespace WorkflowApp.Api.Middleware;
@@ -44,14 +45,18 @@ public sealed class ExceptionHandlingMiddleware
     {
         var (status, title, code) = exception switch
         {
-            InvalidWorkflowTransitionException => (
+            // The exception messages name the enum values ("CompletedReadyForQC"), which is our
+            // schema, not English. Rewritten here with the labels users actually see.
+            InvalidWorkflowTransitionException transition => (
                 StatusCodes.Status400BadRequest,
-                exception.Message,
+                $"This cannot be moved from \"{StatusLabels.For(transition.From)}\" to "
+                    + $"\"{StatusLabels.For(transition.To)}\". Refresh the page to see the current "
+                    + "options — someone may have changed it already.",
                 "workflow.transition_not_allowed"),
 
             TransitionReasonRequiredException => (
                 StatusCodes.Status400BadRequest,
-                exception.Message,
+                "Please give a reason before making this change.",
                 "workflow.reason_required"),
 
             DbUpdateConcurrencyException => (

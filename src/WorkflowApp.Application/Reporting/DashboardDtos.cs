@@ -81,9 +81,26 @@ public sealed record DailyUserReportDto(
     TimeSpan BreakTime,
     int TasksWorked,
     int TasksCompleted,
-    IReadOnlyList<TaskTimeDto> Breakdown);
+    /// <summary>Time on tasks this person is responsible for.</summary>
+    IReadOnlyList<TaskTimeDto> OwnedWork,
+    /// <summary>
+    /// Time on tasks somebody else is responsible for. Reported separately and never added to the
+    /// owned figures: helping with a task is not the same as being accountable for it.
+    /// </summary>
+    IReadOnlyList<TaskTimeDto> SupportWork,
+    /// <summary>Tasks they are listed as helping with, whether or not they logged time today.</summary>
+    IReadOnlyList<SupportedTaskDto> SupportingOn);
 
 public sealed record TaskTimeDto(long TaskId, string TaskNumber, string Title, TimeSpan TimeSpent, int Sessions);
+
+/// <summary>A task this person is helping with. The responsible person is named so the report
+/// cannot be misread as saying the work belongs to the helper.</summary>
+public sealed record SupportedTaskDto(
+    long TaskId,
+    string TaskNumber,
+    string Title,
+    string Status,
+    string? ResponsiblePersonName);
 
 public sealed record DailyTeamReportDto(
     DateOnly Date,

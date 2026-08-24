@@ -1,4 +1,5 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { DestroyRef, Component, OnInit, inject, signal } from '@angular/core';
+import { syncOn } from '../../core/realtime-sync';
 import { DatePipe } from '@angular/common';
 import { Router } from '@angular/router';
 import { CdkDragDrop, DragDropModule, moveItemInArray } from '@angular/cdk/drag-drop';
@@ -29,7 +30,7 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
   ],
   template: `
     <div class="page">
-      <app-page-header title="My queue" subtitle="Drag to set the order you plan to work in.">
+      <app-page-header title="My queue" subtitle="Work through these in order. Drag to change the order.">
         <button matButton (click)="load()"><mat-icon>refresh</mat-icon> Refresh</button>
       </app-page-header>
 
@@ -41,9 +42,13 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
                      hint="Work appears here once a coordinator assigns it to you." />
         </div>
       } @else {
+        <p class="muted small lead">
+          Start at the top. The rest are queued behind it — drag one up if it should come first.
+        </p>
+
         <div class="card" cdkDropList (cdkDropListDropped)="drop($event)">
-          @for (task of tasks(); track task.id) {
-            <div class="item" cdkDrag>
+          @for (task of tasks(); track task.id; let i = $index) {
+            <div class="item" cdkDrag [class.later]="!isNext(task, i)">
               <mat-icon class="handle" cdkDragHandle matTooltip="Drag to reorder">drag_indicator</mat-icon>
 
               <div class="body" (click)="open(task)">
@@ -66,7 +71,12 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
                 </div>
               </div>
 
-              <button matButton="filled" (click)="open(task)">Open</button>
+              @if (isNext(task, i)) {
+                <button matButton="filled" (click)="open(task)">Open</button>
+              } @else {
+                <span class="waiting small muted">Later</span>
+                <button matButton (click)="open(task)">View</button>
+              }
             </div>
           }
         </div>
@@ -74,6 +84,12 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
     </div>
   `,
   styles: `
+    .lead { margin: 0 0 10px; }
+    /* Dimmed, not hidden: you can still see and open what is coming, it is just not the one to
+       pick up now. Anything already running stays at full strength wherever it sits. */
+    .item.later { opacity: .62; }
+    .item.later:hover { opacity: 1; }
+    .waiting { margin-right: 8px; }
     .item {
       display: flex; align-items: center; gap: 14px;
       padding: 14px 18px; border-bottom: 1px solid var(--border); background: var(--surface);
@@ -89,6 +105,7 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
   `,
 })
 export class MyQueueComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(ApiService);
   private readonly router = inject(Router);
   private readonly toast = inject(ToastService);
@@ -100,7 +117,12 @@ export class MyQueueComponent implements OnInit {
   ngOnInit(): void {
     this.load();
     // Someone assigning me work should make it appear without a refresh.
-    this.realtime.taskChanged.subscribe(() => this.load());
+  
+    // Re-fetch on the server's say-so; see syncOn for why it debounces and tears down.
+    syncOn(
+      [this.realtime.taskChanged],
+      () => this.load(),
+      this.destroyRef);
   }
 
   load(): void {
@@ -125,6 +147,17 @@ export class MyQueueComponent implements OnInit {
 
   overdue(task: TaskSummaryDto): boolean {
     return !!task.dueDate && new Date(task.dueDate) < new Date();
+  }
+
+  /**
+   * Whether this is the one to pick up now: the top of the queue, or anything already running.
+   *
+   * A worker with a paused task further down still needs to be able to get back to it, so this
+   * dims rather than disables — the aim is to make the next task obvious, not to lock the others
+   * away. The single-active-session rule is enforced by the server regardless.
+   */
+  isNext(task: TaskSummaryDto, index: number): boolean {
+    return index === 0 || task.hasActiveSession;
   }
 
   open(task: TaskSummaryDto): void {

@@ -24,3 +24,17 @@ public sealed record PageQuery
 
     public int Skip => (NormalizedPage - 1) * NormalizedPageSize;
 }
+
+/// <summary>
+/// How many records sit in each status, for the tiles that sit above a list.
+///
+/// Counted over the same filters as the list itself minus the status filter, so the numbers agree
+/// with what clicking a tile will show. Counting the unfiltered table instead is the usual bug: the
+/// tile promises 12 and the list then shows 3.
+/// </summary>
+/// <summary>
+/// One tile above a list. <paramref name="Key"/> is the view it selects — a stable, URL-safe name
+/// for a group of internal statuses, not the status itself, because which statuses belong together
+/// depends on who is looking.
+/// </summary>
+public sealed record StatusCountDto(string Key, string Label, int Count);

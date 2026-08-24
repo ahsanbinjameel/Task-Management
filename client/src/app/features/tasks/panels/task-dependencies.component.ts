@@ -5,7 +5,6 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
-import { MatSelectModule } from '@angular/material/select';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { ApiService } from '../../../core/api.service';
 import { AuthService } from '../../../core/auth.service';
@@ -13,6 +12,7 @@ import { ToastService } from '../../../core/toast.service';
 import { Perm } from '../../../core/permissions';
 import { DependencyType, TaskDependencyGraphDto, TaskSummaryDto } from '../../../core/models';
 import { humanizeEnum } from '../../../core/format';
+import { SearchSelectComponent, SelectOption } from '../../../shared/search-select.component';
 import { ChipComponent, EmptyComponent } from '../../../shared/ui';
 
 /**
@@ -25,7 +25,7 @@ import { ChipComponent, EmptyComponent } from '../../../shared/ui';
   standalone: true,
   imports: [
     RouterLink, FormsModule, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule,
-    MatSelectModule, MatTooltipModule, ChipComponent, EmptyComponent,
+    MatTooltipModule, ChipComponent, EmptyComponent, SearchSelectComponent,
   ],
   template: `
     <div class="stack">
@@ -47,15 +47,8 @@ import { ChipComponent, EmptyComponent } from '../../../shared/ui';
                 <mat-icon matSuffix>search</mat-icon>
               </mat-form-field>
 
-              <mat-form-field class="type">
-                <mat-label>Relationship</mat-label>
-                <mat-select [(ngModel)]="type">
-                  <mat-option value="DependsOn">Depends on (they go first)</mat-option>
-                  <mat-option value="Blocks">Blocks (we go first)</mat-option>
-                  <mat-option value="Related">Related</mat-option>
-                  <mat-option value="Duplicate">Duplicate of</mat-option>
-                </mat-select>
-              </mat-form-field>
+              <app-search-select class="type" label="Relationship" [options]="typeOptions"
+                                 [(ngModel)]="type" />
 
               <button matButton (click)="find()">Search</button>
             </div>
@@ -142,6 +135,13 @@ export class TaskDependenciesComponent implements OnInit {
   readonly canEdit = this.auth.has(Perm.taskAssign);
   search = '';
   type: DependencyType = 'DependsOn';
+
+  readonly typeOptions: SelectOption[] = [
+    { value: 'DependsOn', label: 'Depends on (they go first)' },
+    { value: 'Blocks', label: 'Blocks (we go first)' },
+    { value: 'Related', label: 'Related' },
+    { value: 'Duplicate', label: 'Duplicate of' },
+  ];
 
   label = (value: string) => humanizeEnum(value);
 

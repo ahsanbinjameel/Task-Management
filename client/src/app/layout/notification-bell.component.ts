@@ -1,4 +1,5 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { DestroyRef, Component, OnInit, inject, signal } from '@angular/core';
+import { syncOn } from '../core/realtime-sync';
 import { DatePipe } from '@angular/common';
 import { Router } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
@@ -64,6 +65,7 @@ import { NotificationDto } from '../core/models';
   `,
 })
 export class NotificationBellComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(ApiService);
   private readonly realtime = inject(RealtimeService);
   private readonly router = inject(Router);
@@ -75,10 +77,16 @@ export class NotificationBellComponent implements OnInit {
   tooltip = () => (this.unread() === 0 ? 'Notifications' : `${this.unread()} unread`);
 
   ngOnInit(): void {
-    this.refreshCount();
-
-    // Pushed, not polled. The badge is the one thing that has to be right without a refresh.
-    this.realtime.notificationRaised.subscribe(() => this.refreshCount());
+   this.refreshCount();
+    // Re-fetch on the server's say-so; see syncOn for why it debounces and tears down.
+    syncOn(
+      [this.realtime.notificationRaised],
+      () => {
+        this.refreshCount();
+        // If the panel is open, the new item has to appear in it too — not only in the badge.
+        if (this.items().length > 0) this.load();
+      },
+      this.destroyRef);
   }
 
   refreshCount(): void {

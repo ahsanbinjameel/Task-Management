@@ -1,4 +1,5 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { DestroyRef, Component, OnInit, inject, signal } from '@angular/core';
+import { syncOn } from '../../core/realtime-sync';
 import { DatePipe } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
@@ -76,6 +77,7 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
   `,
 })
 export class ReviewQueueComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(ApiService);
   private readonly router = inject(Router);
   private readonly toast = inject(ToastService);
@@ -86,8 +88,12 @@ export class ReviewQueueComponent implements OnInit {
     { items: [], page: 1, pageSize: 50, totalCount: 0, totalPages: 0 });
 
   ngOnInit(): void {
-    this.load();
-    this.realtime.requestChanged.subscribe(() => this.load());
+   this.load();
+    // Re-fetch on the server's say-so; see syncOn for why it debounces and tears down.
+    syncOn(
+      [this.realtime.requestChanged],
+      () => this.load(),
+      this.destroyRef);
   }
 
   load(): void {

@@ -28,6 +28,7 @@ public static class DependencyInjection
         services.AddScoped<IAuditService, AuditService>();
         services.AddScoped<IActivityLogger, ActivityLogger>();
         services.AddScoped<INumberGenerator, NumberGenerator>();
+        services.AddScoped<ILookupService, LookupService>();
         // Singleton: resolving the business time zone once is enough, and it never changes at runtime.
         services.AddSingleton<IBusinessCalendar, BusinessCalendar>();
 

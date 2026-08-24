@@ -35,6 +35,18 @@ public interface INotificationService
     void RaiseFor(IEnumerable<long?> recipientUserIds, long actingUserId, string title,
         string? body = null, string? linkEntityType = null, long? linkEntityId = null);
 
+    /// <summary>
+    /// Notifies everyone who holds a permission — "the reviewers", "the QC team" — without naming
+    /// a role. Roles are only bundles, so addressing the capability keeps the notification correct
+    /// after somebody rearranges who does what.
+    ///
+    /// Reads the recipient list, so unlike the other methods it must be awaited. Still staged, not
+    /// saved: the caller commits it with the change that caused it.
+    /// </summary>
+    Task RaiseForPermissionAsync(string permissionKey, long actingUserId, string title,
+        string? body = null, string? linkEntityType = null, long? linkEntityId = null,
+        CancellationToken ct = default);
+
     Task<PagedResult<NotificationDto>> ListAsync(
         long userId, bool unreadOnly, PageQuery page, CancellationToken ct = default);
 
@@ -89,6 +101,24 @@ public sealed class NotificationService : INotificationService
             .Where(id => id.HasValue && id.Value != actingUserId)
             .Select(id => id!.Value)
             .Distinct();
+
+        foreach (var recipient in recipients)
+            Raise(recipient, title, body, linkEntityType, linkEntityId);
+    }
+
+    public async Task RaiseForPermissionAsync(string permissionKey, long actingUserId, string title,
+        string? body = null, string? linkEntityType = null, long? linkEntityId = null,
+        CancellationToken ct = default)
+    {
+        var recipients = await _db.Users
+            .Where(u => u.IsActive && u.Id != actingUserId)
+            .Where(u => _db.UserRoles
+                .Where(ur => ur.UserId == u.Id)
+                .Join(_db.RolePermissions, ur => ur.RoleId, rp => rp.RoleId, (ur, rp) => rp)
+                .Join(_db.Permissions, rp => rp.PermissionId, p => p.Id, (rp, p) => p.Key)
+                .Any(key => key == permissionKey))
+            .Select(u => u.Id)
+            .ToListAsync(ct);
 
         foreach (var recipient in recipients)
             Raise(recipient, title, body, linkEntityType, linkEntityId);

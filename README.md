@@ -10,13 +10,13 @@ SignalR · IIS. The client builds into the API's `wwwroot`, so a deployment is a
 
 ## Which of these are you trying to do?
 
-| Goal                                                | Go to                                              |
-| --------------------------------------------------- | -------------------------------------------------- |
-| See it working in 2 minutes, no database to install | [A. Demo mode](#a-demo-mode--no-sql-server-needed) |
-| Develop against a real SQL Server                   | [B. Dev server](#b-dev-server--sql-server)         |
-| Work on the Angular front end                        | [B4. Front-end development](#b4-front-end-development) |
-| Deploy to IIS                                       | [C. IIS deployment](#c-iis-deployment)             |
-| Something broke                                     | [Troubleshooting](#troubleshooting)                |
+| Goal                                                | Go to                                                  |
+| --------------------------------------------------- | ------------------------------------------------------ |
+| See it working in 2 minutes, no database to install | [A. Demo mode](#a-demo-mode--no-sql-server-needed)     |
+| Develop against a real SQL Server                   | [B. Dev server](#b-dev-server--sql-server)             |
+| Work on the Angular front end                       | [B4. Front-end development](#b4-front-end-development) |
+| Deploy to IIS                                       | [C. IIS deployment](#c-iis-deployment)                 |
+| Something broke                                     | [Troubleshooting](#troubleshooting)                    |
 
 ---
 
@@ -175,7 +175,7 @@ Two conventions worth knowing before changing anything:
 - **The menu and every action button are filtered by permission**, read from the JWT. That is a
   usability decision, not a security one — the API re-checks everything, so never rely on a hidden
   button.
-- **Real-time events are pointers, not records.** A SignalR message says *what changed*; the screen
+- **Real-time events are pointers, not records.** A SignalR message says _what changed_; the screen
   re-fetches. Never patch local state from an event payload.
 
 ### Adding a migration

@@ -46,6 +46,23 @@ export interface PagedResult<T> {
   totalPages: number;
 }
 
+/** A known client. The name is what people type; the id is what filters use. */
+export interface ClientOptionDto {
+  id: number;
+  name: string;
+}
+
+/** One clickable count above a list. */
+/**
+ * One tile above a list. `key` names a *view* — a group of internal statuses — not a status:
+ * which statuses belong together depends on who is looking, and the server decides that.
+ */
+export interface StatusCountDto {
+  key: string;
+  label: string;
+  count: number;
+}
+
 /** The API's ProblemDetails shape. `code` is the stable identifier — branch on it, never on prose. */
 export interface ApiProblem {
   title?: string;
@@ -102,6 +119,51 @@ export interface RequestSummaryDto {
   generatedTaskId?: number | null;
   attachmentCount: number;
   hasOpenClarification: boolean;
+  clientId?: number | null;
+  clientName?: string | null;
+
+  // The generated task, folded back onto the request, so the person who asked for the work can
+  // see what is happening to it without being sent to a second screen.
+  taskStatus?: WorkTaskStatus | null;
+  /** The status this reader should be shown — already decided for their audience by the server. */
+  viewKey: string;
+  viewLabel: string;
+  responsibleDisplayName?: string | null;
+  progressPercent: number;
+  updatedAt?: string | null;
+}
+
+/**
+ * What happened to a request after approval, in the requester's language — read off the generated
+ * task so nobody has to open it. A summary, deliberately not a copy of the task.
+ */
+export interface RequestProgressDto {
+  taskId: number;
+  taskNumber: string;
+  taskStatus: WorkTaskStatus;
+  statusKey: string;
+  statusLabel: string;
+  responsibleDisplayName?: string | null;
+  supportPeople: string[];
+  progressPercent: number;
+  totalWorkedTime: string;
+  startedAt?: string | null;
+  dueDate?: string | null;
+  latestUpdate?: string | null;
+  latestUpdateBy?: string | null;
+  latestUpdateAt?: string | null;
+  qualityCheck: string;
+  waitingReason?: string | null;
+}
+
+/** One readable line of what happened to a request. */
+export interface RequestActivityDto {
+  id: number;
+  type: string;
+  actorUserId: number;
+  actorDisplayName?: string | null;
+  occurredAt: string;
+  description: string;
 }
 
 export interface ClarificationDto {
@@ -123,6 +185,20 @@ export interface AttachmentDto {
   uploadedAt: string;
 }
 
+/**
+ * What POST /requests/{id}/triage actually returns — a decision, not the request.
+ *
+ * This was previously typed as RequestDetailDto. The component assigned it straight into the
+ * `request` signal, so every field the template read came back undefined and the page rendered
+ * blank; the redirect also silently never fired, because it looked for `generatedTaskId` on an
+ * object whose field is `createdTaskId`.
+ */
+export interface TriageResultDto {
+  status: RequestStatus;
+  createdTaskId?: number | null;
+  createdTaskNumber?: string | null;
+}
+
 export interface RequestDetailDto {
   id: number;
   requestNumber: string;
@@ -131,9 +207,8 @@ export interface RequestDetailDto {
   type: RequestType;
   status: RequestStatus;
   requestedUrgency: RequestedUrgency;
-  projectId?: number | null;
   clientId?: number | null;
-  moduleId?: number | null;
+  clientName?: string | null;
   businessImpact?: string | null;
   expectedResult?: string | null;
   currentResult?: string | null;
@@ -144,8 +219,14 @@ export interface RequestDetailDto {
   targetDate?: string | null;
   relatedRequestId?: number | null;
   generatedTaskId?: number | null;
+  activity: RequestActivityDto[];
   clarifications: ClarificationDto[];
   attachments: AttachmentDto[];
+  /** The status this reader should be told — folds in the task where there is one. */
+  viewKey: string;
+  viewLabel: string;
+  /** Null until the request is approved and work exists. */
+  progress?: RequestProgressDto | null;
 }
 
 // --- tasks ----------------------------------------------------------------------------------
@@ -165,6 +246,25 @@ export interface TaskSummaryDto {
   estimatedEffortHours?: number | null;
   totalWorkedTime: string;
   hasActiveSession: boolean;
+  clientId?: number | null;
+  clientName?: string | null;
+
+  // What the contextual grids show. Each view picks the two or three of these that matter to it.
+  /** When it entered the status it is in — every "waiting since" column. */
+  statusSince?: string | null;
+  /** Why, where the move required a reason: the pause or blocking reason. */
+  statusReason?: string | null;
+  assignedAt?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  requestId?: number | null;
+  requestNumber?: string | null;
+  requestedByDisplayName?: string | null;
+  checkedByDisplayName?: string | null;
+  checkedAt?: string | null;
+  checkNotes?: string | null;
+  qcUserDisplayName?: string | null;
+  supportPeople?: string[] | null;
 }
 
 export interface StatusHistoryDto {
@@ -230,6 +330,50 @@ export interface QCReviewDto {
   criteria: AcceptanceCriterionDto[];
 }
 
+/** A smaller task belonging to a parent, summarised for the parent's own page. */
+export interface SubtaskSummaryDto {
+  taskId: number;
+  taskNumber: string;
+  title: string;
+  status: WorkTaskStatus;
+  responsiblePersonName?: string | null;
+  progressPercent: number;
+  /** When true the parent cannot be finished until this one is done. */
+  isRequired: boolean;
+}
+
+/**
+ * Someone helping with a task who does not own it. Kept a distinct shape from the assignee so the
+ * two cannot be used interchangeably by accident.
+ */
+export interface SupportPersonDto {
+  userId: number;
+  displayName: string;
+  addedAt: string;
+  addedByUserId: number;
+}
+
+/**
+ * What was originally asked for, carried onto the task. Request and task stay separate records —
+ * this is so a worker never has to go and read the request to find the screenshot or what
+ * "working" was supposed to look like.
+ */
+export interface RequestContextDto {
+  requestId: number;
+  requestNumber: string;
+  requestedByDisplayName: string;
+  requestedAt: string;
+  requestedUrgency: RequestedUrgency;
+  projectName?: string | null;
+  moduleName?: string | null;
+  originalDescription: string;
+  businessImpact?: string | null;
+  expectedResult?: string | null;
+  currentResult?: string | null;
+  reproductionSteps?: string | null;
+  attachments: AttachmentDto[];
+}
+
 export interface TaskDetailDto {
   id: number;
   taskNumber: string;
@@ -240,9 +384,8 @@ export interface TaskDetailDto {
   type: RequestType;
   status: WorkTaskStatus;
   priority: Priority;
-  projectId?: number | null;
   clientId?: number | null;
-  moduleId?: number | null;
+  clientName?: string | null;
   primaryAssigneeUserId?: number | null;
   primaryAssigneeDisplayName?: string | null;
   reviewerUserId?: number | null;
@@ -256,23 +399,33 @@ export interface TaskDetailDto {
   parentTaskId?: number | null;
   availableTransitions: WorkTaskStatus[];
   totalWorkedTime: string;
-  collaboratorUserIds: number[];
+  supportPeople: SupportPersonDto[];
   workSessions: WorkSessionDto[];
   statusHistory: StatusHistoryDto[];
   assignmentHistory: AssignmentHistoryDto[];
   activity: TaskActivityDto[];
   qcReviews: QCReviewDto[];
-  subTaskIds: number[];
+  subTasks: SubtaskSummaryDto[];
   /** Task numbers of unfinished work this task waits on. Non-empty blocks the timer. */
   blockedBy: string[];
   rowVersion?: string | null;
+  /** Where this work came from. Null for a task raised without a request. */
+  request?: RequestContextDto | null;
 }
+
+export type PauseCategory =
+  | 'OtherWorkUrgent' | 'WaitingForSomeone' | 'WaitingForClient' | 'CannotContinue'
+  | 'Meeting' | 'Break' | 'Lunch' | 'EndOfShift' | 'Other';
 
 export interface PauseReasonDto {
   id: number;
   name: string;
   requiresComment: boolean;
+  /** The task itself cannot move on — not merely that the worker stepped away. */
   isBlocker: boolean;
+  category: PauseCategory;
+  /** Where the worker goes, if anywhere. Null means they stay on shift and free. */
+  awayState?: WorkforceState | null;
 }
 
 export interface AssignableUserDto {
@@ -510,6 +663,14 @@ export interface ManagementDashboardDto {
   closedByAssignee: CountByLabelDto[];
 }
 
+export interface SupportedTaskDto {
+  taskId: number;
+  taskNumber: string;
+  title: string;
+  status: string;
+  responsiblePersonName?: string | null;
+}
+
 export interface TaskTimeDto {
   taskId: number;
   taskNumber: string;
@@ -529,7 +690,12 @@ export interface DailyUserReportDto {
   breakTime: string;
   tasksWorked: number;
   tasksCompleted: number;
-  breakdown: TaskTimeDto[];
+  /** Time on tasks this person is responsible for. */
+  ownedWork: TaskTimeDto[];
+  /** Time on other people's tasks. Never added to the owned figures. */
+  supportWork: TaskTimeDto[];
+  /** Tasks they are helping with, whether or not they logged time today. */
+  supportingOn: SupportedTaskDto[];
 }
 
 export interface DailyTeamReportDto {

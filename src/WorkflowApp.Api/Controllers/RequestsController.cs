@@ -46,9 +46,13 @@ public sealed class RequestsController : ApiControllerBase
     [ProducesResponseType(typeof(PagedResult<RequestSummaryDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> List(
         [FromQuery] RequestStatus? status,
+        [FromQuery] string? view,
         [FromQuery] RequestType? type,
         [FromQuery] string? search,
+        [FromQuery] long? clientId,
         [FromQuery] bool mine = false,
+        [FromQuery] string? sortBy = null,
+        [FromQuery] bool sortDescending = true,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 25,
         CancellationToken ct = default)
@@ -58,12 +62,39 @@ public sealed class RequestsController : ApiControllerBase
         var query = new RequestQuery
         {
             Status = status,
+            View = view,
+            Audience = Audience,
             Type = type,
             Search = search,
+            ClientId = clientId,
+            SortBy = sortBy,
+            SortDescending = sortDescending,
             RequestedByUserId = (!canViewAll || mine) ? CurrentUserId : null
         };
 
         return Ok(await _requests.ListAsync(query, new PageQuery { Page = page, PageSize = pageSize }, ct));
+    }
+
+    /// <summary>Counts for the status tiles, scoped exactly like the list below them.</summary>
+    [HttpGet("status-counts")]
+    [ProducesResponseType(typeof(IReadOnlyList<StatusCountDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> StatusCounts(
+        [FromQuery] RequestType? type,
+        [FromQuery] long? clientId,
+        [FromQuery] string? search,
+        [FromQuery] bool mine = false,
+        CancellationToken ct = default)
+    {
+        var canViewAll = HasPermission(Permissions.RequestViewAll);
+
+        return Ok(await _requests.StatusCountsAsync(new RequestQuery
+        {
+            RequestedByUserId = (!canViewAll || mine) ? CurrentUserId : null,
+            Audience = Audience,
+            Type = type,
+            ClientId = clientId,
+            Search = search,
+        }, ct));
     }
 
     [HttpGet("{id:long}")]
@@ -71,7 +102,7 @@ public sealed class RequestsController : ApiControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Get(long id, CancellationToken ct)
     {
-        var result = await _requests.GetAsync(id, ct);
+        var result = await _requests.GetAsync(id, Audience, ct);
         if (result.IsFailure) return Problem(result.Error!);
 
         // Without ViewAll, a requester may only open their own submissions.

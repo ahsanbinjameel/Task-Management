@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
+using WorkflowApp.Application.Common;
 using WorkflowApp.Application.Common.Interfaces;
+using WorkflowApp.Application.Notifications;
 using WorkflowApp.Application.Common.Models;
 using WorkflowApp.Application.Common.Services;
 using WorkflowApp.Application.Requests.Dtos;
@@ -12,7 +14,12 @@ public interface IRequestService
 {
     Task<Result<RequestDetailDto>> CreateAsync(long requesterId, CreateRequestDto dto, CancellationToken ct = default);
     Task<Result<RequestDetailDto>> UpdateAsync(long requestId, long actingUserId, UpdateRequestDto dto, CancellationToken ct = default);
-    Task<Result<RequestDetailDto>> GetAsync(long requestId, CancellationToken ct = default);
+    Task<Result<RequestDetailDto>> GetAsync(
+        long requestId, StatusAudience audience = StatusAudience.Coordinator,
+        CancellationToken ct = default);
+
+    /// <summary>How many requests sit in each status, under the same filters minus status.</summary>
+    Task<IReadOnlyList<StatusCountDto>> StatusCountsAsync(RequestQuery query, CancellationToken ct = default);
 
     Task<PagedResult<RequestSummaryDto>> ListAsync(
         RequestQuery query, PageQuery page, CancellationToken ct = default);
@@ -28,8 +35,27 @@ public sealed record RequestQuery
     public long? RequestedByUserId { get; init; }
 
     public RequestStatus? Status { get; init; }
+
+    /// <summary>
+    /// The status group being looked at. For a requester that spans the task the request
+    /// generated, because after approval the request itself stops moving — see
+    /// <see cref="StatusViews"/>. Null or "all" means no status filter.
+    /// </summary>
+    public string? View { get; init; }
+
+    /// <summary>Who is looking. Decides which tiles exist and what each one covers.</summary>
+    public StatusAudience Audience { get; init; } = StatusAudience.Coordinator;
+
     public RequestType? Type { get; init; }
     public string? Search { get; init; }
+
+    /// <summary>Only requests for this client.</summary>
+    public long? ClientId { get; init; }
+
+    /// <summary>Column to order by. Unknown values fall back to newest-first.</summary>
+    public string? SortBy { get; init; }
+
+    public bool SortDescending { get; init; } = true;
 }
 
 /// <summary>
@@ -40,12 +66,17 @@ public sealed class RequestService : IRequestService
 {
     private readonly IWorkflowDbContext _db;
     private readonly INumberGenerator _numbers;
+    private readonly INotificationService _notifications;
+    private readonly ILookupService _lookups;
     private readonly IDateTimeProvider _clock;
 
-    public RequestService(IWorkflowDbContext db, INumberGenerator numbers, IDateTimeProvider clock)
+    public RequestService(IWorkflowDbContext db, INumberGenerator numbers,
+        INotificationService notifications, ILookupService lookups, IDateTimeProvider clock)
     {
         _db = db;
         _numbers = numbers;
+        _notifications = notifications;
+        _lookups = lookups;
         _clock = clock;
     }
 
@@ -62,9 +93,7 @@ public sealed class RequestService : IRequestService
             Description = dto.Description.Trim(),
             Type = dto.Type,
             RequestedUrgency = dto.RequestedUrgency,
-            ProjectId = dto.ProjectId,
-            ClientId = dto.ClientId,
-            ModuleId = dto.ModuleId,
+            ClientId = await _lookups.ResolveClientAsync(dto.ClientName, ct),
             BusinessImpact = dto.BusinessImpact,
             ExpectedResult = dto.ExpectedResult,
             CurrentResult = dto.CurrentResult,
@@ -77,9 +106,16 @@ public sealed class RequestService : IRequestService
         };
 
         _db.Requests.Add(request);
+
+        // The review queue is the only thing standing between this and being forgotten.
+        await _notifications.RaiseForPermissionAsync(
+            Permissions.TaskReview, request.RequestedByUserId,
+            $"New request waiting for review: {request.RequestNumber}",
+            request.Title, NotificationService.LinkRequest, request.Id, ct);
+
         await _db.SaveChangesAsync(ct);
 
-        return await GetAsync(request.Id, ct);
+        return await GetAsync(request.Id, ct: ct);
     }
 
     public async Task<Result<RequestDetailDto>> UpdateAsync(
@@ -97,7 +133,35 @@ public sealed class RequestService : IRequestService
         if (request.Status is not (RequestStatus.Submitted or RequestStatus.ClarificationRequired))
             return Result<RequestDetailDto>.Failure(Error.Conflict(
                 "request.not_editable",
-                $"A request in {request.Status} can no longer be edited."));
+                $"This request is now \"{StatusLabels.For(request.Status)}\", so it can no longer be "
+                + "changed. Add a comment instead, or ask a reviewer."));
+
+        // Compare before writing, so the history can say what actually changed rather than just
+        // "it was edited". A reviewer who already read this request needs to know which parts to
+        // re-read, not that something somewhere moved.
+        var changes = new List<string>();
+
+        void Track(string field, string? before, string? after)
+        {
+            if ((before ?? string.Empty).Trim() != (after ?? string.Empty).Trim())
+                changes.Add(field);
+        }
+
+        Track("title", request.Title, dto.Title);
+        Track("description", request.Description, dto.Description);
+        Track("what was expected", request.ExpectedResult, dto.ExpectedResult);
+        Track("what happens now", request.CurrentResult, dto.CurrentResult);
+        Track("business impact", request.BusinessImpact, dto.BusinessImpact);
+        Track("steps to reproduce", request.ReproductionSteps, dto.ReproductionSteps);
+        if (request.Type != dto.Type) changes.Add("type");
+        if (request.RequestedUrgency != dto.RequestedUrgency) changes.Add("urgency");
+        if (request.TargetDate != dto.TargetDate) changes.Add("needed-by date");
+
+        var newClientId = await _lookups.ResolveClientAsync(dto.ClientName, ct);
+        if (request.ClientId != newClientId && dto.ClientName is not null) changes.Add("client");
+
+        // Nothing actually changed — do not manufacture history or wake a reviewer for it.
+        if (changes.Count == 0) return await GetAsync(requestId, ct: ct);
 
         request.Title = dto.Title.Trim();
         request.Description = dto.Description.Trim();
@@ -108,12 +172,36 @@ public sealed class RequestService : IRequestService
         request.CurrentResult = dto.CurrentResult;
         request.ReproductionSteps = dto.ReproductionSteps;
         request.TargetDate = dto.TargetDate;
+        if (dto.ClientName is not null) request.ClientId = newClientId;
+
+        var summary = changes.Count == 1
+            ? $"Requester updated the {changes[0]}."
+            : $"Requester updated the {string.Join(", ", changes.Take(changes.Count - 1))} "
+              + $"and {changes[^1]}.";
+
+        _db.RequestActivities.Add(new RequestActivity
+        {
+            RequestId = request.Id,
+            Type = ActivityType.RequestEdited,
+            ActorUserId = actingUserId,
+            OccurredAt = _clock.UtcNow,
+            Description = summary
+        });
+
+        // A reviewer may already have read this and formed a view. Silently changing it underneath
+        // them is how a decision gets made against text nobody re-read.
+        await _notifications.RaiseForPermissionAsync(
+            Permissions.TaskReview, actingUserId,
+            $"{request.RequestNumber} was changed by the requester",
+            summary, NotificationService.LinkRequest, request.Id, ct);
 
         await _db.SaveChangesAsync(ct);
-        return await GetAsync(requestId, ct);
+        return await GetAsync(requestId, ct: ct);
     }
 
-    public async Task<Result<RequestDetailDto>> GetAsync(long requestId, CancellationToken ct = default)
+    public async Task<Result<RequestDetailDto>> GetAsync(
+        long requestId, StatusAudience audience = StatusAudience.Coordinator,
+        CancellationToken ct = default)
     {
         var request = await _db.Requests.AsNoTracking()
             .Include(r => r.Clarifications)
@@ -134,18 +222,37 @@ public sealed class RequestService : IRequestService
                 a.Id, a.OriginalFileName, a.ContentType, a.SizeBytes, a.UploadedByUserId, a.CreatedAt))
             .ToListAsync(ct);
 
+        // Newest last, so the story reads downwards like a conversation.
+        var activity = await _db.RequestActivities.AsNoTracking()
+            .Where(a => a.RequestId == requestId)
+            .OrderBy(a => a.OccurredAt).ThenBy(a => a.Id)
+            .Select(a => new RequestActivityDto(
+                a.Id, a.Type.ToString(), a.ActorUserId,
+                _db.Users.Where(u => u.Id == a.ActorUserId).Select(u => u.DisplayName).FirstOrDefault(),
+                a.OccurredAt, a.Description))
+            .ToListAsync(ct);
+
         var clarifications = request.Clarifications
             .OrderBy(c => c.AskedAt)
             .Select(c => new ClarificationDto(
                 c.Id, c.AskedByUserId, c.Question, c.AskedAt, c.AnsweredByUserId, c.Answer, c.AnsweredAt))
             .ToList();
 
+        var clientName = request.ClientId is { } clientId
+            ? await _db.Clients.AsNoTracking().Where(c => c.Id == clientId)
+                .Select(c => c.Name).FirstOrDefaultAsync(ct)
+            : null;
+
+        var progress = await ProgressAsync(request.GeneratedTaskId, audience, ct);
+        var view = StatusViews.RequestViewOf(audience, request.Status, progress?.TaskStatus);
+
         return Result<RequestDetailDto>.Success(new RequestDetailDto(
             request.Id, request.RequestNumber, request.Title, request.Description, request.Type,
-            request.Status, request.RequestedUrgency, request.ProjectId, request.ClientId, request.ModuleId,
+            request.Status, request.RequestedUrgency, request.ClientId, clientName,
             request.BusinessImpact, request.ExpectedResult, request.CurrentResult, request.ReproductionSteps,
             request.RequestedByUserId, requester, request.RequestedAt, request.TargetDate,
-            request.RelatedRequestId, request.GeneratedTaskId, clarifications, attachments));
+            request.RelatedRequestId, request.GeneratedTaskId, activity, clarifications, attachments,
+            view.Key, view.Label, progress));
     }
 
     public async Task<PagedResult<RequestSummaryDto>> ListAsync(
@@ -156,19 +263,9 @@ public sealed class RequestService : IRequestService
         if (query.RequestedByUserId is { } requesterId)
             requests = requests.Where(r => r.RequestedByUserId == requesterId);
 
-        if (query.Status is { } status)
-            requests = requests.Where(r => r.Status == status);
+        requests = ApplyFilters(requests, query, includeStatus: true);
 
-        if (query.Type is { } type)
-            requests = requests.Where(r => r.Type == type);
-
-        if (!string.IsNullOrWhiteSpace(query.Search))
-        {
-            var term = query.Search.Trim();
-            requests = requests.Where(r => r.Title.Contains(term) || r.RequestNumber.Contains(term));
-        }
-
-        return await ProjectPageAsync(requests.OrderByDescending(r => r.RequestedAt), page, ct);
+        return await ProjectPageAsync(Sort(requests, query), page, ct, query.Audience);
     }
 
     public Task<PagedResult<RequestSummaryDto>> ReviewQueueAsync(PageQuery page, CancellationToken ct = default)
@@ -184,8 +281,213 @@ public sealed class RequestService : IRequestService
         return ProjectPageAsync(queue, page, ct);
     }
 
+    /// <summary>Ordering, driven from the column header. Applied in the database, not on the page.</summary>
+    private static IQueryable<Request> Sort(IQueryable<Request> requests, RequestQuery query)
+    {
+        var descending = query.SortDescending;
+
+        return query.SortBy?.ToLowerInvariant() switch
+        {
+            "number" => descending ? requests.OrderByDescending(r => r.RequestNumber) : requests.OrderBy(r => r.RequestNumber),
+            "title" => descending ? requests.OrderByDescending(r => r.Title) : requests.OrderBy(r => r.Title),
+            "status" => descending ? requests.OrderByDescending(r => r.Status) : requests.OrderBy(r => r.Status),
+            "urgency" => descending ? requests.OrderByDescending(r => r.RequestedUrgency) : requests.OrderBy(r => r.RequestedUrgency),
+            "requester" => descending
+                ? requests.OrderByDescending(r => r.RequestedByUser.DisplayName)
+                : requests.OrderBy(r => r.RequestedByUser.DisplayName),
+            "client" => descending
+                ? requests.OrderByDescending(r => r.ClientId == null).ThenByDescending(r => r.ClientId)
+                : requests.OrderBy(r => r.ClientId == null).ThenBy(r => r.ClientId),
+            _ => descending ? requests.OrderByDescending(r => r.RequestedAt) : requests.OrderBy(r => r.RequestedAt),
+        };
+    }
+
+    /// <summary>
+    /// The filters, in one place, so the tiles and the list can never disagree. `includeStatus` is
+    /// false when counting: a tile showing "Approved 4" has to be counted across everything the
+    /// other filters allow, not within the status already selected.
+    /// </summary>
+    private IQueryable<Request> ApplyFilters(
+        IQueryable<Request> requests, RequestQuery query, bool includeStatus)
+    {
+        if (includeStatus && query.Status is { } status)
+            requests = requests.Where(r => r.Status == status);
+
+        if (includeStatus && StatusViews.FindRequestView(query.Audience, query.View) is { } view)
+        {
+            // Two halves of one question: a request with no task yet answers for itself, and one
+            // that has a task answers with the task's status.
+            var requestStatuses = view.RequestStatuses.ToList();
+            var taskStatuses = view.TaskStatuses.ToList();
+
+            requests = requests.Where(r =>
+                (r.GeneratedTaskId == null && requestStatuses.Contains(r.Status))
+                || (r.GeneratedTaskId != null && _db.Tasks
+                        .Where(t => t.Id == r.GeneratedTaskId)
+                        .Any(t => taskStatuses.Contains(t.Status))));
+        }
+
+        if (query.Type is { } type)
+            requests = requests.Where(r => r.Type == type);
+
+        if (query.ClientId is { } clientId)
+            requests = requests.Where(r => r.ClientId == clientId);
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var term = query.Search.Trim();
+            requests = requests.Where(r => r.Title.Contains(term) || r.RequestNumber.Contains(term));
+        }
+
+        return requests;
+    }
+
+    public async Task<IReadOnlyList<StatusCountDto>> StatusCountsAsync(
+        RequestQuery query, CancellationToken ct = default)
+    {
+        var requests = _db.Requests.AsNoTracking();
+
+        if (query.RequestedByUserId is { } requesterId)
+            requests = requests.Where(r => r.RequestedByUserId == requesterId);
+
+        var filtered = ApplyFilters(requests, query, includeStatus: false);
+
+        // Requests nobody has approved yet answer for themselves...
+        var byRequestStatus = await filtered
+            .Where(r => query.Audience != StatusAudience.Requester || r.GeneratedTaskId == null)
+            .GroupBy(r => r.Status)
+            .Select(g => new { Status = g.Key, Count = g.Count() })
+            .ToListAsync(ct);
+
+        // ...and the approved ones answer with their task, but only for the requester, whose
+        // tiles follow the work. A reviewer's tiles are about intake, which stops at approval.
+        var byTaskStatus = query.Audience == StatusAudience.Requester
+            ? await (from r in filtered
+                     where r.GeneratedTaskId != null
+                     join t in _db.Tasks on r.GeneratedTaskId equals t.Id
+                     group t by t.Status into g
+                     select new { Status = g.Key, Count = g.Count() })
+                .ToListAsync(ct)
+            : new();
+
+        var requestCounts = byRequestStatus.ToDictionary(c => c.Status, c => c.Count);
+        var taskCounts = byTaskStatus.ToDictionary(c => c.Status, c => c.Count);
+
+        // Every view is returned, including the empty ones: a tile that vanishes when it reaches
+        // zero makes the row jump about, and "none waiting for review" is information.
+        return StatusViews.ForRequests(query.Audience)
+            .Select(view => new StatusCountDto(
+                view.Key,
+                view.Label,
+                view.RequestStatuses.Sum(s => requestCounts.TryGetValue(s, out var n) ? n : 0)
+                    + view.TaskStatuses.Sum(s => taskCounts.TryGetValue(s, out var n) ? n : 0)))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Reads the generated task back onto the request in the words the reader uses.
+    ///
+    /// Deliberately a summary and not a copy of the task: enough to answer "what is happening?"
+    /// without becoming a second, staler task screen that has to be kept in step.
+    /// </summary>
+    private async Task<RequestProgressDto?> ProgressAsync(
+        long? taskId, StatusAudience audience, CancellationToken ct)
+    {
+        if (taskId is not { } id) return null;
+
+        var task = await _db.Tasks.AsNoTracking()
+            .Where(t => t.Id == id)
+            .Select(t => new
+            {
+                t.Id,
+                t.TaskNumber,
+                t.Status,
+                t.ProgressPercent,
+                t.DueDate,
+                Responsible = t.PrimaryAssigneeUser == null ? null : t.PrimaryAssigneeUser.DisplayName,
+            })
+            .FirstOrDefaultAsync(ct);
+
+        if (task is null) return null;
+
+        var support = await _db.TaskCollaborators.AsNoTracking()
+            .Where(c => c.TaskId == id)
+            .Select(c => c.User.DisplayName)
+            .ToListAsync(ct);
+
+        var sessions = await _db.WorkSessions.AsNoTracking()
+            .Where(s => s.TaskId == id)
+            .Select(s => new { s.SessionStart, s.SessionEnd })
+            .ToListAsync(ct);
+
+        var worked = sessions
+            .Where(s => s.SessionEnd.HasValue)
+            .Aggregate(TimeSpan.Zero, (sum, s) => sum + (s.SessionEnd!.Value - s.SessionStart));
+
+        // The most recent note anyone deliberately shared with the requester. Internal notes are
+        // excluded at the source rather than filtered in the UI — the same rule the comment
+        // thread already applies, applied once more here.
+        var update = await _db.TaskComments.AsNoTracking()
+            .Where(c => c.TaskId == id && c.VisibleToRequester)
+            .OrderByDescending(c => c.CreatedAt).ThenByDescending(c => c.Id)
+            .Select(c => new
+            {
+                c.Body,
+                c.CreatedAt,
+                Author = _db.Users.Where(u => u.Id == c.AuthorUserId)
+                    .Select(u => u.DisplayName).FirstOrDefault(),
+            })
+            .FirstOrDefaultAsync(ct);
+
+        var lastCheck = await _db.QCReviews.AsNoTracking()
+            .Where(q => q.TaskId == id)
+            .OrderByDescending(q => q.AttemptNumber)
+            .Select(q => new { q.Result, q.ReviewedAt })
+            .FirstOrDefaultAsync(ct);
+
+        var quality = task.Status switch
+        {
+            WorkTaskStatus.CompletedReadyForQC => "Waiting to be checked",
+            WorkTaskStatus.QCReview => "Being checked now",
+            WorkTaskStatus.QCFailedRework => "Checked, and sent back for more work",
+            WorkTaskStatus.QCPassed or WorkTaskStatus.ReadyForClosure => "Passed",
+            WorkTaskStatus.Closed => lastCheck is null ? "Not needed" : "Passed",
+            _ => lastCheck is null ? "Not started yet" : "Last check: " + lastCheck.Result,
+        };
+
+        // Why it is stopped, in the words whoever stopped it used. Pausing and blocking both had
+        // to give a reason, so there is one to show.
+        var waiting = task.Status is WorkTaskStatus.Paused or WorkTaskStatus.Blocked
+                or WorkTaskStatus.OnHold or WorkTaskStatus.Deferred
+            ? await _db.StatusHistories.AsNoTracking()
+                .Where(h => h.TaskId == id && h.ToStatus == task.Status)
+                .OrderByDescending(h => h.ChangedAt)
+                .Select(h => h.Reason)
+                .FirstOrDefaultAsync(ct)
+            : null;
+
+        var view = StatusViews.ViewOf(audience, task.Status);
+
+        return new RequestProgressDto(
+            task.Id, task.TaskNumber, task.Status,
+            view?.Key ?? task.Status.ToString().ToLowerInvariant(),
+            view?.Label ?? StatusLabels.For(task.Status),
+            task.Responsible,
+            support,
+            task.ProgressPercent,
+            worked,
+            sessions.Count == 0 ? null : sessions.Min(s => s.SessionStart),
+            task.DueDate,
+            update?.Body,
+            update?.Author,
+            update?.CreatedAt,
+            quality,
+            waiting);
+    }
+
     private async Task<PagedResult<RequestSummaryDto>> ProjectPageAsync(
-        IQueryable<Request> query, PageQuery page, CancellationToken ct)
+        IQueryable<Request> query, PageQuery page, CancellationToken ct,
+        StatusAudience audience = StatusAudience.Coordinator)
     {
         var total = await query.CountAsync(ct);
 
@@ -205,9 +507,46 @@ public sealed class RequestService : IRequestService
                 r.TargetDate,
                 r.GeneratedTaskId,
                 r.Attachments.Count,
-                r.Clarifications.Any(c => c.AnsweredAt == null)))
+                r.Clarifications.Any(c => c.AnsweredAt == null),
+                // Passed explicitly rather than relying on the record's defaults: EF cannot
+                // translate a constructor with optional arguments inside a projection.
+                r.ClientId,
+                r.ClientId == null
+                    ? null
+                    : _db.Clients.Where(c => c.Id == r.ClientId).Select(c => c.Name).FirstOrDefault(),
+                // The generated task, folded onto the request. This is what spares the requester
+                // a second screen: who has it, how far along it is, and when it last moved.
+                r.GeneratedTaskId == null
+                    ? null
+                    : _db.Tasks.Where(t => t.Id == r.GeneratedTaskId)
+                        .Select(t => (WorkTaskStatus?)t.Status).FirstOrDefault(),
+                "",
+                "",
+                r.GeneratedTaskId == null
+                    ? null
+                    : _db.Tasks.Where(t => t.Id == r.GeneratedTaskId)
+                        .Select(t => t.PrimaryAssigneeUser!.DisplayName).FirstOrDefault(),
+                r.GeneratedTaskId == null
+                    ? 0
+                    : _db.Tasks.Where(t => t.Id == r.GeneratedTaskId)
+                        .Select(t => t.ProgressPercent).FirstOrDefault(),
+                r.GeneratedTaskId == null
+                    ? r.UpdatedAt ?? r.RequestedAt
+                    : _db.Tasks.Where(t => t.Id == r.GeneratedTaskId)
+                        .Select(t => t.UpdatedAt ?? t.CreatedAt).FirstOrDefault()))
             .ToListAsync(ct);
 
-        return new PagedResult<RequestSummaryDto>(items, page.NormalizedPage, page.NormalizedPageSize, total);
+        // The label is decided in one place, in C#, so it cannot be translated into SQL. Applied
+        // after the query rather than duplicated as a giant CASE expression.
+        var labelled = items
+            .Select(r =>
+            {
+                var view = StatusViews.RequestViewOf(audience, r.Status, r.TaskStatus);
+                return r with { ViewKey = view.Key, ViewLabel = view.Label };
+            })
+            .ToList();
+
+        return new PagedResult<RequestSummaryDto>(
+            labelled, page.NormalizedPage, page.NormalizedPageSize, total);
     }
 }

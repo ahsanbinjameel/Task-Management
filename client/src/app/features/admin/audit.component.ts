@@ -1,15 +1,15 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
-import { MatSelectModule } from '@angular/material/select';
 import { MatTableModule } from '@angular/material/table';
 import { MatPaginatorModule, PageEvent } from '@angular/material/paginator';
 import { ApiService } from '../../core/api.service';
 import { AuditLogDto, PagedResult } from '../../core/models';
+import { SearchSelectComponent } from '../../shared/search-select.component';
 import { EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../shared/ui';
 
 @Component({
@@ -17,8 +17,8 @@ import { EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../sha
   standalone: true,
   imports: [
     DatePipe, FormsModule, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule,
-    MatSelectModule, MatTableModule, MatPaginatorModule,
-    PageHeaderComponent, EmptyComponent, LoadingComponent,
+    MatTableModule, MatPaginatorModule,
+    PageHeaderComponent, EmptyComponent, LoadingComponent, SearchSelectComponent,
   ],
   template: `
     <div class="page">
@@ -26,13 +26,8 @@ import { EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../sha
                        subtitle="Append-only. Nothing here can be edited or deleted, by design." />
 
       <div class="card card-pad filters">
-        <mat-form-field>
-          <mat-label>Action</mat-label>
-          <mat-select [(ngModel)]="action" (selectionChange)="reload()">
-            <mat-option [value]="null">Any</mat-option>
-            @for (a of actions(); track a) { <mat-option [value]="a">{{ a }}</mat-option> }
-          </mat-select>
-        </mat-form-field>
+        <app-search-select label="Action" nullLabel="Any" [options]="actionOptions()"
+                           [(ngModel)]="action" (valueChange)="reload()" />
 
         <mat-form-field>
           <mat-label>Entity type</mat-label>
@@ -96,6 +91,7 @@ import { EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../sha
   styles: `
     .filters { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
     .filters mat-form-field { margin-bottom: -1.25em; }
+    .filters app-search-select { width: 200px; margin-bottom: -1.25em; }
     .narrow-field { width: 120px; }
     .changes { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   `,
@@ -106,6 +102,7 @@ export class AuditComponent implements OnInit {
   readonly page = signal<PagedResult<AuditLogDto>>(
     { items: [], page: 1, pageSize: 50, totalCount: 0, totalPages: 0 });
   readonly actions = signal<string[]>([]);
+  readonly actionOptions = computed(() => this.actions().map((a) => ({ value: a, label: a })));
   readonly loading = signal(true);
   readonly columns = ['when', 'action', 'actor', 'entity', 'changes'];
 

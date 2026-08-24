@@ -332,9 +332,12 @@ public class RealtimeReportingTests
         Assert.Equal(1, report.TasksWorked);
         Assert.Equal(1, report.TasksCompleted);
 
-        var line = Assert.Single(report.Breakdown);
+        var line = Assert.Single(report.OwnedWork);
         Assert.Equal(2, line.Sessions);                              // both stretches, not one span
         Assert.Equal(TimeSpan.FromMinutes(150), line.TimeSpent);
+
+        // The worker owns this task, so none of it may be reported as work they merely supported.
+        Assert.Empty(report.SupportWork);
     }
 
     [Fact]

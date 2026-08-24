@@ -22,9 +22,18 @@ public class UserConfig : IEntityTypeConfiguration<User>
     public void Configure(EntityTypeBuilder<User> b)
     {
         b.HasIndex(u => u.UserName).IsUnique();
-        b.HasIndex(u => u.Email).IsUnique();
+
+        // Email is optional, so the uniqueness index has to be filtered: SQL Server treats NULLs as
+        // equal for a unique index, which would let exactly one user have no address and reject
+        // every one after that. The filter keeps "no email" unlimited while still refusing
+        // duplicates among the users who do have one.
+        b.HasIndex(u => u.Email)
+            .IsUnique()
+            .HasFilter("[Email] IS NOT NULL")
+            .HasDatabaseName("UX_User_Email");
+
         b.Property(u => u.UserName).HasMaxLength(100).IsRequired();
-        b.Property(u => u.Email).HasMaxLength(256).IsRequired();
+        b.Property(u => u.Email).HasMaxLength(256);
         b.Property(u => u.DisplayName).HasMaxLength(200).IsRequired();
         BaseEntityConventions.ApplyRowVersion(b);
     }
@@ -89,6 +98,14 @@ public class WorkTaskConfig : IEntityTypeConfiguration<WorkTask>
             .OnDelete(DeleteBehavior.Restrict);
         b.HasOne(t => t.ParentTask).WithMany(t => t.SubTasks).HasForeignKey(t => t.ParentTaskId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        // Existing subtasks predate the flag and used to block the parent unconditionally, so they
+        // default to required — the migration must not quietly make finished work optional.
+        b.Property(t => t.IsRequired).HasDefaultValue(true);
+
+        // "Which of my subtasks are still outstanding" is asked on every parent task screen and on
+        // every completion attempt.
+        b.HasIndex(t => new { t.ParentTaskId, t.IsRequired, t.Status });
 
         BaseEntityConventions.ApplyRowVersion(b);
     }

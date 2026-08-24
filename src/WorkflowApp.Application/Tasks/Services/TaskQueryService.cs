@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using WorkflowApp.Application.Common;
 using WorkflowApp.Application.Common.Interfaces;
 using WorkflowApp.Application.Common.Models;
+using WorkflowApp.Application.Requests.Dtos;
 using WorkflowApp.Application.Tasks.Dtos;
 using WorkflowApp.Domain.Entities.Tasks;
 using WorkflowApp.Domain.Enums;
@@ -14,21 +15,58 @@ public sealed record TaskQuery
 {
     public long? AssigneeUserId { get; init; }
     public WorkTaskStatus? Status { get; init; }
+
+    /// <summary>
+    /// The status group being looked at — "working", "waiting", "unassigned". Which internal
+    /// statuses that covers depends on <see cref="Audience"/>; see <see cref="StatusViews"/>.
+    /// Null or "all" means no status filter at all.
+    /// </summary>
+    public string? View { get; init; }
+
+    /// <summary>
+    /// Who is looking. Decides both the tiles offered and what each one contains, so a worker and
+    /// a coordinator asking for "waiting" get the answer that is useful to each of them.
+    /// </summary>
+    public StatusAudience Audience { get; init; } = StatusAudience.Coordinator;
     public Priority? Priority { get; init; }
     public bool? Unassigned { get; init; }
 
     /// <summary>Only the children of this task.</summary>
     public long? ParentTaskId { get; init; }
+
+    /// <summary>Only work for this client.</summary>
+    public long? ClientId { get; init; }
+
+    /// <summary>
+    /// Restricts the list to work this person is actually part of — theirs to do, or theirs to
+    /// help with. Set by the controller for anyone without a coordinating or reviewing role, so a
+    /// worker browsing "Tasks" sees their own work rather than the whole organisation's.
+    ///
+    /// Visibility is not ownership: a task they only support appears here, and still never counts
+    /// towards their queue, workload or task count.
+    /// </summary>
+    public long? VisibleToUserId { get; init; }
     public string? Search { get; init; }
 
     /// <summary>Excludes Closed / Cancelled / Duplicate — the default for working views.</summary>
     public bool OpenOnly { get; init; }
+
+    /// <summary>
+    /// Column to order by, as the client names it. Unknown values fall back to newest-first rather
+    /// than throwing — a stale bookmark should show a sensible list, not an error.
+    /// </summary>
+    public string? SortBy { get; init; }
+
+    public bool SortDescending { get; init; } = true;
 }
 
 public interface ITaskQueryService
 {
     Task<Result<TaskDetailDto>> GetAsync(long taskId, CancellationToken ct = default);
     Task<PagedResult<TaskSummaryDto>> ListAsync(TaskQuery query, PageQuery page, CancellationToken ct = default);
+
+    /// <summary>How many tasks sit in each status, under the same filters minus status.</summary>
+    Task<IReadOnlyList<StatusCountDto>> StatusCountsAsync(TaskQuery query, CancellationToken ct = default);
 
     /// <summary>Approved work with nobody on it yet — the assignment coordinator's queue.</summary>
     Task<PagedResult<TaskSummaryDto>> AssignmentQueueAsync(PageQuery page, CancellationToken ct = default);
@@ -80,10 +118,39 @@ public sealed class TaskQueryService : ITaskQueryService
                 .Select(u => u.DisplayName).FirstOrDefaultAsync(ct)
             : null;
 
-        var requestNumber = task.RequestId is { } requestId
-            ? await _db.Requests.AsNoTracking().Where(r => r.Id == requestId)
-                .Select(r => r.RequestNumber).FirstOrDefaultAsync(ct)
+        // What was asked for, carried onto the work. This is what stops a worker having to go and
+        // read the request to find the screenshot or what "working" is supposed to look like.
+        var requestContext = task.RequestId is { } requestId
+            ? await _db.Requests.AsNoTracking()
+                .Where(r => r.Id == requestId)
+                .Select(r => new RequestContextDto(
+                    r.Id,
+                    r.RequestNumber,
+                    r.RequestedByUser.DisplayName,
+                    r.RequestedAt,
+                    r.RequestedUrgency,
+                    r.ProjectId == null
+                        ? null
+                        : _db.Projects.Where(x => x.Id == r.ProjectId).Select(x => x.Name).FirstOrDefault(),
+                    r.ModuleId == null
+                        ? null
+                        : _db.Modules.Where(x => x.Id == r.ModuleId).Select(x => x.Name).FirstOrDefault(),
+                    r.Description,
+                    r.BusinessImpact,
+                    r.ExpectedResult,
+                    r.CurrentResult,
+                    r.ReproductionSteps,
+                    _db.Attachments
+                        .Where(a => a.RequestId == r.Id)
+                        .OrderBy(a => a.CreatedAt)
+                        .Select(a => new AttachmentDto(
+                            a.Id, a.OriginalFileName, a.ContentType, a.SizeBytes,
+                            a.UploadedByUserId, a.CreatedAt))
+                        .ToList()))
+                .FirstOrDefaultAsync(ct)
             : null;
+
+        var requestNumber = requestContext?.RequestNumber;
 
         var pauseReasons = await _db.PauseReasons.AsNoTracking()
             .ToDictionaryAsync(p => p.Id, p => p.Name, ct);
@@ -122,17 +189,26 @@ public sealed class TaskQueryService : ITaskQueryService
             .Where(u => qcReviews.Select(q => q.ReviewerUserId).Contains(u.Id))
             .ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
 
-        var subTaskIds = await _db.Tasks.AsNoTracking()
+        // Required first, so what actually blocks the parent is at the top of the list.
+        var subTasks = await _db.Tasks.AsNoTracking()
             .Where(t => t.ParentTaskId == taskId)
-            .OrderBy(t => t.Id)
-            .Select(t => t.Id)
+            .OrderByDescending(t => t.IsRequired).ThenBy(t => t.Id)
+            .Select(t => new SubtaskSummaryDto(
+                t.Id, t.TaskNumber, t.Title, t.Status,
+                t.PrimaryAssigneeUser != null ? t.PrimaryAssigneeUser.DisplayName : null,
+                t.ProgressPercent, t.IsRequired))
             .ToListAsync(ct);
 
         var blockedBy = await _dependencies.BlockersAsync(taskId, ct);
 
-        var collaborators = await _db.TaskCollaborators.AsNoTracking()
+        // Names, not bare ids: a support person nobody can see by name is not "visible on the task".
+        // Ordered before projecting, and joined through the navigation rather than an explicit
+        // Join: ordering by a member of the constructed DTO is not translatable to SQL.
+        var supportPeople = await _db.TaskCollaborators.AsNoTracking()
             .Where(c => c.TaskId == taskId)
-            .Select(c => c.UserId)
+            .OrderBy(c => c.AddedAt)
+            .Select(c => new SupportPersonDto(
+                c.UserId, c.User.DisplayName, c.AddedAt, c.AddedByUserId))
             .ToListAsync(ct);
 
         var transitions = TaskWorkflow.Transitions
@@ -146,15 +222,23 @@ public sealed class TaskQueryService : ITaskQueryService
             transitions.Add(WorkTaskStatus.Cancelled);
         }
 
+        // Looked up individually and null-safe: a client retired after the task was raised must
+        // not make the task unreadable. Each is skipped entirely when the id is null, so an
+        // internal task with no client costs nothing.
+        var clientName = task.ClientId is { } clientId
+            ? await _db.Clients.AsNoTracking().Where(c => c.Id == clientId)
+                .Select(c => c.Name).FirstOrDefaultAsync(ct)
+            : null;
+
         return Result<TaskDetailDto>.Success(new TaskDetailDto(
             task.Id, task.TaskNumber, task.RequestId, requestNumber, task.Title, task.Description,
-            task.Type, task.Status, task.Priority, task.ProjectId, task.ClientId, task.ModuleId,
+            task.Type, task.Status, task.Priority, task.ClientId, clientName,
             task.PrimaryAssigneeUserId, assigneeName, task.ReviewerUserId, task.QCUserId,
             task.EstimatedEffortHours, task.DueDate, task.AcceptanceCriteria, task.Resolution,
             task.ProgressPercent, task.QueueOrder, task.ParentTaskId,
             transitions.Distinct().ToList(),
             TotalWorked(sessions),
-            collaborators,
+            supportPeople,
             sessions.Select(s => ToDto(s, pauseReasons)).ToList(),
             statusHistory, assignmentHistory, activity,
             qcReviews.Select(q => new QCReviewDto(
@@ -162,16 +246,63 @@ public sealed class TaskQueryService : ITaskQueryService
                 reviewerNames.TryGetValue(q.ReviewerUserId, out var reviewerName) ? reviewerName : null,
                 q.ReviewedAt, q.Result, q.Comments, q.Environment, q.BuildVersion,
                 AcceptanceCriteria.Deserialize(q.AcceptanceCriteriaResults))).ToList(),
-            subTaskIds,
+            subTasks,
             blockedBy,
-            EncodeRowVersion(task.RowVersion)));
+            EncodeRowVersion(task.RowVersion),
+            requestContext));
     }
 
     public async Task<PagedResult<TaskSummaryDto>> ListAsync(
         TaskQuery query, PageQuery page, CancellationToken ct = default)
     {
-        var tasks = _db.Tasks.AsNoTracking();
+        var tasks = ApplyFilters(_db.Tasks.AsNoTracking(), query, includeStatus: true);
 
+        // Newest first by default. This is the browsing view — filters and tiles are how you narrow
+        // it, so recency is the useful default. The working queues (my queue, assignment, QC) keep
+        // their own deliberate ordering, where priority and queue position are the point.
+        return await ProjectPageAsync(Sort(tasks, query), page, ct);
+    }
+
+    /// <summary>
+    /// The list's filters, in one place, so the status tiles and the rows beneath them can never
+    /// disagree. `includeStatus` is false when counting — a tile has to count across everything the
+    /// other filters allow, not within the status already chosen.
+    /// </summary>
+    /// <summary>
+    /// Ordering, driven from the column header the user clicked.
+    ///
+    /// Sorting happens in the database, not on the page: ordering only the twenty-five rows already
+    /// fetched would reorder the page rather than the list, which looks the same until the data
+    /// spans more than one page and then quietly lies.
+    /// </summary>
+    private static IQueryable<WorkTask> Sort(IQueryable<WorkTask> tasks, TaskQuery query)
+    {
+        var descending = query.SortDescending;
+
+        return query.SortBy?.ToLowerInvariant() switch
+        {
+            "number" => descending ? tasks.OrderByDescending(t => t.TaskNumber) : tasks.OrderBy(t => t.TaskNumber),
+            "title" => descending ? tasks.OrderByDescending(t => t.Title) : tasks.OrderBy(t => t.Title),
+            "status" => descending ? tasks.OrderByDescending(t => t.Status) : tasks.OrderBy(t => t.Status),
+            "priority" => descending ? tasks.OrderByDescending(t => t.Priority) : tasks.OrderBy(t => t.Priority),
+            "client" => descending
+                ? tasks.OrderByDescending(t => t.ClientId == null)
+                       .ThenByDescending(t => t.ClientId)
+                : tasks.OrderBy(t => t.ClientId == null).ThenBy(t => t.ClientId),
+            "assignee" => descending
+                ? tasks.OrderByDescending(t => t.PrimaryAssigneeUser!.DisplayName)
+                : tasks.OrderBy(t => t.PrimaryAssigneeUser!.DisplayName),
+            // Nulls last either way: a task with no date is not "the most urgent thing you have".
+            "due" => descending
+                ? tasks.OrderBy(t => t.DueDate == null).ThenByDescending(t => t.DueDate)
+                : tasks.OrderBy(t => t.DueDate == null).ThenBy(t => t.DueDate),
+            _ => descending ? tasks.OrderByDescending(t => t.Id) : tasks.OrderBy(t => t.Id),
+        };
+    }
+
+    private IQueryable<WorkTask> ApplyFilters(
+        IQueryable<WorkTask> tasks, TaskQuery query, bool includeStatus)
+    {
         if (query.AssigneeUserId is { } assigneeId)
             tasks = tasks.Where(t => t.PrimaryAssigneeUserId == assigneeId);
 
@@ -181,11 +312,29 @@ public sealed class TaskQueryService : ITaskQueryService
         if (query.Unassigned == true)
             tasks = tasks.Where(t => t.PrimaryAssigneeUserId == null);
 
-        if (query.Status is { } status)
+        if (includeStatus && query.Status is { } status)
             tasks = tasks.Where(t => t.Status == status);
+
+        if (includeStatus && StatusViews.FindTaskView(query.Audience, query.View) is { } view)
+        {
+            var statuses = view.Statuses.ToList();
+            tasks = tasks.Where(t => statuses.Contains(t.Status));
+        }
 
         if (query.Priority is { } priority)
             tasks = tasks.Where(t => t.Priority == priority);
+
+        if (query.ClientId is { } clientId)
+            tasks = tasks.Where(t => t.ClientId == clientId);
+
+        if (query.VisibleToUserId is { } viewerId)
+        {
+            tasks = tasks.Where(t =>
+                t.PrimaryAssigneeUserId == viewerId
+                || _db.TaskCollaborators.Any(c => c.TaskId == t.Id && c.UserId == viewerId)
+                || (t.RequestId != null && _db.Requests
+                        .Any(r => r.Id == t.RequestId && r.RequestedByUserId == viewerId)));
+        }
 
         if (query.OpenOnly)
             tasks = tasks.Where(t => !TerminalStatuses.Contains(t.Status));
@@ -196,10 +345,31 @@ public sealed class TaskQueryService : ITaskQueryService
             tasks = tasks.Where(t => t.Title.Contains(term) || t.TaskNumber.Contains(term));
         }
 
-        // Highest priority first, then nearest due date, then oldest.
-        return await ProjectPageAsync(
-            tasks.OrderBy(t => t.Priority).ThenBy(t => t.DueDate ?? DateTimeOffset.MaxValue).ThenBy(t => t.Id),
-            page, ct);
+        return tasks;
+    }
+
+    /// <summary>
+    /// One count per view for this audience — the tiles are the navigation, so they are always all
+    /// present, in a fixed order, whether or not anything is in them. A tile that disappears when
+    /// it empties is a tile nobody can learn the position of, and "nothing is waiting for
+    /// assignment" is worth saying out loud.
+    /// </summary>
+    public async Task<IReadOnlyList<StatusCountDto>> StatusCountsAsync(
+        TaskQuery query, CancellationToken ct = default)
+    {
+        var counts = await ApplyFilters(_db.Tasks.AsNoTracking(), query, includeStatus: false)
+            .GroupBy(t => t.Status)
+            .Select(g => new { Status = g.Key, Count = g.Count() })
+            .ToListAsync(ct);
+
+        var byStatus = counts.ToDictionary(c => c.Status, c => c.Count);
+
+        return StatusViews.ForTasks(query.Audience)
+            .Select(view => new StatusCountDto(
+                view.Key,
+                view.Label,
+                view.Statuses.Sum(s => byStatus.TryGetValue(s, out var n) ? n : 0)))
+            .ToList();
     }
 
     public Task<PagedResult<TaskSummaryDto>> AssignmentQueueAsync(PageQuery page, CancellationToken ct = default)
@@ -294,7 +464,8 @@ public sealed class TaskQueryService : ITaskQueryService
         await _db.PauseReasons.AsNoTracking()
             .Where(p => p.IsActive)
             .OrderBy(p => p.Name)
-            .Select(p => new PauseReasonDto(p.Id, p.Name, p.RequiresComment, p.IsBlocker))
+            .Select(p => new PauseReasonDto(
+                p.Id, p.Name, p.RequiresComment, p.IsBlocker, p.Category, p.AwayState))
             .ToListAsync(ct);
 
     // --- helpers -------------------------------------------------------------------------
@@ -310,8 +481,12 @@ public sealed class TaskQueryService : ITaskQueryService
     }
 
     /// <summary>
-    /// Fills in assignee names and worked time for a page of tasks using two queries, rather than
-    /// two per row.
+    /// Fills in the names, dates and history a row needs, for a page of tasks, using a fixed
+    /// number of queries rather than a few per row.
+    ///
+    /// The extra history lookups are what let each status view show columns that mean something —
+    /// "waiting since", "started", "checked by" — without the reader opening the task. They are
+    /// six more round trips for a page of twenty-five, not six per row.
     /// </summary>
     private async Task<IReadOnlyList<TaskSummaryDto>> ProjectAsync(
         IReadOnlyList<WorkTask> tasks, CancellationToken ct)
@@ -331,6 +506,72 @@ public sealed class TaskQueryService : ITaskQueryService
             .Select(s => new { s.TaskId, s.SessionStart, s.SessionEnd, s.Status })
             .ToListAsync(ct);
 
+        // "Whose work is this?" is asked constantly in a queue, and an id cannot answer it.
+        var clientIds = tasks.Where(t => t.ClientId.HasValue)
+            .Select(t => t.ClientId!.Value).Distinct().ToList();
+
+        var clientNames = clientIds.Count == 0
+            ? new Dictionary<long, string>()
+            : await _db.Clients.AsNoTracking()
+                .Where(c => clientIds.Contains(c.Id))
+                .ToDictionaryAsync(c => c.Id, c => c.Name, ct);
+
+        // How long this has been where it is, and why. Every "waiting since" column comes from
+        // here; so does the pause/block reason, which the transition rules already made mandatory.
+        var statusMoves = await _db.StatusHistories.AsNoTracking()
+            .Where(h => taskIds.Contains(h.TaskId))
+            .Select(h => new { h.TaskId, h.ToStatus, h.ChangedAt, h.Reason })
+            .ToListAsync(ct);
+
+        var assignments = await _db.AssignmentHistories.AsNoTracking()
+            .Where(a => taskIds.Contains(a.TaskId) && a.ToUserId != null)
+            .Select(a => new { a.TaskId, a.AssignedAt })
+            .ToListAsync(ct);
+
+        var checks = await _db.QCReviews.AsNoTracking()
+            .Where(q => taskIds.Contains(q.TaskId))
+            .Select(q => new { q.TaskId, q.ReviewerUserId, q.ReviewedAt, q.Comments, q.AttemptNumber })
+            .ToListAsync(ct);
+
+        var support = await _db.TaskCollaborators.AsNoTracking()
+            .Where(c => taskIds.Contains(c.TaskId))
+            .Select(c => new { c.TaskId, c.UserId })
+            .ToListAsync(ct);
+
+        var requestIds = tasks.Where(t => t.RequestId.HasValue)
+            .Select(t => t.RequestId!.Value).Distinct().ToList();
+
+        var requests = requestIds.Count == 0
+            ? new Dictionary<long, RequestOrigin>()
+            : await _db.Requests.AsNoTracking()
+                .Where(r => requestIds.Contains(r.Id))
+                .Select(r => new { r.Id, r.RequestNumber, r.RequestedByUserId })
+                .ToDictionaryAsync(
+                    r => r.Id, r => new RequestOrigin(r.RequestNumber, r.RequestedByUserId), ct);
+
+        // One more name lookup, for everyone the rows above referred to but the assignee list did
+        // not already cover: requesters, quality checkers and support people.
+        var extraIds = requests.Values.Select(r => r.RequestedByUserId)
+            .Concat(checks.Select(c => c.ReviewerUserId))
+            .Concat(support.Select(c => c.UserId))
+            .Concat(tasks.Where(t => t.QCUserId.HasValue).Select(t => t.QCUserId!.Value))
+            .Distinct()
+            .Where(id => !names.ContainsKey(id))
+            .ToList();
+
+        var moreNames = extraIds.Count == 0
+            ? new Dictionary<long, string>()
+            : await _db.Users.AsNoTracking()
+                .Where(u => extraIds.Contains(u.Id))
+                .ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
+
+        string? NameOf(long? userId) =>
+            userId is { } id
+                ? names.TryGetValue(id, out var known) ? known
+                    : moreNames.TryGetValue(id, out var other) ? other
+                    : null
+                : null;
+
         return tasks.Select(t =>
         {
             var theirs = sessions.Where(s => s.TaskId == t.Id).ToList();
@@ -339,15 +580,65 @@ public sealed class TaskQueryService : ITaskQueryService
                 .Where(s => s.SessionEnd.HasValue)
                 .Aggregate(TimeSpan.Zero, (sum, s) => sum + (s.SessionEnd!.Value - s.SessionStart));
 
+            // The move that put it in the status it is in now.
+            var landed = statusMoves
+                .Where(h => h.TaskId == t.Id && h.ToStatus == t.Status)
+                .OrderByDescending(h => h.ChangedAt)
+                .FirstOrDefault();
+
+            var handedToQC = statusMoves
+                .Where(h => h.TaskId == t.Id && h.ToStatus == WorkTaskStatus.CompletedReadyForQC)
+                .OrderByDescending(h => h.ChangedAt)
+                .FirstOrDefault();
+
+            var lastCheck = checks
+                .Where(q => q.TaskId == t.Id)
+                .OrderByDescending(q => q.AttemptNumber)
+                .FirstOrDefault();
+
+            var helpers = support
+                .Where(c => c.TaskId == t.Id)
+                .Select(c => NameOf(c.UserId))
+                .Where(n => n is not null)
+                .Select(n => n!)
+                .ToList();
+
+            var origin = t.RequestId is { } rid && requests.TryGetValue(rid, out var found)
+                ? found
+                : null;
+
             return new TaskSummaryDto(
                 t.Id, t.TaskNumber, t.Title, t.Type, t.Status, t.Priority,
                 t.PrimaryAssigneeUserId,
-                t.PrimaryAssigneeUserId is { } id && names.TryGetValue(id, out var name) ? name : null,
+                NameOf(t.PrimaryAssigneeUserId),
                 t.DueDate, t.QueueOrder, t.ProgressPercent, t.EstimatedEffortHours,
                 worked,
-                theirs.Any(s => s.Status == WorkSessionStatus.Active));
+                theirs.Any(s => s.Status == WorkSessionStatus.Active),
+                t.ClientId,
+                t.ClientId is { } cid && clientNames.TryGetValue(cid, out var client) ? client : null,
+                // Falls back to the row's own timestamps: a task created straight into the status
+                // it is still in has no transition to point at.
+                landed?.ChangedAt ?? t.UpdatedAt ?? t.CreatedAt,
+                landed?.Reason,
+                assignments.Where(a => a.TaskId == t.Id)
+                    .OrderByDescending(a => a.AssignedAt)
+                    .Select(a => (DateTimeOffset?)a.AssignedAt)
+                    .FirstOrDefault(),
+                theirs.Count == 0 ? null : theirs.Min(s => s.SessionStart),
+                handedToQC?.ChangedAt,
+                t.RequestId,
+                origin?.RequestNumber,
+                origin is null ? null : NameOf(origin.RequestedByUserId),
+                lastCheck is null ? null : NameOf(lastCheck.ReviewerUserId),
+                lastCheck?.ReviewedAt,
+                lastCheck?.Comments,
+                NameOf(t.QCUserId),
+                helpers);
         }).ToList();
     }
+
+    /// <summary>Where a task came from, for the rows that show who asked for the work.</summary>
+    private sealed record RequestOrigin(string RequestNumber, long RequestedByUserId);
 
     /// <summary>Elapsed time across all closed sessions. An open session is not counted until it ends.</summary>
     internal static TimeSpan TotalWorked(IEnumerable<WorkSession> sessions) =>

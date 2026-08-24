@@ -72,6 +72,12 @@ public sealed record CreateSubtaskDto
     /// <summary>Defaults to the parent's priority.</summary>
     public Priority? Priority { get; init; }
 
+    /// <summary>
+    /// Whether the parent has to wait for this one. Defaults to true: if it was worth creating,
+    /// assume it matters until somebody says otherwise.
+    /// </summary>
+    public bool IsRequired { get; init; } = true;
+
     public decimal? EstimatedEffortHours { get; init; }
     public DateTimeOffset? DueDate { get; init; }
 

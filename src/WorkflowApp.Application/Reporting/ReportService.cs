@@ -34,6 +34,12 @@ public interface IReportService
 /// </summary>
 public sealed class ReportService : IReportService
 {
+    /// <summary>Statuses that mean the task is finished with, one way or another.</summary>
+    private static readonly WorkTaskStatus[] TerminalStatuses =
+    {
+        WorkTaskStatus.Closed, WorkTaskStatus.Cancelled, WorkTaskStatus.Duplicate
+    };
+
     private readonly IWorkflowDbContext _db;
     private readonly IBusinessCalendar _calendar;
     private readonly IDateTimeProvider _clock;
@@ -76,6 +82,25 @@ public sealed class ReportService : IReportService
 
         var breakdown = await TaskBreakdownAsync(userId, dayStart, dayEnd, ct);
 
+        // Split by who is actually responsible. Time is time, but the report must not imply this
+        // person owns work they were only helping with.
+        var workedTaskIds = breakdown.Select(b => b.TaskId).ToList();
+        var ownedTaskIds = await _db.Tasks.AsNoTracking()
+            .Where(t => workedTaskIds.Contains(t.Id) && t.PrimaryAssigneeUserId == userId)
+            .Select(t => t.Id)
+            .ToListAsync(ct);
+
+        var ownedWork = breakdown.Where(b => ownedTaskIds.Contains(b.TaskId)).ToList();
+        var supportWork = breakdown.Where(b => !ownedTaskIds.Contains(b.TaskId)).ToList();
+
+        var supportingOn = await _db.TaskCollaborators.AsNoTracking()
+            .Where(c => c.UserId == userId && !TerminalStatuses.Contains(c.Task.Status))
+            .OrderBy(c => c.Task.TaskNumber)
+            .Select(c => new SupportedTaskDto(
+                c.Task.Id, c.Task.TaskNumber, c.Task.Title, c.Task.Status.ToString(),
+                c.Task.PrimaryAssigneeUser != null ? c.Task.PrimaryAssigneeUser.DisplayName : null))
+            .ToListAsync(ct);
+
         var completed = await _db.StatusHistories.AsNoTracking()
             .CountAsync(h => h.ChangedByUserId == userId
                              && h.ToStatus == WorkTaskStatus.CompletedReadyForQC
@@ -84,7 +109,8 @@ public sealed class ReportService : IReportService
         return new DailyUserReportDto(
             date, userId, displayName,
             shift?.ShiftStart, shift?.ShiftEnd, onShift, productive, away,
-            breakdown.Count, completed, breakdown);
+            // "Worked" counts only what they are responsible for; support is reported on its own.
+            ownedWork.Count, completed, ownedWork, supportWork, supportingOn);
     }
 
     public async Task<DailyTeamReportDto> DailyTeamAsync(DateOnly date, CancellationToken ct = default)

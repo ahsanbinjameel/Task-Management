@@ -1,11 +1,14 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using WorkflowApp.Application.Common;
 using WorkflowApp.Application.Common.Interfaces;
+using WorkflowApp.Application.Notifications;
 using WorkflowApp.Application.Common.Models;
 using WorkflowApp.Application.Common.Services;
 using WorkflowApp.Application.Tasks.Dtos;
 using WorkflowApp.Domain.Entities.Tasks;
 using WorkflowApp.Domain.Enums;
+using WorkflowApp.Domain.Entities.Requests;
 using WorkflowApp.Domain.Workflow;
 
 namespace WorkflowApp.Application.Tasks.Services;
@@ -55,10 +58,17 @@ public interface IWorkSessionService
 /// </summary>
 public sealed class WorkSessionService : IWorkSessionService
 {
+    /// <summary>Statuses that mean a subtask is finished with, one way or another.</summary>
+    private static readonly WorkTaskStatus[] TerminalStatuses =
+    {
+        WorkTaskStatus.Closed, WorkTaskStatus.Cancelled, WorkTaskStatus.Duplicate
+    };
+
     private readonly IWorkflowDbContext _db;
     private readonly ITaskQueryService _queries;
     private readonly ITaskDependencyService _dependencies;
     private readonly IActivityLogger _activity;
+    private readonly INotificationService _notifications;
     private readonly IDateTimeProvider _clock;
     private readonly ILogger<WorkSessionService> _logger;
 
@@ -67,6 +77,7 @@ public sealed class WorkSessionService : IWorkSessionService
         ITaskQueryService queries,
         ITaskDependencyService dependencies,
         IActivityLogger activity,
+        INotificationService notifications,
         IDateTimeProvider clock,
         ILogger<WorkSessionService> logger)
     {
@@ -74,6 +85,7 @@ public sealed class WorkSessionService : IWorkSessionService
         _queries = queries;
         _dependencies = dependencies;
         _activity = activity;
+        _notifications = notifications;
         _clock = clock;
         _logger = logger;
     }
@@ -133,7 +145,7 @@ public sealed class WorkSessionService : IWorkSessionService
         if (!TaskWorkflow.IsAllowed(task.Status, WorkTaskStatus.InProgress))
             return Result<TaskDetailDto>.Failure(Error.Conflict(
                 "workflow.transition_not_allowed",
-                $"A task in {TaskWorkflowService.Humanize(task.Status)} cannot be started."));
+                $"This cannot be started while it is \"{StatusLabels.For(task.Status)}\"."));
 
         OpenSession(task, userId, now);
         MoveTo(task, WorkTaskStatus.InProgress, userId, now, reason: null, ActivityType.TaskStarted,
@@ -173,7 +185,28 @@ public sealed class WorkSessionService : IWorkSessionService
         if (!TaskWorkflow.IsAllowed(task.Status, WorkTaskStatus.CompletedReadyForQC))
             return Result<TaskDetailDto>.Failure(Error.Conflict(
                 "workflow.transition_not_allowed",
-                $"A task in {TaskWorkflowService.Humanize(task.Status)} cannot be completed."));
+                $"This cannot be finished while it is \"{StatusLabels.For(task.Status)}\"."));
+
+        // A parent is not finished while the work it was broken into is still outstanding.
+        // Enforced here rather than only by hiding the button: the endpoint is reachable directly,
+        // and a stale page would otherwise let a parent through after a subtask reopened.
+        var outstanding = await _db.Tasks.AsNoTracking()
+            .Where(t => t.ParentTaskId == taskId
+                        && t.IsRequired
+                        && !TerminalStatuses.Contains(t.Status)
+                        && t.Status != WorkTaskStatus.Closed)
+            .Select(t => t.TaskNumber)
+            .ToListAsync(ct);
+
+        if (outstanding.Count > 0)
+        {
+            return Result<TaskDetailDto>.Failure(Error.Conflict(
+                "task.required_subtasks_open",
+                outstanding.Count == 1
+                    ? $"This cannot be finished yet: {outstanding[0]} still has to be done first."
+                    : $"This cannot be finished yet because {outstanding.Count} smaller tasks "
+                      + $"still have to be done first ({string.Join(", ", outstanding)})."));
+        }
 
         await CloseActiveSessionAsync(task, userId, null, resolution, WorkSessionStatus.Completed, now, ct);
 
@@ -185,6 +218,13 @@ public sealed class WorkSessionService : IWorkSessionService
             ActivityType.TaskCompleted, $"Work completed on {task.TaskNumber}; ready for QC.");
 
         await ReleaseWorkingStateAsync(userId, ct);
+
+
+        // Finished work sitting unchecked is the most common place for a task to stall.
+        await _notifications.RaiseForPermissionAsync(
+            Permissions.TaskQCReview, userId,
+            $"{task.TaskNumber} is ready to be checked",
+            task.Title, NotificationService.LinkTask, task.Id, ct);
 
         await _db.SaveChangesAsync(ct);
         return await _queries.GetAsync(taskId, ct);
@@ -234,7 +274,7 @@ public sealed class WorkSessionService : IWorkSessionService
         if (!TaskWorkflow.IsAllowed(urgent.Status, WorkTaskStatus.InProgress))
             return Result<TaskDetailDto>.Failure(Error.Conflict(
                 "workflow.transition_not_allowed",
-                $"A task in {TaskWorkflowService.Humanize(urgent.Status)} cannot be started."));
+                $"This cannot be started while it is \"{StatusLabels.For(urgent.Status)}\"."));
 
         OpenSession(urgent, userId, now);
         MoveTo(urgent, WorkTaskStatus.InProgress, userId, now,
@@ -279,15 +319,26 @@ public sealed class WorkSessionService : IWorkSessionService
             return Result<TaskDetailDto>.Failure(Error.Forbidden(
                 "task.not_assignee", "Only the assignee can change work state on this task."));
 
-        if (!TaskWorkflow.IsAllowed(task.Status, target))
-            return Result<TaskDetailDto>.Failure(Error.Conflict(
-                "workflow.transition_not_allowed",
-                $"A task in {TaskWorkflowService.Humanize(task.Status)} cannot move to {TaskWorkflowService.Humanize(target)}."));
-
         // Both pause and block are reason-required transitions in the workflow map.
         var reasonCheck = await ValidateReasonAsync(request, ct);
         if (reasonCheck is not null)
             return Result<TaskDetailDto>.Failure(reasonCheck);
+
+        var reason = request.PauseReasonId is { } id
+            ? await _db.PauseReasons.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id, ct)
+            : null;
+
+        // The reason decides what happens to the TASK, not which button was pressed. "Waiting for
+        // client" means the work genuinely cannot move on, whichever endpoint reported it; "Lunch"
+        // never does, because the task is still claimed and continues when the worker gets back.
+        // The explicit block endpoint still forces Blocked for the case with no listed reason.
+        if (reason is not null)
+            target = reason.IsBlocker ? WorkTaskStatus.Blocked : WorkTaskStatus.Paused;
+
+        if (!TaskWorkflow.IsAllowed(task.Status, target))
+            return Result<TaskDetailDto>.Failure(Error.Conflict(
+                "workflow.transition_not_allowed",
+                $"This cannot be moved from \"{StatusLabels.For(task.Status)}\" to \"{StatusLabels.For(target)}\"."));
 
         await CloseActiveSessionAsync(
             task, userId, request.PauseReasonId, request.Comment, WorkSessionStatus.Paused, now, ct);
@@ -296,9 +347,11 @@ public sealed class WorkSessionService : IWorkSessionService
 
         MoveTo(task, target, userId, now, reasonText,
             target == WorkTaskStatus.Blocked ? ActivityType.TaskBlocked : ActivityType.TaskPaused,
-            $"{(target == WorkTaskStatus.Blocked ? "Blocked" : "Paused")}: {reasonText}");
+            $"{(target == WorkTaskStatus.Blocked ? "Cannot continue" : "Paused")}: {reasonText}");
 
-        await ReleaseWorkingStateAsync(userId, ct);
+        // ...and separately, where the PERSON went. Only break/lunch/meeting move them; every other
+        // reason leaves them on shift and free to pick up something else.
+        await ApplyWorkerStateAsync(userId, reason, request.Comment, task.Id, now, ct);
 
         await _db.SaveChangesAsync(ct);
         return await _queries.GetAsync(taskId, ct);
@@ -392,6 +445,55 @@ public sealed class WorkSessionService : IWorkSessionService
 
         if (user is not null && user.WorkforceState == WorkforceState.Working)
             user.WorkforceState = WorkforceState.Available;
+    }
+
+    /// <summary>
+    /// Moves the worker's availability, if the reason says they actually went somewhere.
+    ///
+    /// This is the half of "pause" that is about the person rather than the work. It records an
+    /// activity event so the day's timeline and the daily report show the break for what it is —
+    /// without one, the time would silently read as productive.
+    ///
+    /// The workforce state machine still governs the move: if it is not a legal transition the
+    /// worker is simply released to Available rather than forced somewhere the machine forbids.
+    /// </summary>
+    private async Task ApplyWorkerStateAsync(
+        long userId, PauseReason? reason, string? details, long taskId,
+        DateTimeOffset now, CancellationToken ct)
+    {
+        var away = reason?.AwayState;
+
+        if (away is null)
+        {
+            await ReleaseWorkingStateAsync(userId, ct);
+            return;
+        }
+
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (user is null) return;
+
+        var transition = WorkforceStateMachine.Find(user.WorkforceState, away.Value);
+        if (transition is null)
+        {
+            await ReleaseWorkingStateAsync(userId, ct);
+            return;
+        }
+
+        var openShift = await _db.ShiftSessions
+            .Where(sh => sh.UserId == userId && sh.ShiftEnd == null)
+            .Select(sh => (long?)sh.Id)
+            .FirstOrDefaultAsync(ct);
+
+        user.WorkforceState = away.Value;
+
+        _activity.Record(
+            userId,
+            transition.Label,
+            resultingState: away.Value,
+            shiftSessionId: openShift,
+            relatedTaskId: taskId,
+            note: details,
+            occurredAt: now);
     }
 
     /// <summary>Applies a status change and appends to every history stream.</summary>

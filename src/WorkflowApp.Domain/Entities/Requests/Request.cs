@@ -78,3 +78,19 @@ public class Attachment : BaseEntity
     public long? RequestId { get; set; }
     public long? TaskId { get; set; }
 }
+
+/// <summary>
+/// What happened to a request, in words a requester can read.
+///
+/// Mirrors <c>TaskActivity</c>: requests had no history of their own, so an edit after submission
+/// left no trace anyone could see. Deliberately separate from <c>AuditLog</c>, which records the
+/// technical before/after for administrators — this is the human-readable stream.
+/// </summary>
+public class RequestActivity : BaseEntity
+{
+    public long RequestId { get; set; }
+    public ActivityType Type { get; set; }
+    public long ActorUserId { get; set; }
+    public DateTimeOffset OccurredAt { get; set; } = DateTimeOffset.UtcNow;
+    public string Description { get; set; } = default!;
+}

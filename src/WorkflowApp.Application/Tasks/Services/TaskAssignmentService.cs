@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using WorkflowApp.Application.Common.Events;
 using WorkflowApp.Application.Common.Interfaces;
 using WorkflowApp.Application.Common.Models;
 using WorkflowApp.Application.Common.Services;
@@ -37,6 +38,7 @@ public sealed class TaskAssignmentService : ITaskAssignmentService
     private readonly IWorkflowDbContext _db;
     private readonly ITaskQueryService _queries;
     private readonly INotificationService _notifications;
+    private readonly IIntegrationEventQueue _events;
     private readonly IDateTimeProvider _clock;
     private readonly ILogger<TaskAssignmentService> _logger;
 
@@ -44,12 +46,14 @@ public sealed class TaskAssignmentService : ITaskAssignmentService
         IWorkflowDbContext db,
         ITaskQueryService queries,
         INotificationService notifications,
+        IIntegrationEventQueue events,
         IDateTimeProvider clock,
         ILogger<TaskAssignmentService> logger)
     {
         _db = db;
         _queries = queries;
         _notifications = notifications;
+        _events = events;
         _clock = clock;
         _logger = logger;
     }
@@ -106,6 +110,26 @@ public sealed class TaskAssignmentService : ITaskAssignmentService
 
         if (request.AssigneeUserId is { } newAssignee)
         {
+            // Nobody is both owner and helper. If this person was helping, that relationship ends
+            // here — leaving it would count the same task twice in reports, once as work they own
+            // and once as work they supported.
+            var supportRow = await _db.TaskCollaborators
+                .FirstOrDefaultAsync(c => c.TaskId == taskId && c.UserId == newAssignee, ct);
+
+            if (supportRow is not null)
+            {
+                _db.TaskCollaborators.Remove(supportRow);
+
+                _db.TaskActivities.Add(new TaskActivity
+                {
+                    TaskId = taskId,
+                    Type = ActivityType.CollaboratorRemoved,
+                    ActorUserId = actingUserId,
+                    OccurredAt = now,
+                    Description = "Was helping with this task; now responsible for it."
+                });
+            }
+
             // New work goes to the end of that person's queue rather than jumping the line.
             var lastPosition = await _db.Tasks
                 .Where(t => t.PrimaryAssigneeUserId == newAssignee && t.Id != taskId)
@@ -195,7 +219,8 @@ public sealed class TaskAssignmentService : ITaskAssignmentService
         if (task.PrimaryAssigneeUserId == userId)
             return Result<TaskDetailDto>.Failure(Error.Validation(
                 "task.assignee_is_not_collaborator",
-                "The primary assignee is already accountable for this task."));
+                "That person is already responsible for this task, so they cannot also be "
+                + "listed as helping with it."));
 
         if (await _db.TaskCollaborators.AnyAsync(c => c.TaskId == taskId && c.UserId == userId, ct))
             return await _queries.GetAsync(taskId, ct);   // already there; idempotent
@@ -214,8 +239,10 @@ public sealed class TaskAssignmentService : ITaskAssignmentService
             Type = ActivityType.CollaboratorAdded,
             ActorUserId = actingUserId,
             OccurredAt = _clock.UtcNow,
-            Description = $"User {userId} added as a supporting collaborator."
+            Description = $"User {userId} added as a support person (helping, not responsible)."
         });
+
+        AnnounceTaskChanged(task);
 
         await _db.SaveChangesAsync(ct);
         return await _queries.GetAsync(taskId, ct);
@@ -230,11 +257,23 @@ public sealed class TaskAssignmentService : ITaskAssignmentService
         if (link is not null)
         {
             _db.TaskCollaborators.Remove(link);
+
+            var task = await _db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == taskId, ct);
+            if (task is not null) AnnounceTaskChanged(task);
+
             await _db.SaveChangesAsync(ct);
         }
 
         return await _queries.GetAsync(taskId, ct);
     }
+
+    /// <summary>
+    /// Tells anyone watching this task that its people changed. Support-person rows are not the
+    /// task row, so nothing else would raise an event for them.
+    /// </summary>
+    private void AnnounceTaskChanged(Domain.Entities.Tasks.WorkTask task) =>
+        _events.Enqueue(new TaskChangedEvent(
+            task.Id, task.TaskNumber, task.Status, task.PrimaryAssigneeUserId, ChangeKind.Updated));
 
     public async Task<Result<TaskDetailDto>> SetRolesAsync(
         long taskId, SetTaskRolesDto request, CancellationToken ct = default)

@@ -30,6 +30,10 @@ export const routes: Routes = [
       {
         path: 'tasks',
         title: 'Tasks',
+        // Mirrors the menu: hiding the link is a courtesy, this is what makes the URL agree.
+        canActivate: [requirePermission(
+          Perm.taskWork, Perm.taskAssign, Perm.taskReview, Perm.taskQCReview,
+          Perm.requestViewAll, Perm.dashboardManagement)],
         loadComponent: () =>
           import('./features/tasks/task-list.component').then((m) => m.TaskListComponent),
       },
@@ -44,6 +48,8 @@ export const routes: Routes = [
       {
         path: 'requests',
         title: 'Requests',
+        canActivate: [requirePermission(
+          Perm.requestCreate, Perm.requestViewAll, Perm.taskReview)],
         loadComponent: () =>
           import('./features/requests/request-list.component').then((m) => m.RequestListComponent),
       },
@@ -136,6 +142,9 @@ export const routes: Routes = [
       {
         path: 'me/day',
         title: 'My day',
+        // Shift and timer tooling belongs to people on the clock. Hiding the menu item is not
+        // enough — without this the page is still reachable by typing the URL.
+        canActivate: [requirePermission(Perm.workforceTrackShift)],
         loadComponent: () =>
           import('./features/me/my-day.component').then((m) => m.MyDayComponent),
       },

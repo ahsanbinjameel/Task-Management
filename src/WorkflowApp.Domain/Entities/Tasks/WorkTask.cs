@@ -47,6 +47,15 @@ public class WorkTask : BaseEntity
     public WorkTask? ParentTask { get; set; }
     public ICollection<WorkTask> SubTasks { get; set; } = new List<WorkTask>();
 
+    /// <summary>
+    /// Only meaningful on a subtask: whether the parent has to wait for it.
+    ///
+    /// Defaults to <c>true</c>, which is both the safer answer and the behaviour that existed
+    /// before the flag — every open subtask used to block the parent's closure. Marking one
+    /// optional is a deliberate statement that the parent can finish without it.
+    /// </summary>
+    public bool IsRequired { get; set; } = true;
+
     // Navigation
     public ICollection<TaskCollaborator> Collaborators { get; set; } = new List<TaskCollaborator>();
     public ICollection<WorkSession> WorkSessions { get; set; } = new List<WorkSession>();

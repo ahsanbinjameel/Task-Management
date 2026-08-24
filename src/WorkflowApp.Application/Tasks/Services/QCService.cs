@@ -317,17 +317,18 @@ public sealed class QCService : IQCService
 
         if (request.Result == QCResult.Passed && criteria.Count > 0)
         {
+            // "Not applicable" (Met == null) is an answer. Only a missing entry is unanswered.
             var unanswered = Enumerable.Range(0, criteria.Count).Where(i => !byIndex.ContainsKey(i)).ToList();
             if (unanswered.Count > 0)
                 return Result<IReadOnlyList<AcceptanceCriterionDto>>.Failure(Error.Validation(
                     "qc.criteria_incomplete",
-                    $"Every acceptance criterion must be evaluated before QC can pass. Unanswered: {string.Join(", ", unanswered.Select(i => i + 1))}."));
+                    $"Please mark every item as Pass, Fail or Not applicable before passing this check. Still to answer: {Positions(unanswered)}."));
 
-            var unmet = byIndex.Values.Where(v => !v.Met).Select(v => v.Index + 1).OrderBy(i => i).ToList();
-            if (unmet.Count > 0)
+            var failed = byIndex.Values.Where(v => v.Met == false).Select(v => v.Index).OrderBy(i => i).ToList();
+            if (failed.Count > 0)
                 return Result<IReadOnlyList<AcceptanceCriterionDto>>.Failure(Error.Validation(
                     "qc.criteria_unmet",
-                    $"QC cannot pass while acceptance criteria are unmet: {string.Join(", ", unmet)}."));
+                    $"This check cannot pass while item {Positions(failed)} is marked as failed. Mark the whole check as Needs fixing instead, or change that item to Pass."));
         }
 
         var results = criteria
@@ -337,5 +338,22 @@ public sealed class QCService : IQCService
             .ToList();
 
         return Result<IReadOnlyList<AcceptanceCriterionDto>>.Success(results);
+    }
+
+    /// <summary>
+    /// Renders zero-based criterion indexes as the 1-based positions the reviewer actually sees,
+    /// joined the way a person would say them ("1, 2 and 5"). Error text is read by non-technical
+    /// users, so it names the row on screen rather than the array offset.
+    /// </summary>
+    private static string Positions(IReadOnlyList<int> zeroBased)
+    {
+        var numbers = zeroBased.Select(i => (i + 1).ToString()).ToList();
+
+        return numbers.Count switch
+        {
+            0 => string.Empty,
+            1 => numbers[0],
+            _ => $"{string.Join(", ", numbers.Take(numbers.Count - 1))} and {numbers[^1]}",
+        };
     }
 }

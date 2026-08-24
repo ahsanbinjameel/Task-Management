@@ -1,4 +1,6 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { DestroyRef, Component, OnInit, computed, inject, signal } from '@angular/core';
+import { RealtimeService } from '../../core/realtime.service';
+import { syncOn } from '../../core/realtime-sync';
 import { DatePipe } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
@@ -63,7 +65,7 @@ import { ChipComponent, EmptyComponent, PageHeaderComponent, StatComponent } fro
           <div class="stats">
             <app-stat label="In my queue" [value]="w.queueLength" />
             <app-stat label="In progress" [value]="w.inProgressCount" />
-            <app-stat label="Blocked" [value]="w.blockedCount" [accent]="w.blockedCount > 0" />
+            <app-stat label="Cannot continue" [value]="w.blockedCount" [accent]="w.blockedCount > 0" />
             <app-stat label="Needs rework" [value]="w.reworkCount" [accent]="w.reworkCount > 0" />
             <app-stat label="Overdue" [value]="w.overdueCount" [accent]="w.overdueCount > 0" />
             <app-stat label="Worked today" [value]="(w.workedToday | duration)" />
@@ -101,8 +103,8 @@ import { ChipComponent, EmptyComponent, PageHeaderComponent, StatComponent } fro
 
           <div class="stats">
             <app-stat label="Awaiting review" [value]="c.awaitingReviewCount" />
-            <app-stat label="Unassigned" [value]="c.unassignedCount" [accent]="c.unassignedCount > 0" />
-            <app-stat label="Blocked" [value]="c.blockedCount" [accent]="c.blockedCount > 0" />
+            <app-stat label="Waiting to be given out" [value]="c.unassignedCount" [accent]="c.unassignedCount > 0" />
+            <app-stat label="Cannot continue" [value]="c.blockedCount" [accent]="c.blockedCount > 0" />
             <app-stat label="Awaiting QC" [value]="c.awaitingQCCount" />
             <app-stat label="Overdue" [value]="c.overdueCount" [accent]="c.overdueCount > 0" />
             <app-stat label="On shift" [value]="c.peopleOnShift"
@@ -268,6 +270,8 @@ import { ChipComponent, EmptyComponent, PageHeaderComponent, StatComponent } fro
 export class DashboardComponent implements OnInit {
   private readonly api = inject(ApiService);
   readonly auth = inject(AuthService);
+  private readonly realtime = inject(RealtimeService);
+  private readonly destroyRef = inject(DestroyRef);
   readonly Perm = Perm;
 
   readonly worker = signal<WorkerDashboardDto | null>(null);
@@ -287,6 +291,24 @@ export class DashboardComponent implements OnInit {
   });
 
   ngOnInit(): void {
+    this.load();
+
+    // The dashboard is the screen most likely to be left open on a second monitor, and it was the
+    // one screen subscribing to nothing: counts and shift status stayed as they were at sign-in.
+    //
+    // Every event that can move a number on this page is merged into one stream and debounced, so
+    // approving a request that also creates and assigns a task refreshes once rather than three
+    // times. takeUntilDestroyed matters as much as the subscription itself: these are long-lived
+    // root-scoped subjects, so without teardown each visit to the dashboard would add another
+    // listener and multiply the reloads.
+    syncOn(
+      [this.realtime.taskChanged, this.realtime.requestChanged, this.realtime.workforceChanged],
+      () => this.load(),
+      this.destroyRef);
+  }
+
+  /** Reloads only the panels this user can actually see. */
+  private load(): void {
     if (this.auth.has(Perm.taskWork)) {
       this.api.workerDashboard().subscribe((d) => this.worker.set(d));
     }

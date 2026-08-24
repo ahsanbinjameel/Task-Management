@@ -31,8 +31,9 @@ public sealed record CreateUserRequest
     [Required, MaxLength(100)]
     public string UserName { get; init; } = default!;
 
-    [Required, EmailAddress, MaxLength(256)]
-    public string Email { get; init; } = default!;
+    /// <summary>Optional — staff are identified by username / employee code, not by email.</summary>
+    [EmailAddress, MaxLength(256)]
+    public string? Email { get; init; }
 
     [Required, MaxLength(200)]
     public string DisplayName { get; init; } = default!;
@@ -68,7 +69,7 @@ public sealed record SetActiveRequest
 public sealed record UserDto(
     long Id,
     string UserName,
-    string Email,
+    string? Email,
     string DisplayName,
     bool IsActive,
     string WorkforceState,

@@ -1,9 +1,9 @@
-import { HttpClient, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpContext, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
   AcceptanceCriteriaDto, ActiveWorkforceDto, ActivityEventDto, AssignableUserDto, AttachmentDto,
-  AuditLogDto, ClosureChecklistDto, CoordinatorDashboardDto, CommentCategory, DailyTeamReportDto,
+  AuditLogDto, ClientOptionDto, ClosureChecklistDto, StatusCountDto, TriageResultDto, CoordinatorDashboardDto, CommentCategory, DailyTeamReportDto,
   DailyTimelineDto, DailyUserReportDto, DependencyType, ManagementDashboardDto, NotificationDto,
   PagedResult, PauseReasonDto, Priority, QCReviewDto, QCResult, RequestDetailDto,
   RequesterDashboardDto, RequestStatus, RequestSummaryDto, RequestType, RequestedUrgency, RoleDto,
@@ -53,21 +53,21 @@ export class ApiService {
   }
 
   createUser(body: {
-    userName: string; email: string; displayName: string; password: string; roles: string[];
-  }): Observable<UserDto> {
-    return this.http.post<UserDto>('/api/users', body);
+    userName: string; email?: string; displayName: string; password: string; roles: string[];
+  }, context?: HttpContext): Observable<UserDto> {
+    return this.http.post<UserDto>('/api/users', body, { context });
   }
 
-  setUserActive(id: number, isActive: boolean): Observable<UserDto> {
-    return this.http.put<UserDto>(`/api/users/${id}/active`, { isActive });
+  setUserActive(id: number, isActive: boolean, context?: HttpContext): Observable<UserDto> {
+    return this.http.put<UserDto>(`/api/users/${id}/active`, { isActive }, { context });
   }
 
-  setUserRoles(id: number, roles: string[]): Observable<UserDto> {
-    return this.http.put<UserDto>(`/api/users/${id}/roles`, { roles });
+  setUserRoles(id: number, roles: string[], context?: HttpContext): Observable<UserDto> {
+    return this.http.put<UserDto>(`/api/users/${id}/roles`, { roles }, { context });
   }
 
-  resetPassword(id: number, newPassword: string): Observable<void> {
-    return this.http.post<void>(`/api/users/${id}/reset-password`, { newPassword });
+  resetPassword(id: number, newPassword: string, context?: HttpContext): Observable<void> {
+    return this.http.post<void>(`/api/users/${id}/reset-password`, { newPassword }, { context });
   }
 
   roles(): Observable<RoleDto[]> {
@@ -78,10 +78,18 @@ export class ApiService {
     return this.http.get<string[]>('/api/roles/permissions');
   }
 
+  // --- reference data ------------------------------------------------------------------------
+
+  /** Known clients: the name feeds the type-ahead, the id feeds the list filters. */
+  clients(search?: string): Observable<ClientOptionDto[]> {
+    return this.http.get<ClientOptionDto[]>('/api/lookups/clients', { params: params({ search }) });
+  }
+
   // --- requests ------------------------------------------------------------------------------
 
   requests(filter: {
-    status?: RequestStatus; mine?: boolean; search?: string; page?: number; pageSize?: number;
+    status?: RequestStatus; view?: string; mine?: boolean; search?: string; clientId?: number;
+    sortBy?: string; sortDescending?: boolean; page?: number; pageSize?: number;
   }): Observable<PagedResult<RequestSummaryDto>> {
     return this.http.get<PagedResult<RequestSummaryDto>>('/api/requests', { params: params(filter) });
   }
@@ -94,12 +102,13 @@ export class ApiService {
     title: string; description: string; type: RequestType; requestedUrgency: RequestedUrgency;
     businessImpact?: string; expectedResult?: string; currentResult?: string;
     reproductionSteps?: string; targetDate?: string | null;
-  }): Observable<RequestDetailDto> {
-    return this.http.post<RequestDetailDto>('/api/requests', body);
+    clientName?: string | null;
+  }, context?: HttpContext): Observable<RequestDetailDto> {
+    return this.http.post<RequestDetailDto>('/api/requests', body, { context });
   }
 
-  updateRequest(id: number, body: Record<string, unknown>): Observable<RequestDetailDto> {
-    return this.http.put<RequestDetailDto>(`/api/requests/${id}`, body);
+  updateRequest(id: number, body: Record<string, unknown>, context?: HttpContext): Observable<RequestDetailDto> {
+    return this.http.put<RequestDetailDto>(`/api/requests/${id}`, body, { context });
   }
 
   reviewQueue(page = 1, pageSize = 25): Observable<PagedResult<RequestSummaryDto>> {
@@ -108,21 +117,22 @@ export class ApiService {
     });
   }
 
-  startReview(id: number): Observable<RequestDetailDto> {
-    return this.http.post<RequestDetailDto>(`/api/requests/${id}/start-review`, {});
+  startReview(id: number, context?: HttpContext): Observable<RequestDetailDto> {
+    return this.http.post<RequestDetailDto>(`/api/requests/${id}/start-review`, {}, { context });
   }
 
   triage(id: number, body: {
     outcome: TriageOutcome; reason?: string; approvedPriority?: Priority;
     estimatedEffortHours?: number; dueDate?: string | null; acceptanceCriteria?: string;
     duplicateOfRequestId?: number;
-  }): Observable<RequestDetailDto> {
-    return this.http.post<RequestDetailDto>(`/api/requests/${id}/triage`, body);
+    clientName?: string | null;
+  }, context?: HttpContext): Observable<TriageResultDto> {
+    return this.http.post<TriageResultDto>(`/api/requests/${id}/triage`, body, { context });
   }
 
-  answerClarification(clarificationId: number, answer: string): Observable<RequestDetailDto> {
+  answerClarification(clarificationId: number, answer: string, context?: HttpContext): Observable<RequestDetailDto> {
     return this.http.post<RequestDetailDto>(
-      `/api/requests/clarifications/${clarificationId}/answer`, { answer });
+      `/api/requests/clarifications/${clarificationId}/answer`, { answer }, { context });
   }
 
   uploadRequestAttachment(requestId: number, file: File): Observable<AttachmentDto> {
@@ -144,10 +154,23 @@ export class ApiService {
   // --- tasks ---------------------------------------------------------------------------------
 
   tasks(filter: {
-    status?: WorkTaskStatus; priority?: Priority; assigneeUserId?: number; unassigned?: boolean;
-    openOnly?: boolean; search?: string; page?: number; pageSize?: number;
+    status?: WorkTaskStatus; view?: string; priority?: Priority; assigneeUserId?: number;
+    unassigned?: boolean;
+    clientId?: number; openOnly?: boolean; search?: string;
+    sortBy?: string; sortDescending?: boolean; page?: number; pageSize?: number;
   }): Observable<PagedResult<TaskSummaryDto>> {
     return this.http.get<PagedResult<TaskSummaryDto>>('/api/tasks', { params: params(filter) });
+  }
+
+  taskStatusCounts(filter: { clientId?: number; search?: string; openOnly?: boolean } = {}):
+    Observable<StatusCountDto[]> {
+    return this.http.get<StatusCountDto[]>('/api/tasks/status-counts', { params: params(filter) });
+  }
+
+  requestStatusCounts(filter: {
+    type?: RequestType; clientId?: number; search?: string; mine?: boolean;
+  } = {}): Observable<StatusCountDto[]> {
+    return this.http.get<StatusCountDto[]>('/api/requests/status-counts', { params: params(filter) });
   }
 
   task(id: number): Observable<TaskDetailDto> {
@@ -192,28 +215,28 @@ export class ApiService {
 
   transition(id: number, body: {
     to: WorkTaskStatus; reason?: string; isOverride?: boolean; idempotencyKey?: string;
-  }): Observable<TaskDetailDto> {
-    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/transition`, body);
+  }, context?: HttpContext): Observable<TaskDetailDto> {
+    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/transition`, body, { context });
   }
 
-  assign(id: number, assigneeUserId: number | null, reason?: string, rowVersion?: string | null):
+  assign(id: number, assigneeUserId: number | null, reason?: string, rowVersion?: string | null, context?: HttpContext):
     Observable<TaskDetailDto> {
     return this.http.put<TaskDetailDto>(`/api/tasks/${id}/assignee`, {
       assigneeUserId, reason, rowVersion,
-    });
+    }, { context });
   }
 
-  setTaskRoles(id: number, reviewerUserId: number | null, qcUserId: number | null):
+  setTaskRoles(id: number, reviewerUserId: number | null, qcUserId: number | null, context?: HttpContext):
     Observable<TaskDetailDto> {
-    return this.http.put<TaskDetailDto>(`/api/tasks/${id}/roles`, { reviewerUserId, qcUserId });
+    return this.http.put<TaskDetailDto>(`/api/tasks/${id}/roles`, { reviewerUserId, qcUserId }, { context });
   }
 
-  addCollaborator(id: number, userId: number): Observable<TaskDetailDto> {
-    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/collaborators`, { userId });
+  addCollaborator(id: number, userId: number, context?: HttpContext): Observable<TaskDetailDto> {
+    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/collaborators`, { userId }, { context });
   }
 
-  removeCollaborator(id: number, userId: number): Observable<TaskDetailDto> {
-    return this.http.delete<TaskDetailDto>(`/api/tasks/${id}/collaborators/${userId}`);
+  removeCollaborator(id: number, userId: number, context?: HttpContext): Observable<TaskDetailDto> {
+    return this.http.delete<TaskDetailDto>(`/api/tasks/${id}/collaborators/${userId}`, { context });
   }
 
   updateTaskDetails(id: number, body: {
@@ -225,35 +248,37 @@ export class ApiService {
 
   // --- the timer -----------------------------------------------------------------------------
 
-  startWork(id: number): Observable<TaskDetailDto> {
-    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/start`, {});
+  startWork(id: number, context?: HttpContext): Observable<TaskDetailDto> {
+    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/start`, {}, { context });
   }
 
-  pauseWork(id: number, pauseReasonId?: number, comment?: string): Observable<TaskDetailDto> {
-    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/pause`, { pauseReasonId, comment });
+  pauseWork(id: number, pauseReasonId?: number, comment?: string, context?: HttpContext): Observable<TaskDetailDto> {
+    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/pause`, { pauseReasonId, comment }, { context });
   }
 
-  blockWork(id: number, pauseReasonId?: number, comment?: string): Observable<TaskDetailDto> {
-    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/block`, { pauseReasonId, comment });
+  blockWork(id: number, pauseReasonId?: number, comment?: string, context?: HttpContext): Observable<TaskDetailDto> {
+    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/block`, { pauseReasonId, comment }, { context });
   }
 
-  completeWork(id: number, resolution?: string): Observable<TaskDetailDto> {
-    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/complete`, { resolution });
+  completeWork(id: number, resolution?: string, context?: HttpContext): Observable<TaskDetailDto> {
+    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/complete`, { resolution }, { context });
   }
 
-  interrupt(taskId: number, reason?: string): Observable<TaskDetailDto> {
-    return this.http.post<TaskDetailDto>('/api/tasks/interrupt', { taskId, reason });
+  interrupt(taskId: number, reason?: string, context?: HttpContext): Observable<TaskDetailDto> {
+    return this.http.post<TaskDetailDto>('/api/tasks/interrupt', { taskId, reason }, { context });
   }
 
   // --- QC & closure --------------------------------------------------------------------------
 
-  startQC(id: number): Observable<TaskDetailDto> {
-    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/qc/start`, {});
+  startQC(id: number, context?: HttpContext): Observable<TaskDetailDto> {
+    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/qc/start`, {}, { context });
   }
 
   submitQC(id: number, body: {
     result: QCResult; comments?: string; environment?: string; buildVersion?: string;
-    criteria: { index: number; met: boolean; note?: string }[];
+    // met: true = pass, false = fail, null = not applicable. Omitting a criterion entirely means
+    // "not answered yet", which the server rejects on a pass — that distinction is deliberate.
+    criteria: { index: number; met: boolean | null; note?: string }[];
   }): Observable<TaskDetailDto> {
     return this.http.post<TaskDetailDto>(`/api/tasks/${id}/qc/review`, body);
   }
@@ -270,12 +295,12 @@ export class ApiService {
     return this.http.get<ClosureChecklistDto>(`/api/tasks/${id}/closure-check`);
   }
 
-  closeTask(id: number, resolution?: string, reason?: string): Observable<TaskDetailDto> {
-    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/close`, { resolution, reason });
+  closeTask(id: number, resolution?: string, reason?: string, context?: HttpContext): Observable<TaskDetailDto> {
+    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/close`, { resolution, reason }, { context });
   }
 
-  reopenTask(id: number, reason: string): Observable<TaskDetailDto> {
-    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/reopen`, { reason });
+  reopenTask(id: number, reason: string, context?: HttpContext): Observable<TaskDetailDto> {
+    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/reopen`, { reason }, { context });
   }
 
   // --- collaboration -------------------------------------------------------------------------
@@ -286,19 +311,19 @@ export class ApiService {
 
   addComment(id: number, body: {
     body: string; category: CommentCategory; visibleToRequester?: boolean | null;
-  }): Observable<TaskCommentDto> {
-    return this.http.post<TaskCommentDto>(`/api/tasks/${id}/comments`, body);
+  }, context?: HttpContext): Observable<TaskCommentDto> {
+    return this.http.post<TaskCommentDto>(`/api/tasks/${id}/comments`, body, { context });
   }
 
   dependencies(id: number): Observable<TaskDependencyGraphDto> {
     return this.http.get<TaskDependencyGraphDto>(`/api/tasks/${id}/dependencies`);
   }
 
-  addDependency(id: number, relatedTaskId: number, type: DependencyType):
+  addDependency(id: number, relatedTaskId: number, type: DependencyType, context?: HttpContext):
     Observable<TaskDependencyGraphDto> {
     return this.http.post<TaskDependencyGraphDto>(`/api/tasks/${id}/dependencies`, {
       relatedTaskId, type,
-    });
+    }, { context });
   }
 
   removeDependency(id: number, dependencyId: number): Observable<TaskDependencyGraphDto> {
@@ -312,8 +337,9 @@ export class ApiService {
   createSubtask(id: number, body: {
     title: string; description: string; priority?: Priority; estimatedEffortHours?: number;
     dueDate?: string | null; acceptanceCriteria?: string; assigneeUserId?: number | null;
-  }): Observable<TaskDetailDto> {
-    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/subtasks`, body);
+    isRequired?: boolean;
+  }, context?: HttpContext): Observable<TaskDetailDto> {
+    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/subtasks`, body, { context });
   }
 
   scopeChanges(id: number): Observable<ScopeChangeDto[]> {
@@ -373,8 +399,8 @@ export class ApiService {
     });
   }
 
-  forceEndShift(userId: number, reason: string): Observable<unknown> {
-    return this.http.post(`/api/workforce/${userId}/end-shift`, { reason });
+  forceEndShift(userId: number, reason: string, context?: HttpContext): Observable<unknown> {
+    return this.http.post(`/api/workforce/${userId}/end-shift`, { reason }, { context });
   }
 
   // --- dashboards & reports ----------------------------------------------------------------------

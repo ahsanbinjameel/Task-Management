@@ -42,6 +42,7 @@ public class WorkflowDbContext : DbContext, IWorkflowDbContext
     // Requests
     public DbSet<Request> Requests => Set<Request>();
     public DbSet<RequestClarification> RequestClarifications => Set<RequestClarification>();
+    public DbSet<RequestActivity> RequestActivities => Set<RequestActivity>();
     public DbSet<Attachment> Attachments => Set<Attachment>();
 
     // Tasks

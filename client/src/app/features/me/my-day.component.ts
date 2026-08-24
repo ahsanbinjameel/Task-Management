@@ -1,4 +1,6 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { DestroyRef, Component, OnInit, inject, signal } from '@angular/core';
+import { RealtimeService } from '../../core/realtime.service';
+import { syncOn } from '../../core/realtime-sync';
 import { DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
@@ -69,11 +71,11 @@ import {
           </div>
 
           <div class="card">
-            <div class="card-pad"><h2 class="card-title" style="margin:0">Where the time went</h2></div>
-            @if (!report() || report()!.breakdown.length === 0) {
-              <app-empty message="No time logged against tasks" icon="timer_off" />
+            <div class="card-pad"><h2 class="card-title" style="margin:0">My tasks</h2></div>
+            @if (!report() || report()!.ownedWork.length === 0) {
+              <app-empty message="You have not logged time on your own tasks today" icon="timer_off" />
             } @else {
-              @for (line of report()!.breakdown; track line.taskId) {
+              @for (line of report()!.ownedWork; track line.taskId) {
                 <a class="entry" [routerLink]="['/tasks', line.taskId]">
                   <span class="mono small time">{{ line.taskNumber }}</span>
                   <span class="label truncate">{{ line.title }}</span>
@@ -84,6 +86,37 @@ import {
               }
             }
           </div>
+
+          @if (report(); as r) {
+            @if (r.supportWork.length > 0 || r.supportingOn.length > 0) {
+              <div class="card">
+                <div class="card-pad">
+                  <h2 class="card-title" style="margin:0">Tasks I helped with</h2>
+                  <p class="muted small" style="margin:4px 0 0">
+                    Somebody else is responsible for these. They do not count as your work.
+                  </p>
+                </div>
+                @for (line of r.supportWork; track line.taskId) {
+                  <a class="entry" [routerLink]="['/tasks', line.taskId]">
+                    <span class="mono small time">{{ line.taskNumber }}</span>
+                    <span class="label truncate">{{ line.title }}</span>
+                    <span class="spacer"></span>
+                    <span class="mono small">{{ line.timeSpent | duration }}</span>
+                  </a>
+                }
+                @for (s of r.supportingOn; track s.taskId) {
+                  <a class="entry" [routerLink]="['/tasks', s.taskId]">
+                    <span class="mono small time">{{ s.taskNumber }}</span>
+                    <span class="label truncate">{{ s.title }}</span>
+                    <span class="spacer"></span>
+                    <span class="muted small">
+                      {{ s.responsiblePersonName ? s.responsiblePersonName + ' is responsible' : '' }}
+                    </span>
+                  </a>
+                }
+              </div>
+            }
+          }
         </div>
       }
     </div>
@@ -104,6 +137,8 @@ import {
   `,
 })
 export class MyDayComponent implements OnInit {
+  private readonly realtime = inject(RealtimeService);
+  private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(ApiService);
 
   readonly timeline = signal<DailyTimelineDto | null>(null);
@@ -112,7 +147,14 @@ export class MyDayComponent implements OnInit {
 
   date = isoDate();
 
-  ngOnInit(): void { this.load(); }
+  ngOnInit(): void {
+   this.load();
+    // Re-fetch on the server's say-so; see syncOn for why it debounces and tears down.
+    syncOn(
+      [this.realtime.workforceChanged, this.realtime.taskChanged],
+      () => this.load(),
+      this.destroyRef);
+  }
 
   load(): void {
     this.loading.set(true);

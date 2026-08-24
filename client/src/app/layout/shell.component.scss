@@ -4,7 +4,19 @@
   display: grid;
   grid-template-columns: var(--shell-width) 1fr;
   height: 100vh;
+  transition: grid-template-columns .16s ease;
 }
+
+/* Collapsed: an icon rail. The links stay reachable — only the words fold away — so the muscle
+   memory of where a thing sits survives the collapse. */
+.shell.rail { grid-template-columns: 60px 1fr; }
+.shell.rail .brand span,
+.shell.rail .section-label,
+.shell.rail .nav a span { display: none; }
+.shell.rail .brand { justify-content: center; padding: 18px 0 16px; }
+.shell.rail .nav nav { padding: 4px 6px 24px; }
+.shell.rail .nav a { justify-content: center; padding-inline: 0; }
+.shell.rail .section-divider { height: 12px; }
 
 /* --- sidebar --------------------------------------------------------------------------------- */
 

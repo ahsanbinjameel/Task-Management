@@ -30,7 +30,7 @@ interface NavItem {
     NotificationBellComponent, ShiftWidgetComponent,
   ],
   template: `
-    <div class="shell" [class.nav-open]="navOpen()">
+    <div class="shell" [class.nav-open]="navOpen()" [class.rail]="collapsed()">
       <aside class="nav">
         <div class="brand">
           <mat-icon>account_tree</mat-icon>
@@ -43,6 +43,7 @@ interface NavItem {
             @for (item of section.items; track item.route) {
               <a [routerLink]="item.route" routerLinkActive="active"
                  [routerLinkActiveOptions]="{ exact: item.route === '/' }"
+                 [matTooltip]="collapsed() ? item.label : ''" matTooltipPosition="right"
                  (click)="navOpen.set(false)">
                 <mat-icon>{{ item.icon }}</mat-icon>
                 <span>{{ item.label }}</span>
@@ -57,6 +58,11 @@ interface NavItem {
           <button matIconButton class="burger" (click)="navOpen.set(!navOpen())"
                   aria-label="Toggle navigation">
             <mat-icon>menu</mat-icon>
+          </button>
+
+          <button matIconButton class="collapse" (click)="toggleRail()"
+                  [matTooltip]="collapsed() ? 'Expand menu' : 'Collapse menu'">
+            <mat-icon>{{ collapsed() ? 'chevron_right' : 'chevron_left' }}</mat-icon>
           </button>
 
           <div class="spacer"></div>
@@ -102,6 +108,24 @@ export class ShellComponent {
   readonly auth = inject(AuthService);
   readonly navOpen = signal(false);
 
+  /**
+   * Collapsed to an icon rail, remembered across visits.
+   *
+   * Wrapped in try/catch because storage throws outright in some privacy modes rather than merely
+   * returning nothing — a menu preference is not worth a blank page.
+   */
+  readonly collapsed = signal(this.readRail());
+
+  toggleRail(): void {
+    const next = !this.collapsed();
+    this.collapsed.set(next);
+    try { localStorage.setItem('nav.rail', next ? '1' : '0'); } catch { /* not important */ }
+  }
+
+  private readRail(): boolean {
+    try { return localStorage.getItem('nav.rail') === '1'; } catch { return false; }
+  }
+
   readonly initials = computed(() => {
     const name = this.auth.displayName().trim();
     if (!name) return '?';
@@ -116,10 +140,19 @@ export class ShellComponent {
     { section: 'Work', label: 'Dashboard', icon: 'dashboard', route: '/' },
     { section: 'Work', label: 'My queue', icon: 'checklist', route: '/my-queue',
       permissions: [Perm.taskWork] },
-    { section: 'Work', label: 'Tasks', icon: 'task_alt', route: '/tasks' },
-    { section: 'Work', label: 'My day', icon: 'schedule', route: '/me/day' },
+    // Browsing work only makes sense to someone who does, coordinates, reviews or reports on it.
+    // A requester follows their own request from the Requests page instead.
+    { section: 'Work', label: 'Tasks', icon: 'task_alt', route: '/tasks',
+      permissions: [Perm.taskWork, Perm.taskAssign, Perm.taskReview, Perm.taskQCReview,
+                    Perm.requestViewAll, Perm.dashboardManagement] },
+    // Shift/timer tooling is only meaningful for people who are actually on the clock. Gated on the
+    // capability rather than a role name, so a team lead who also does tasks keeps it.
+    { section: 'Work', label: 'My day', icon: 'schedule', route: '/me/day',
+      permissions: [Perm.workforceTrackShift] },
 
-    { section: 'Intake', label: 'Requests', icon: 'inbox', route: '/requests' },
+    // A worker does not raise or read requests; their work arrives as tasks.
+    { section: 'Intake', label: 'Requests', icon: 'inbox', route: '/requests',
+      permissions: [Perm.requestCreate, Perm.requestViewAll, Perm.taskReview] },
     { section: 'Intake', label: 'Review queue', icon: 'rate_review', route: '/review-queue',
       permissions: [Perm.taskReview] },
 

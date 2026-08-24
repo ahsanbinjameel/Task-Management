@@ -96,6 +96,28 @@ public enum DependencyType
     ParentChild = 4
 }
 
+/// <summary>
+/// Why work stopped, in the small vocabulary a worker actually recognises.
+///
+/// The category answers two independent questions, which is the point of having it:
+/// whether the <em>task</em> can still move (a client we are waiting on blocks it; lunch does not),
+/// and where the <em>person</em> went (lunch changes their availability; waiting for a client does
+/// not — they are free to pick up something else). Conflating those two is what made "Paused for
+/// lunch" look like a stalled task and left the worker marked Available while they were eating.
+/// </summary>
+public enum PauseCategory
+{
+    OtherWorkUrgent = 0,
+    WaitingForSomeone = 1,
+    WaitingForClient = 2,
+    CannotContinue = 3,
+    Meeting = 4,
+    Break = 5,
+    Lunch = 6,
+    EndOfShift = 7,
+    Other = 8
+}
+
 /// <summary>Business timeline event types recorded per task.</summary>
 public enum ActivityType
 {
@@ -107,5 +129,8 @@ public enum ActivityType
     TaskInterrupted,
 
     // Phase 8. Appended, never reordered - the values are persisted as ints.
-    CommentAdded, DependencyAdded, DependencyRemoved, SubtaskCreated, ScopeChangeApproved
+    CommentAdded, DependencyAdded, DependencyRemoved, SubtaskCreated, ScopeChangeApproved,
+
+    // Stabilisation pass. Appended for the same reason.
+    CollaboratorRemoved
 }

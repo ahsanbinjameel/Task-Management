@@ -6,7 +6,12 @@ namespace WorkflowApp.Domain.Entities.Identity;
 public class User : BaseEntity
 {
     public string UserName { get; set; } = default!;
-    public string Email { get; set; } = default!;
+
+    /// <summary>
+    /// Optional. Staff are identified by <see cref="UserName"/> (which may be an employee code);
+    /// plenty of them have no work address. Nothing in authentication may depend on this.
+    /// </summary>
+    public string? Email { get; set; }
     public string DisplayName { get; set; } = default!;
     public string PasswordHash { get; set; } = default!;
 

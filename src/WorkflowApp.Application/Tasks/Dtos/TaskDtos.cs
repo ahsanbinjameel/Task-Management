@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using WorkflowApp.Application.Requests.Dtos;
 using WorkflowApp.Domain.Enums;
 
 namespace WorkflowApp.Application.Tasks.Dtos;
@@ -84,7 +85,36 @@ public sealed record TaskSummaryDto(
     int ProgressPercent,
     decimal? EstimatedEffortHours,
     TimeSpan TotalWorkedTime,
-    bool HasActiveSession);
+    bool HasActiveSession,
+    // Queues and lists are where "whose work is this?" gets asked most often.
+    long? ClientId = null,
+    string? ClientName = null,
+
+    // ---- what the contextual grids need ------------------------------------------------------
+    //
+    // Each view shows the two or three dates that matter to it: how long something has waited to
+    // be picked up, when work actually started, who checked it and when it came back. All of it is
+    // already recorded in the history tables — the row just has to carry it, so nobody opens a
+    // task to find out how stale it is.
+    /// <summary>When it entered the status it is in — the "waiting since" every queue asks for.</summary>
+    DateTimeOffset? StatusSince = null,
+    /// <summary>The reason recorded for that move, where one was required (paused, blocked, held).</summary>
+    string? StatusReason = null,
+    DateTimeOffset? AssignedAt = null,
+    /// <summary>First time anyone actually started the timer on it.</summary>
+    DateTimeOffset? StartedAt = null,
+    /// <summary>When it was handed to quality check.</summary>
+    DateTimeOffset? CompletedAt = null,
+    long? RequestId = null,
+    string? RequestNumber = null,
+    string? RequestedByDisplayName = null,
+    /// <summary>Latest quality check: who looked at it, when, and what they said.</summary>
+    string? CheckedByDisplayName = null,
+    DateTimeOffset? CheckedAt = null,
+    string? CheckNotes = null,
+    /// <summary>Who is lined up to check it, where that has been decided.</summary>
+    string? QCUserDisplayName = null,
+    IReadOnlyList<string>? SupportPeople = null);
 
 public sealed record StatusHistoryDto(
     long Id,
@@ -124,6 +154,30 @@ public sealed record WorkSessionDto(
     bool EndedByInterruption,
     long? InterruptedByTaskId);
 
+/// <summary>
+/// What was originally asked for, carried onto the task that came out of it.
+///
+/// The two records stay separate — a request is not a task, and merging them would wreck the one
+/// rule the whole workflow rests on. What is wrong is making a worker go and *read* the request to
+/// find the screenshot or the expected result. So the request's own words travel with the work.
+/// </summary>
+public sealed record RequestContextDto(
+    long RequestId,
+    string RequestNumber,
+    string RequestedByDisplayName,
+    DateTimeOffset RequestedAt,
+    RequestedUrgency RequestedUrgency,
+    string? ProjectName,
+    string? ModuleName,
+    /// <summary>The description as the requester wrote it, before triage reworded anything.</summary>
+    string OriginalDescription,
+    string? BusinessImpact,
+    string? ExpectedResult,
+    string? CurrentResult,
+    string? ReproductionSteps,
+    /// <summary>Files attached to the request — usually the screenshots.</summary>
+    IReadOnlyList<AttachmentDto> Attachments);
+
 public sealed record TaskDetailDto(
     long Id,
     string TaskNumber,
@@ -134,9 +188,10 @@ public sealed record TaskDetailDto(
     RequestType Type,
     WorkTaskStatus Status,
     Priority Priority,
-    long? ProjectId,
     long? ClientId,
-    long? ModuleId,
+    // The name as well as the id: a screen cannot show "ABC Company" from a number, which is why
+    // the client was invisible everywhere despite being on the record.
+    string? ClientName,
     long? PrimaryAssigneeUserId,
     string? PrimaryAssigneeDisplayName,
     long? ReviewerUserId,
@@ -151,18 +206,61 @@ public sealed record TaskDetailDto(
     // What this task may legally move to next, given the caller's permissions.
     IReadOnlyList<WorkTaskStatus> AvailableTransitions,
     TimeSpan TotalWorkedTime,
-    IReadOnlyList<long> CollaboratorUserIds,
+    // Support people: they helped, they do not own this. Never counted as assignment.
+    IReadOnlyList<SupportPersonDto> SupportPeople,
     IReadOnlyList<WorkSessionDto> WorkSessions,
     IReadOnlyList<StatusHistoryDto> StatusHistory,
     IReadOnlyList<AssignmentHistoryDto> AssignmentHistory,
     IReadOnlyList<TaskActivityDto> Activity,
     IReadOnlyList<QCReviewDto> QCReviews,
-    IReadOnlyList<long> SubTaskIds,
+    // The smaller tasks this one was broken into, shown on the parent's own page.
+    IReadOnlyList<SubtaskSummaryDto> SubTasks,
     // Task numbers of unfinished work this task is waiting on. Non-empty blocks the timer.
     IReadOnlyList<string> BlockedBy,
-    string? RowVersion);
+    string? RowVersion,
+    /// <summary>Where this work came from. Null for a task with no request behind it.</summary>
+    RequestContextDto? Request = null);
 
-public sealed record PauseReasonDto(long Id, string Name, bool RequiresComment, bool IsBlocker);
+/// <summary>
+/// Someone helping with a task who does not own it.
+///
+/// Deliberately a separate shape from the assignee: a support person never appears in a queue, a
+/// task count, an overdue figure or a workload total. They are shown so the people involved are
+/// visible, and so reports can credit the help separately from the responsibility.
+/// </summary>
+/// <summary>
+/// A smaller task belonging to a parent, summarised for display on the parent's page so the whole
+/// structure can be understood without navigating away.
+/// </summary>
+public sealed record SubtaskSummaryDto(
+    long TaskId,
+    string TaskNumber,
+    string Title,
+    WorkTaskStatus Status,
+    string? ResponsiblePersonName,
+    int ProgressPercent,
+    /// <summary>When true the parent cannot be finished until this one is done.</summary>
+    bool IsRequired);
+
+public sealed record SupportPersonDto(
+    long UserId,
+    string DisplayName,
+    DateTimeOffset AddedAt,
+    long AddedByUserId);
+
+/// <summary>
+/// A reason work stopped. Carries both axes so the client can group the list and explain the
+/// consequence, rather than guessing from the name.
+/// </summary>
+public sealed record PauseReasonDto(
+    long Id,
+    string Name,
+    bool RequiresComment,
+    /// <summary>The task itself cannot move on — not merely that the worker stepped away.</summary>
+    bool IsBlocker,
+    PauseCategory Category,
+    /// <summary>Where the worker goes, if anywhere. Null means they stay on shift and free.</summary>
+    WorkforceState? AwayState);
 
 /// <summary>Minimal directory entry for the assign dialog — id and name, nothing more.</summary>
 public sealed record AssignableUserDto(long Id, string UserName, string DisplayName, WorkforceState WorkforceState);

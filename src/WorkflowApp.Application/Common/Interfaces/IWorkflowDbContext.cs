@@ -43,6 +43,7 @@ public interface IWorkflowDbContext
     // Requests
     DbSet<Request> Requests { get; }
     DbSet<RequestClarification> RequestClarifications { get; }
+    DbSet<RequestActivity> RequestActivities { get; }
     DbSet<Attachment> Attachments { get; }
 
     // Tasks

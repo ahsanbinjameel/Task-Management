@@ -12,6 +12,7 @@ using WorkflowApp.Application.Reporting;
 using WorkflowApp.Application.Requests.Services;
 using WorkflowApp.Application.Tasks.Services;
 using WorkflowApp.Application.Workforce.Services;
+using WorkflowApp.Domain.Entities.Requests;
 using WorkflowApp.Domain.Entities.Identity;
 using WorkflowApp.Domain.Entities.Workforce;
 using WorkflowApp.Domain.Enums;
@@ -139,22 +140,26 @@ public sealed class TestHarness : IDisposable
         Reports = new ReportService(Db, Calendar, Clock);
         AuditQueries = new AuditQueryService(Db);
         Numbers = new NumberGenerator(Db);
-        Requests = new RequestService(Db, Numbers, Clock);
+        Lookups = new LookupService(Db);
+        Requests = new RequestService(Db, Numbers, Notifications, Lookups, Clock);
         TaskCreation = new TaskCreationService(Db, Numbers, Clock);
         Dependencies = new TaskDependencyService(Db, Clock);
         TaskQueries = new TaskQueryService(Db, CurrentUser, Dependencies);
 
         Triage = new RequestTriageService(
-            Db, Requests, TaskCreation, Audit, Clock, NullLogger<RequestTriageService>.Instance);
+            Db, Requests, TaskCreation, Audit, Notifications, Lookups, Clock,
+            NullLogger<RequestTriageService>.Instance);
 
         TaskWorkflow = new TaskWorkflowService(
             Db, CurrentUser, Audit, Activity, Clock, TaskQueries, NullLogger<TaskWorkflowService>.Instance);
 
         Assignment = new TaskAssignmentService(
-            Db, TaskQueries, Notifications, Clock, NullLogger<TaskAssignmentService>.Instance);
+            Db, TaskQueries, Notifications, EventQueue, Clock,
+            NullLogger<TaskAssignmentService>.Instance);
 
         WorkSessions = new WorkSessionService(
-            Db, TaskQueries, Dependencies, Activity, Clock, NullLogger<WorkSessionService>.Instance);
+            Db, TaskQueries, Dependencies, Activity, Notifications, Clock,
+            NullLogger<WorkSessionService>.Instance);
 
         QC = new QCService(
             Db, TaskQueries, Activity, Audit, Notifications, Clock, NullLogger<QCService>.Instance);
@@ -195,6 +200,7 @@ public sealed class TestHarness : IDisposable
     public IQCService QC { get; }
     public IClosureService Closure { get; }
     public ITaskDependencyService Dependencies { get; }
+    public ILookupService Lookups { get; }
     public INotificationService Notifications { get; }
     public IDashboardService Dashboards { get; }
     public IReportService Reports { get; }
@@ -255,6 +261,55 @@ public sealed class TestHarness : IDisposable
                 PermissionId = byKey[k]
             }));
         }
+
+        // The same pause vocabulary the real seeder installs. Kept here because the two axes a
+        // reason carries — does the TASK stop, and did the PERSON go somewhere — are what several
+        // tests are actually about.
+        Db.PauseReasons.AddRange(
+            new PauseReason
+            {
+                Name = "Break", Category = PauseCategory.Break,
+                IsBlocker = false, AwayState = WorkforceState.Break
+            },
+            new PauseReason
+            {
+                Name = "Lunch", Category = PauseCategory.Lunch,
+                IsBlocker = false, AwayState = WorkforceState.Lunch
+            },
+            new PauseReason
+            {
+                Name = "Meeting", Category = PauseCategory.Meeting,
+                IsBlocker = false, AwayState = WorkforceState.Meeting
+            },
+            new PauseReason
+            {
+                Name = "End of shift", Category = PauseCategory.EndOfShift, IsBlocker = false
+            },
+            new PauseReason
+            {
+                Name = "Other work became urgent", Category = PauseCategory.OtherWorkUrgent,
+                RequiresComment = true, IsBlocker = false
+            },
+            new PauseReason
+            {
+                Name = "Waiting for client", Category = PauseCategory.WaitingForClient,
+                RequiresComment = true, IsBlocker = true
+            },
+            new PauseReason
+            {
+                Name = "Waiting for someone", Category = PauseCategory.WaitingForSomeone,
+                RequiresComment = true, IsBlocker = true
+            },
+            new PauseReason
+            {
+                Name = "Cannot continue — problem", Category = PauseCategory.CannotContinue,
+                RequiresComment = true, IsBlocker = true
+            },
+            new PauseReason
+            {
+                Name = "Something else", Category = PauseCategory.Other,
+                RequiresComment = true, IsBlocker = false
+            });
 
         await Db.SaveChangesAsync();
         return this;

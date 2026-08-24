@@ -93,7 +93,8 @@ public class EffortPrecisionConfig :
 public class TaskHistoryConfig :
     IEntityTypeConfiguration<StatusHistory>, IEntityTypeConfiguration<AssignmentHistory>,
     IEntityTypeConfiguration<TaskActivity>, IEntityTypeConfiguration<TaskComment>,
-    IEntityTypeConfiguration<QCReview>, IEntityTypeConfiguration<Notification>
+    IEntityTypeConfiguration<QCReview>, IEntityTypeConfiguration<Notification>,
+    IEntityTypeConfiguration<RequestActivity>
 {
     public void Configure(EntityTypeBuilder<StatusHistory> b)
     {
@@ -111,6 +112,12 @@ public class TaskHistoryConfig :
     {
         b.Property(a => a.Description).HasMaxLength(1000).IsRequired();
         b.HasIndex(a => new { a.TaskId, a.OccurredAt });
+    }
+
+    public void Configure(EntityTypeBuilder<RequestActivity> b)
+    {
+        b.Property(a => a.Description).HasMaxLength(1000).IsRequired();
+        b.HasIndex(a => new { a.RequestId, a.OccurredAt });
     }
 
     public void Configure(EntityTypeBuilder<TaskComment> b)

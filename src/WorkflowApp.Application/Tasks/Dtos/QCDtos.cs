@@ -10,7 +10,14 @@ public sealed record AcceptanceCriterionVerdictDto
     [Range(0, 500)]
     public int Index { get; init; }
 
-    public bool Met { get; init; }
+    /// <summary>
+    /// The reviewer's verdict: <c>true</c> passed, <c>false</c> failed, <c>null</c> not applicable.
+    ///
+    /// Tri-state on purpose. A criterion that does not apply to this piece of work is a legitimate
+    /// answer — it is not the same as leaving it unanswered, and it must not block a pass. Only an
+    /// explicit <c>false</c> does that.
+    /// </summary>
+    public bool? Met { get; init; }
 
     [MaxLength(1000)]
     public string? Note { get; init; }

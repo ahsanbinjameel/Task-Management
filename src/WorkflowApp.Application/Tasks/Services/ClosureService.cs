@@ -225,8 +225,11 @@ public sealed class ClosureService : IClosureService
         var openSessions = await _db.WorkSessions.AsNoTracking()
             .CountAsync(s => s.TaskId == task.Id && s.Status == WorkSessionStatus.Active, ct);
 
+        // Only required subtasks hold the parent back. One marked optional is a deliberate
+        // statement that the parent can finish without it.
         var openSubtasks = await _db.Tasks.AsNoTracking()
-            .CountAsync(t => t.ParentTaskId == task.Id && !TerminalStatuses.Contains(t.Status), ct);
+            .CountAsync(t => t.ParentTaskId == task.Id && t.IsRequired
+                             && !TerminalStatuses.Contains(t.Status), ct);
 
         var criteria = QCService.MergeVerdicts(task.AcceptanceCriteria, latestQC?.AcceptanceCriteriaResults);
         var unmetCriteria = criteria.Where(c => c.Met != true).Select(c => c.Index + 1).ToList();
@@ -264,9 +267,13 @@ public sealed class ClosureService : IClosureService
                 openSessions == 0 ? null : $"{openSessions} work session(s) are still running."),
 
             new("closure.subtasks_closed",
-                "All subtasks are closed or cancelled.",
+                "Every smaller task that has to be done is finished.",
                 openSubtasks == 0,
-                openSubtasks == 0 ? null : $"{openSubtasks} subtask(s) are still open.")
+                openSubtasks == 0
+                    ? null
+                    : openSubtasks == 1
+                        ? "1 smaller task still has to be finished."
+                        : $"{openSubtasks} smaller tasks still have to be finished.")
         };
     }
 }
