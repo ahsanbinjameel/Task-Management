@@ -26,7 +26,9 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
         @if (loading()) {
           <app-loading />
         } @else if (rows().length === 0) {
-          <app-empty message="Nobody has open work" icon="groups" />
+          <app-empty message="Nobody has open work" icon="groups"
+                     hint="Everything raised so far is finished or not yet given out."
+                     actionLabel="Assignment queue" actionRoute="/assignment" />
         } @else {
           <div class="table-scroll">
             <table mat-table [dataSource]="rows()">

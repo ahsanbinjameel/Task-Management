@@ -5,6 +5,7 @@ using WorkflowApp.Application.Common.Models;
 using WorkflowApp.Application.Requests.Dtos;
 using WorkflowApp.Application.Tasks.Dtos;
 using WorkflowApp.Domain.Entities.Tasks;
+using WorkflowApp.Domain.Entities.Requests;
 using WorkflowApp.Domain.Enums;
 using WorkflowApp.Domain.Workflow;
 
@@ -113,6 +114,14 @@ public sealed class TaskQueryService : ITaskQueryService
         if (task is null)
             return Result<TaskDetailDto>.Failure(Error.NotFound("task.not_found", "Task not found."));
 
+        if (!await CanSeeAsync(task, ct))
+        {
+            // Not Found rather than Forbidden, deliberately. "You may not see this" still confirms
+            // the task exists, which is most of what an id-guessing probe wants to learn. The list
+            // was scoped when item 2 landed; this is the same rule on the way in through a URL.
+            return Result<TaskDetailDto>.Failure(Error.NotFound("task.not_found", "Task not found."));
+        }
+
         var assigneeName = task.PrimaryAssigneeUserId is { } assigneeId
             ? await _db.Users.AsNoTracking().Where(u => u.Id == assigneeId)
                 .Select(u => u.DisplayName).FirstOrDefaultAsync(ct)
@@ -140,12 +149,27 @@ public sealed class TaskQueryService : ITaskQueryService
                     r.ExpectedResult,
                     r.CurrentResult,
                     r.ReproductionSteps,
+                    // The batch's own files come across too: a screenshot showing all eight
+                    // problems belongs to the submission, and a worker looking at item three needs
+                    // it as much as a worker looking at item one.
                     _db.Attachments
-                        .Where(a => a.RequestId == r.Id)
+                        .Where(a => a.RequestId == r.Id || (r.BatchId != null && a.BatchId == r.BatchId))
                         .OrderBy(a => a.CreatedAt)
                         .Select(a => new AttachmentDto(
                             a.Id, a.OriginalFileName, a.ContentType, a.SizeBytes,
                             a.UploadedByUserId, a.CreatedAt))
+                        .ToList(),
+                    r.BatchId,
+                    r.Batch != null ? r.Batch.BatchNumber : null,
+                    // Every *other* request pointing at this task. Reading it from GeneratedTaskId
+                    // rather than from the batch is what makes it right: the fold is recorded there,
+                    // and a reviewer could fold in two sittings.
+                    _db.Requests
+                        .Where(o => o.GeneratedTaskId == taskId && o.Id != r.Id)
+                        .OrderBy(o => o.OrdinalInBatch).ThenBy(o => o.Id)
+                        .Select(o => new FoldedRequestDto(
+                            o.Id, o.RequestNumber, o.Title, o.Description,
+                            o.RequestedByUser.DisplayName))
                         .ToList()))
                 .FirstOrDefaultAsync(ct)
             : null;
@@ -160,25 +184,54 @@ public sealed class TaskQueryService : ITaskQueryService
             .OrderBy(s => s.SessionStart)
             .ToListAsync(ct);
 
-        var statusHistory = await _db.StatusHistories.AsNoTracking()
-            .Where(h => h.TaskId == taskId)
-            .OrderBy(h => h.ChangedAt).ThenBy(h => h.Id)
+        // Names for every actor in the three history streams, resolved in one query. A timeline of
+        // user ids is a timeline nobody can read, and one lookup per row would be a page-load's
+        // worth of round trips on a task with any history at all.
+        var actorIds = await _db.StatusHistories.AsNoTracking()
+            .Where(h => h.TaskId == taskId).Select(h => h.ChangedByUserId)
+            .Concat(_db.AssignmentHistories.AsNoTracking()
+                .Where(h => h.TaskId == taskId).Select(h => h.AssignedByUserId))
+            .Concat(_db.AssignmentHistories.AsNoTracking()
+                .Where(h => h.TaskId == taskId && h.FromUserId != null).Select(h => h.FromUserId!.Value))
+            .Concat(_db.AssignmentHistories.AsNoTracking()
+                .Where(h => h.TaskId == taskId && h.ToUserId != null).Select(h => h.ToUserId!.Value))
+            .Concat(_db.TaskActivities.AsNoTracking()
+                .Where(a => a.TaskId == taskId).Select(a => a.ActorUserId))
+            .Distinct()
+            .ToListAsync(ct);
+
+        var actorNames = await _db.Users.AsNoTracking()
+            .Where(u => actorIds.Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
+
+        string? NameOf(long? id) =>
+            id is { } value && actorNames.TryGetValue(value, out var name) ? name : null;
+
+        var statusHistory = (await _db.StatusHistories.AsNoTracking()
+                .Where(h => h.TaskId == taskId)
+                .OrderBy(h => h.ChangedAt).ThenBy(h => h.Id)
+                .ToListAsync(ct))
             .Select(h => new StatusHistoryDto(
-                h.Id, h.FromStatus, h.ToStatus, h.ChangedByUserId, h.ChangedAt, h.Reason, h.WasOverride))
-            .ToListAsync(ct);
+                h.Id, h.FromStatus, h.ToStatus, h.ChangedByUserId, NameOf(h.ChangedByUserId),
+                h.ChangedAt, h.Reason, h.WasOverride))
+            .ToList();
 
-        var assignmentHistory = await _db.AssignmentHistories.AsNoTracking()
-            .Where(h => h.TaskId == taskId)
-            .OrderBy(h => h.AssignedAt).ThenBy(h => h.Id)
+        var assignmentHistory = (await _db.AssignmentHistories.AsNoTracking()
+                .Where(h => h.TaskId == taskId)
+                .OrderBy(h => h.AssignedAt).ThenBy(h => h.Id)
+                .ToListAsync(ct))
             .Select(h => new AssignmentHistoryDto(
-                h.Id, h.FromUserId, h.ToUserId, h.AssignedByUserId, h.AssignedAt, h.Reason))
-            .ToListAsync(ct);
+                h.Id, h.FromUserId, NameOf(h.FromUserId), h.ToUserId, NameOf(h.ToUserId),
+                h.AssignedByUserId, NameOf(h.AssignedByUserId), h.AssignedAt, h.Reason))
+            .ToList();
 
-        var activity = await _db.TaskActivities.AsNoTracking()
-            .Where(a => a.TaskId == taskId)
-            .OrderBy(a => a.OccurredAt).ThenBy(a => a.Id)
-            .Select(a => new TaskActivityDto(a.Id, a.Type, a.ActorUserId, a.OccurredAt, a.Description))
-            .ToListAsync(ct);
+        var activity = (await _db.TaskActivities.AsNoTracking()
+                .Where(a => a.TaskId == taskId)
+                .OrderBy(a => a.OccurredAt).ThenBy(a => a.Id)
+                .ToListAsync(ct))
+            .Select(a => new TaskActivityDto(
+                a.Id, a.Type, a.ActorUserId, NameOf(a.ActorUserId), a.OccurredAt, a.Description))
+            .ToList();
 
         var qcReviews = await _db.QCReviews.AsNoTracking()
             .Where(q => q.TaskId == taskId)
@@ -188,6 +241,19 @@ public sealed class TaskQueryService : ITaskQueryService
         var reviewerNames = await _db.Users.AsNoTracking()
             .Where(u => qcReviews.Select(q => q.ReviewerUserId).Contains(u.Id))
             .ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
+
+        // Every attempt's evidence in one query, keyed by attempt.
+        var qcReviewIds = qcReviews.Select(q => q.Id).ToList();
+        var qcEvidence = (await _db.Attachments.AsNoTracking()
+                .Where(a => a.QCReviewId != null && qcReviewIds.Contains(a.QCReviewId!.Value))
+                .OrderBy(a => a.CreatedAt)
+                .ToListAsync(ct))
+            .GroupBy(a => a.QCReviewId!.Value)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<AttachmentDto>)g.Select(a => new AttachmentDto(
+                    a.Id, a.OriginalFileName, a.ContentType, a.SizeBytes,
+                    a.UploadedByUserId, a.CreatedAt)).ToList());
 
         // Required first, so what actually blocks the parent is at the top of the list.
         var subTasks = await _db.Tasks.AsNoTracking()
@@ -200,6 +266,22 @@ public sealed class TaskQueryService : ITaskQueryService
             .ToListAsync(ct);
 
         var blockedBy = await _dependencies.BlockersAsync(taskId, ct);
+
+        // The task's own files, read once and split by what they are for. QC evidence is left out
+        // deliberately: it belongs to a numbered attempt and is returned with that attempt, not
+        // loose on the task where it would lose the one thing that makes it meaningful.
+        var taskFiles = await _db.Attachments.AsNoTracking()
+            .Where(a => a.TaskId == taskId && a.Kind != AttachmentKind.QCEvidence)
+            .OrderBy(a => a.CreatedAt)
+            .Select(a => new { a.Id, a.OriginalFileName, a.ContentType, a.SizeBytes,
+                a.UploadedByUserId, a.CreatedAt, a.Kind })
+            .ToListAsync(ct);
+
+        IReadOnlyList<AttachmentDto> FilesOfKind(AttachmentKind kind) => taskFiles
+            .Where(a => a.Kind == kind)
+            .Select(a => new AttachmentDto(
+                a.Id, a.OriginalFileName, a.ContentType, a.SizeBytes, a.UploadedByUserId, a.CreatedAt))
+            .ToList();
 
         // Names, not bare ids: a support person nobody can see by name is not "visible on the task".
         // Ordered before projecting, and joined through the navigation rather than an explicit
@@ -230,7 +312,7 @@ public sealed class TaskQueryService : ITaskQueryService
                 .Select(c => c.Name).FirstOrDefaultAsync(ct)
             : null;
 
-        return Result<TaskDetailDto>.Success(new TaskDetailDto(
+        return Result<TaskDetailDto>.Success(ScopeToAudience(new TaskDetailDto(
             task.Id, task.TaskNumber, task.RequestId, requestNumber, task.Title, task.Description,
             task.Type, task.Status, task.Priority, task.ClientId, clientName,
             task.PrimaryAssigneeUserId, assigneeName, task.ReviewerUserId, task.QCUserId,
@@ -245,11 +327,85 @@ public sealed class TaskQueryService : ITaskQueryService
                 q.Id, q.TaskId, q.AttemptNumber, q.ReviewerUserId,
                 reviewerNames.TryGetValue(q.ReviewerUserId, out var reviewerName) ? reviewerName : null,
                 q.ReviewedAt, q.Result, q.Comments, q.Environment, q.BuildVersion,
-                AcceptanceCriteria.Deserialize(q.AcceptanceCriteriaResults))).ToList(),
+                AcceptanceCriteria.Deserialize(q.AcceptanceCriteriaResults),
+                qcEvidence.TryGetValue(q.Id, out var files) ? files : Array.Empty<AttachmentDto>())).ToList(),
             subTasks,
             blockedBy,
             EncodeRowVersion(task.RowVersion),
-            requestContext));
+            requestContext,
+            FilesOfKind(AttachmentKind.CompletionProof),
+            FilesOfKind(AttachmentKind.General))));
+    }
+
+    // --- who sees what ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Permissions that make somebody's job span the whole floor. Anyone holding one of these reads
+    /// any task, because a coordinator who could only see their own work could not coordinate.
+    /// </summary>
+    private static readonly string[] FloorWidePermissions =
+    {
+        Permissions.TaskAssign, Permissions.TaskReview, Permissions.TaskApprove,
+        Permissions.TaskQCReview, Permissions.TaskClose, Permissions.RequestViewAll,
+        Permissions.DashboardManagement, Permissions.ReportsView, Permissions.WorkforceViewAll,
+    };
+
+    /// <summary>
+    /// Everyone else sees only work they are part of: theirs to do, theirs to help with, or grown
+    /// from a request they raised. The same three clauses as <c>TaskQuery.VisibleToUserId</c> —
+    /// scoping the list and leaving the detail open would have been a lock on the door of an
+    /// unwalled room.
+    /// </summary>
+    private async Task<bool> CanSeeAsync(WorkTask task, CancellationToken ct)
+    {
+        // No ambient user means an internal caller — a background service or a test harness — not
+        // an anonymous request: every HTTP route into this is behind [Authorize].
+        if (_currentUser.UserId is not { } viewerId)
+            return true;
+
+        if (FloorWidePermissions.Any(_currentUser.Permissions.Contains))
+            return true;
+
+        if (task.PrimaryAssigneeUserId == viewerId)
+            return true;
+
+        if (await _db.TaskCollaborators.AsNoTracking()
+                .AnyAsync(c => c.TaskId == task.Id && c.UserId == viewerId, ct))
+            return true;
+
+        return task.RequestId is { } requestId
+               && await _db.Requests.AsNoTracking()
+                   .AnyAsync(r => r.Id == requestId && r.RequestedByUserId == viewerId, ct);
+    }
+
+    /// <summary>
+    /// How much of the record the caller is handed, by audience.
+    ///
+    /// Hiding a panel in the client is presentation; this is the same decision enforced where it
+    /// counts. A requester who follows their own work through to the task gets what it is and how
+    /// far along it is — not how many times it was reassigned, how long each sitting took, or what
+    /// the checker wrote about a colleague's work. None of that is secret exactly; all of it
+    /// invites a conversation the requester is not equipped to have, and the estimate in
+    /// particular gets read as a promise.
+    ///
+    /// Workers and coordinators are handed the record whole: they are inside the process.
+    /// </summary>
+    private TaskDetailDto ScopeToAudience(TaskDetailDto dto)
+    {
+        if (StatusViews.AudienceFor(_currentUser.Permissions) != StatusAudience.Requester)
+            return dto;
+
+        return dto with
+        {
+            EstimatedEffortHours = null,
+            QueueOrder = 0,
+            TotalWorkedTime = TimeSpan.Zero,
+            WorkSessions = Array.Empty<WorkSessionDto>(),
+            AssignmentHistory = Array.Empty<AssignmentHistoryDto>(),
+            StatusHistory = Array.Empty<StatusHistoryDto>(),
+            Activity = Array.Empty<TaskActivityDto>(),
+            QCReviews = Array.Empty<QCReviewDto>(),
+        };
     }
 
     public async Task<PagedResult<TaskSummaryDto>> ListAsync(

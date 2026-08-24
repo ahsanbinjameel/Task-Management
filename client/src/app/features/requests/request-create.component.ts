@@ -92,6 +92,18 @@ const SUGGESTED_BY_TYPE: Record<string, OptionalKey[]> = {
       />
 
       <form class="card card-pad stack" [formGroup]="form" (ngSubmit)="submit()">
+        @if (extras.length > 0) {
+          <mat-form-field class="full">
+            <mat-label>What is this batch about?</mat-label>
+            <input matInput formControlName="batchTitle"
+                   placeholder="e.g. Month-end problems" />
+          </mat-form-field>
+
+          <div class="item-head first">
+            <span class="muted small">Asking for &mdash; 1</span>
+          </div>
+        }
+
         <mat-form-field class="full">
           <mat-label>Title</mat-label>
           <input matInput formControlName="title" placeholder="Short summary of what you need" />
@@ -140,6 +152,12 @@ const SUGGESTED_BY_TYPE: Record<string, OptionalKey[]> = {
           knows what they have to say.
         -->
         <div class="optional">
+          @if (extras.length > 0) {
+            <p class="muted small items-note">
+              The extra detail fields below belong to this first request. The others ask for a title
+              and a description &mdash; a reviewer can always come back with a question.
+            </p>
+          }
           <div class="row row-wrap chips-row">
             <span class="muted small label">Add more detail (optional)</span>
             @for (field of optionalFields; track field.key) {
@@ -168,8 +186,65 @@ const SUGGESTED_BY_TYPE: Record<string, OptionalKey[]> = {
           }
         </div>
 
+        <!--
+          Asking for more than one thing.
+          Hidden until it is wanted, because most requests are one thing and a repeatable list on
+          an empty form makes a simple job look like an ordering system. Once open, each extra item
+          asks only for what an item needs: the client, the files and the reviewer are shared, so
+          nobody retypes them.
+        -->
+        @if (extras.length > 0) {
+          <div class="items" formArrayName="extras">
+            <p class="muted small items-note">
+              These go in together as {{ extras.length + 1 }} separate requests, sharing the client
+              and files above. A reviewer decides on each one, and may combine any of them into a
+              single piece of work.
+            </p>
+
+            @for (item of extras.controls; track $index; let i = $index) {
+              <div class="item card-pad" [formGroupName]="i">
+                <div class="row item-head">
+                  <span class="muted small">Also asking for &mdash; {{ i + 2 }}</span>
+                  <span class="spacer"></span>
+                  <button matIconButton type="button" (click)="removeItem(i)"
+                          [attr.aria-label]="'Remove item ' + (i + 2)">
+                    <mat-icon>close</mat-icon>
+                  </button>
+                </div>
+
+                <mat-form-field class="full">
+                  <mat-label>Title</mat-label>
+                  <input matInput formControlName="title" placeholder="Short summary" />
+                </mat-form-field>
+
+                <mat-form-field class="full">
+                  <mat-label>Description</mat-label>
+                  <textarea matInput rows="3" formControlName="description"
+                            placeholder="What do you need, and where does it happen?"></textarea>
+                </mat-form-field>
+
+                <div class="form-grid">
+                  <app-search-select label="Type" [options]="typeOptions" formControlName="type" />
+                  <app-search-select label="Urgency" [options]="urgencyOptions"
+                                     formControlName="requestedUrgency" />
+                </div>
+              </div>
+            }
+          </div>
+        }
+
+        <div class="row row-wrap">
+          <button type="button" class="add-chip" (click)="addItem()">
+            <mat-icon>add</mat-icon>
+            {{ extras.length === 0 ? 'Ask for something else too' : 'Add another' }}
+          </button>
+        </div>
+
         <div class="attach">
-          <h2 class="card-title">Attachments</h2>
+          <h2 class="card-title">
+            Attachments
+            @if (extras.length > 0) { <span class="muted small">&mdash; shared by every item</span> }
+          </h2>
           <app-file-drop [(files)]="files" />
         </div>
 
@@ -177,7 +252,9 @@ const SUGGESTED_BY_TYPE: Record<string, OptionalKey[]> = {
           <span class="spacer"></span>
           <button matButton type="button" (click)="cancel()">Cancel</button>
           <button matButton="filled" type="submit" [disabled]="form.invalid || busy()">
-            {{ busy() ? 'Sending…' : 'Submit request' }}
+            {{ busy() ? 'Sending…' : extras.length === 0
+                ? 'Submit request'
+                : 'Submit ' + (extras.length + 1) + ' requests' }}
           </button>
         </div>
       </form>
@@ -199,6 +276,14 @@ const SUGGESTED_BY_TYPE: Record<string, OptionalKey[]> = {
     /* The ones that fit the chosen type, nudged forward without being forced on anyone. */
     .add-chip.suggested { border-style: solid; color: inherit; }
     .add-chip mat-icon { font-size: 16px; width: 16px; height: 16px; }
+    .items { display: flex; flex-direction: column; gap: 12px; margin: 6px 0 12px; }
+    .items-note { margin: 0 0 10px; }
+    .item {
+      border: 1px solid var(--border); border-radius: var(--radius);
+      background: var(--surface-sunken);
+    }
+    .item-head { align-items: center; margin-bottom: 6px; }
+    .item-head.first { margin: 4px 0 -4px; }
     .attach { margin: 6px 0 18px; }
     .attach .card-title { margin-bottom: 10px; }
   `,
@@ -255,7 +340,11 @@ export class RequestCreateComponent implements OnInit {
     this.shown.update((all) => ({ ...all, [key]: false }));
   }
 
-  readonly form = inject(FormBuilder).nonNullable.group({
+  private readonly fb = inject(FormBuilder);
+
+  readonly form = this.fb.nonNullable.group({
+    /** Only used, and only required, once there is more than one item. */
+    batchTitle: [''],
     title: ['', [Validators.required, Validators.maxLength(300)]],
     description: ['', [Validators.required, Validators.maxLength(8000)]],
     type: ['Support' as RequestType, Validators.required],
@@ -266,7 +355,46 @@ export class RequestCreateComponent implements OnInit {
     expectedResult: [''],
     currentResult: [''],
     reproductionSteps: [''],
+    extras: this.fb.array([] as ReturnType<RequestCreateComponent['newItem']>[]),
   });
+
+  get extras() {
+    return this.form.controls.extras;
+  }
+
+  private newItem() {
+    return this.fb.nonNullable.group({
+      title: ['', [Validators.required, Validators.maxLength(300)]],
+      description: ['', [Validators.required, Validators.maxLength(8000)]],
+      type: ['Support' as RequestType, Validators.required],
+      requestedUrgency: ['Normal' as RequestedUrgency, Validators.required],
+    });
+  }
+
+  addItem(): void {
+    // The batch needs a name of its own once there is more than one item — the items have their
+    // own titles, and "Month-end problems" is what a reviewer scans a queue for.
+    if (this.extras.length === 0) {
+      this.form.controls.batchTitle.addValidators([Validators.required, Validators.maxLength(300)]);
+      this.form.controls.batchTitle.updateValueAndValidity();
+
+      if (!this.form.controls.batchTitle.value.trim()) {
+        this.form.controls.batchTitle.setValue(this.form.controls.title.value.trim());
+      }
+    }
+
+    this.extras.push(this.newItem());
+  }
+
+  removeItem(index: number): void {
+    this.extras.removeAt(index);
+
+    // Back to one request: the batch title stops being required, and stops being sent.
+    if (this.extras.length === 0) {
+      this.form.controls.batchTitle.clearValidators();
+      this.form.controls.batchTitle.updateValueAndValidity();
+    }
+  }
 
   /**
    * Names already in use. Loaded once and filtered locally: the list is short by nature, and a
@@ -329,6 +457,11 @@ export class RequestCreateComponent implements OnInit {
 
     const v = this.form.getRawValue();
 
+    if (v.extras.length > 0) {
+      this.submitBatch(v);
+      return;
+    }
+
     this.api
       .createRequest({
         title: v.title.trim(),
@@ -355,6 +488,85 @@ export class RequestCreateComponent implements OnInit {
         },
         error: () => this.busy.set(false),
       });
+  }
+
+  /**
+   * Several at once. The first item is the main form; the extras follow it in the order they were
+   * added. Files go up afterwards and against the *batch*, not against an item — the screenshot
+   * showing all eight problems belongs to the submission.
+   */
+  private submitBatch(v: ReturnType<typeof this.form.getRawValue>): void {
+    this.api
+      .createBatch({
+        title: v.batchTitle.trim() || v.title.trim(),
+        clientName: v.clientName.trim() || undefined,
+        items: [
+          {
+            title: v.title.trim(),
+            description: this.withDetail(v),
+            type: v.type,
+            requestedUrgency: v.requestedUrgency,
+            targetDate: v.targetDate ? v.targetDate.toISOString() : null,
+          },
+          ...v.extras.map((e) => ({
+            title: e.title.trim(),
+            description: e.description.trim(),
+            type: e.type,
+            requestedUrgency: e.requestedUrgency,
+            targetDate: null,
+          })),
+        ],
+      })
+      .subscribe({
+        next: (batch) => {
+          this.uploadBatchFiles(batch.id, () => {
+            this.busy.set(false);
+            this.toast.success(`${batch.batchNumber}: ${batch.items.length} requests submitted.`);
+            void this.router.navigate(['/requests/batches', batch.id]);
+          });
+        },
+        error: () => this.busy.set(false),
+      });
+  }
+
+  /**
+   * A batch item carries a title and a description, so the first item's optional detail is folded
+   * into its description under its own heading rather than dropped. Nothing the requester typed is
+   * discarded, and nothing is sent that they cannot see: the labels are the same words the fields
+   * carried.
+   */
+  private withDetail(v: ReturnType<typeof this.form.getRawValue>): string {
+    const parts = [v.description.trim()];
+
+    for (const field of OPTIONAL_FIELDS) {
+      const value = (v[field.key] ?? '').trim();
+      if (value) parts.push(`${field.label}:\n${value}`);
+    }
+
+    return parts.join('\n\n');
+  }
+
+  private uploadBatchFiles(batchId: number, done: () => void): void {
+    const queue = this.files();
+    if (queue.length === 0) {
+      done();
+      return;
+    }
+
+    let remaining = queue.length;
+    const finish = () => {
+      if (--remaining === 0) done();
+    };
+
+    for (const file of queue) {
+      this.api.uploadBatchAttachment(batchId, file).subscribe({
+        next: finish,
+        error: () => {
+          this.toast.error(`${file.name} could not be attached.`);
+          finish();
+        },
+      });
+    }
   }
 
   cancel(): void {

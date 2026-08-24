@@ -17,12 +17,13 @@ import { RequestEditDialog } from './request-edit-dialog.component';
 import { AuthService } from '../../core/auth.service';
 import { ToastService } from '../../core/toast.service';
 import { Perm } from '../../core/permissions';
-import { humanizeEnum, saveBlob } from '../../core/format';
-import { Priority, RequestDetailDto, TriageOutcome } from '../../core/models';
+import { saveBlob } from '../../core/format';
+import { requestTypeLabel } from '../../core/labels';
+import { Priority, RequestDetailDto, RequestType, TriageOutcome } from '../../core/models';
 import { enumOptions, SearchSelectComponent } from '../../shared/search-select.component';
 import { AttachmentsComponent } from '../../shared/attachments.component';
 import {
-  ChipComponent, EmptyComponent, FieldComponent, LoadingComponent, PageHeaderComponent,
+  ChipComponent, FieldComponent, LoadingComponent, PageHeaderComponent,
 } from '../../shared/ui';
 
 /**
@@ -39,7 +40,7 @@ import {
     BreadcrumbsComponent,
     DatePipe, FormsModule, RouterLink, MatButtonModule, MatButtonToggleModule, MatFormFieldModule,
     MatIconModule, MatInputModule, MatTooltipModule,
-    PageHeaderComponent, ChipComponent, FieldComponent, LoadingComponent, EmptyComponent,
+    PageHeaderComponent, ChipComponent, FieldComponent, LoadingComponent,
     SearchSelectComponent, AttachmentsComponent,
   ],
   template: `
@@ -126,7 +127,7 @@ import {
                 @if (!r.progress) {
                   <span class="chip" [class]="'tone-' + tone(r.viewKey)">{{ r.viewLabel }}</span>
                 }
-                <app-chip [value]="r.requestedUrgency" kind="priority" />
+                <app-chip [value]="r.requestedUrgency" kind="urgency" />
                 <span class="muted small">
                   Requested by {{ r.requestedByDisplayName }}
                   on {{ r.requestedAt | date: 'mediumDate' }}
@@ -311,6 +312,18 @@ import {
                 </app-field>
               }
               <app-field label="Type">{{ label(r.type) }}</app-field>
+              <!--
+                Shown to everyone, requester included. Unlike "Generated task" this is not the
+                system talking about itself: they asked for eight things in one go, and this is how
+                they get back to the other seven.
+              -->
+              @if (r.batchNumber) {
+                <app-field label="Asked for with">
+                  <a [routerLink]="['/requests/batches', r.batchId]">
+                    {{ r.batchNumber }} — item {{ r.ordinalInBatch }} of {{ r.batchItemCount }}
+                  </a>
+                </app-field>
+              }
               <app-field label="Needed by">
                 {{ r.targetDate ? (r.targetDate | date: 'mediumDate') : '—' }}
               </app-field>
@@ -353,7 +366,7 @@ import {
     .answer-box { padding: 8px 0 0 26px; }
     .pending { padding-left: 28px; }
     .attachment {
-      display: flex; align-items: center; gap: 10px;
+      display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
       padding: 9px 20px; border-top: 1px solid var(--border);
     }
     .attachment mat-icon { color: var(--text-muted); }
@@ -447,7 +460,7 @@ export class RequestDetailComponent implements OnInit {
       && ['Submitted', 'InReview', 'ClarificationRequired'].includes(r.status);
   });
 
-  label = (value: string) => humanizeEnum(value);
+  label = (value: string) => requestTypeLabel(value as RequestType);
 
   /**
    * Colour follows what the view means, not the internal status name — the reader is being shown

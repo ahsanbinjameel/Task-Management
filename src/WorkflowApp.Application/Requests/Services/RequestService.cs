@@ -246,13 +246,23 @@ public sealed class RequestService : IRequestService
         var progress = await ProgressAsync(request.GeneratedTaskId, audience, ct);
         var view = StatusViews.RequestViewOf(audience, request.Status, progress?.TaskStatus);
 
+        // Only looked up when the request actually came in a batch, so the ordinary single-request
+        // case costs nothing.
+        var batch = request.BatchId is { } batchId
+            ? await _db.RequestBatches.AsNoTracking()
+                .Where(b => b.Id == batchId)
+                .Select(b => new { b.BatchNumber, ItemCount = b.Items.Count })
+                .FirstOrDefaultAsync(ct)
+            : null;
+
         return Result<RequestDetailDto>.Success(new RequestDetailDto(
             request.Id, request.RequestNumber, request.Title, request.Description, request.Type,
             request.Status, request.RequestedUrgency, request.ClientId, clientName,
             request.BusinessImpact, request.ExpectedResult, request.CurrentResult, request.ReproductionSteps,
             request.RequestedByUserId, requester, request.RequestedAt, request.TargetDate,
             request.RelatedRequestId, request.GeneratedTaskId, activity, clarifications, attachments,
-            view.Key, view.Label, progress));
+            view.Key, view.Label, progress,
+            request.BatchId, batch?.BatchNumber, request.OrdinalInBatch, batch?.ItemCount ?? 0));
     }
 
     public async Task<PagedResult<RequestSummaryDto>> ListAsync(

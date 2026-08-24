@@ -10,6 +10,7 @@ import {
 } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatMenuModule } from '@angular/material/menu';
@@ -23,8 +24,9 @@ import { RealtimeService, TaskChangedEvent } from '../../core/realtime.service';
 import { syncOn } from '../../core/realtime-sync';
 import { ToastService } from '../../core/toast.service';
 import { Perm } from '../../core/permissions';
-import { DurationPipe, HumanizePipe, humanizeEnum } from '../../core/format';
-import { TaskDetailDto, WorkTaskStatus } from '../../core/models';
+import { DurationPipe } from '../../core/format';
+import { requestTypeLabel, taskStatusLabel } from '../../core/labels';
+import { AttachmentDto, RequestType, TaskDetailDto, WorkTaskStatus } from '../../core/models';
 import {
   ChipComponent,
   FieldComponent,
@@ -47,6 +49,7 @@ import { TaskHistoryComponent } from './panels/task-history.component';
 import { TaskQcComponent } from './panels/task-qc.component';
 import { TaskClosureComponent } from './panels/task-closure.component';
 import { AttachmentsComponent } from '../../shared/attachments.component';
+import { AttachmentUploadComponent } from '../../shared/attachment-upload.component';
 
 /**
  * The task screen.
@@ -74,7 +77,6 @@ import { AttachmentsComponent } from '../../shared/attachments.component';
     FieldComponent,
     LoadingComponent,
     DurationPipe,
-    HumanizePipe,
     TaskCommentsComponent,
     TaskDependenciesComponent,
     TaskSubtasksComponent,
@@ -83,6 +85,7 @@ import { AttachmentsComponent } from '../../shared/attachments.component';
     TaskQcComponent,
     TaskClosureComponent,
     AttachmentsComponent,
+    AttachmentUploadComponent,
   ],
   template: `
     @if (loading()) {
@@ -169,7 +172,7 @@ import { AttachmentsComponent } from '../../shared/attachments.component';
           <div class="main">
             <mat-tab-group
               [selectedIndex]="tabIndex()"
-              (selectedIndexChange)="tabIndex.set($event)"
+              (selectedIndexChange)="selectTab($event)"
               animationDuration="0ms"
             >
               <mat-tab label="Overview">
@@ -191,7 +194,33 @@ import { AttachmentsComponent } from '../../shared/attachments.component';
                         {{ req.requestedByDisplayName }} · {{ req.requestedAt | date: 'mediumDate' }}
                         @if (req.projectName) { · {{ req.projectName }} }
                         @if (req.moduleName) { · {{ req.moduleName }} }
+                        @if (req.batchNumber) {
+                          ·
+                          <a [routerLink]="['/requests/batches', req.batchId]">{{ req.batchNumber }}</a>
+                        }
                       </p>
+
+                      <!--
+                        Several requests folded into one task. Shown in full rather than as a count,
+                        because a worker who cannot see the other two will finish the first and
+                        call it done.
+                      -->
+                      @if (req.foldedWith?.length) {
+                        <div class="folded">
+                          <h3 class="sub">
+                            Also asked for ({{ (req.foldedWith ?? []).length }} more, approved together)
+                          </h3>
+                          @for (other of req.foldedWith ?? []; track other.requestId) {
+                            <div class="folded-item">
+                              <a class="mono small muted" [routerLink]="['/requests', other.requestId]">
+                                {{ other.requestNumber }}
+                              </a>
+                              <strong>{{ other.title }}</strong>
+                              <p class="body-text">{{ other.description }}</p>
+                            </div>
+                          }
+                        </div>
+                      }
 
                       @if (req.originalDescription !== t.description) {
                         <p class="body-text">{{ req.originalDescription }}</p>
@@ -250,6 +279,38 @@ import { AttachmentsComponent } from '../../shared/attachments.component';
                     </div>
                   }
 
+                  <!--
+                    Proof sits in the Overview rather than behind the quality-check tab: the
+                    checker looks at it before anything else, and the person who has to supply it
+                    is not the person the QC tab is for.
+                  -->
+                  @if (showProof()) {
+                    <div class="card card-pad">
+                      <h2 class="card-title">Proof of work</h2>
+                      <p class="muted small proof-lead">
+                        Screenshots or files showing the work actually does what was asked. Whoever
+                        checks it looks here first.
+                      </p>
+                      <app-attachments
+                        [attachments]="t.completionProof ?? []"
+                        emptyText="Nothing attached yet." />
+                      @if (canAddProof()) {
+                        <app-attachment-upload
+                          [taskId]="t.id" kind="CompletionProof"
+                          label="Attach proof" icon="verified"
+                          (uploaded)="proofAdded($event)" />
+                      }
+                    </div>
+                  }
+
+                  @if (t.attachments?.length) {
+                    <div class="card card-pad">
+                      <h2 class="card-title">Files on this task</h2>
+                      <app-attachments [attachments]="t.attachments ?? []" />
+                    </div>
+                  }
+
+                  @if (!auth.isRequesterOnly()) {
                   <div class="card card-pad">
                     <h2 class="card-title">Work sessions</h2>
                     @if (t.workSessions.length === 0) {
@@ -276,6 +337,7 @@ import { AttachmentsComponent } from '../../shared/attachments.component';
                       }
                     }
                   </div>
+                  }
                 </div>
               </mat-tab>
 
@@ -322,11 +384,18 @@ import { AttachmentsComponent } from '../../shared/attachments.component';
                 </mat-tab>
               }
 
-              <mat-tab label="History">
-                <div class="tab-body">
-                  <app-task-history [task]="t" />
-                </div>
-              </mat-tab>
+              <!--
+                The history tab is not rendered for a requester, because the server does not send
+                them one. Showing an empty timeline would read as "nothing has happened", which is
+                a worse answer than not asking the question.
+              -->
+              @if (!auth.isRequesterOnly()) {
+                <mat-tab label="History">
+                  <div class="tab-body">
+                    <app-task-history [task]="t" />
+                  </div>
+                </mat-tab>
+              }
             </mat-tab-group>
           </div>
 
@@ -352,10 +421,12 @@ import { AttachmentsComponent } from '../../shared/attachments.component';
                   </div>
                 </app-field>
               }
+              @if (!auth.isRequesterOnly()) {
               <app-field label="Estimate">
                 {{ t.estimatedEffortHours ? t.estimatedEffortHours + 'h' : '—' }}
               </app-field>
               <app-field label="Time logged">{{ t.totalWorkedTime | duration }}</app-field>
+              }
               <app-field label="Due">
                 @if (t.dueDate) {
                   <span [class.overdue]="overdue()">{{ t.dueDate | date: 'mediumDate' }}</span>
@@ -378,6 +449,10 @@ import { AttachmentsComponent } from '../../shared/attachments.component';
   `,
   styles: `
     .asked { margin: -4px 0 12px; }
+    .folded { margin-top: 12px; border-left: 3px solid var(--border); padding-left: 12px; }
+    .folded-item { margin-bottom: 10px; }
+    .folded-item strong { margin-left: 8px; }
+    .folded-item .body-text { margin-top: 2px; }
     .sub {
       font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em;
       color: var(--text-muted); margin: 16px 0 4px; font-weight: 600;
@@ -410,6 +485,7 @@ import { AttachmentsComponent } from '../../shared/attachments.component';
     .complete {
       --mdc-filled-button-container-color: #17603a;
     }
+    .proof-lead { margin: -4px 0 12px; }
     .banner {
       display: flex;
       align-items: center;
@@ -466,7 +542,7 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
   readonly id = input.required<string>();
 
   private readonly api = inject(ApiService);
-  private readonly auth = inject(AuthService);
+  readonly auth = inject(AuthService);
   private readonly realtime = inject(RealtimeService);
   private readonly dialog = inject(MatDialog);
   private readonly toast = inject(ToastService);
@@ -475,7 +551,51 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
   readonly task = signal<TaskDetailDto | null>(null);
   readonly loading = signal(true);
   readonly busy = signal(false);
-  readonly tabIndex = signal(0);
+
+  /**
+   * Which tab is open, as a name in the URL rather than an index in a signal.
+   *
+   * Three things fall out of that. A link can point at a tab — `?tab=qc` from a notification lands
+   * on the quality check instead of the overview, so the reader does not have to hunt for the
+   * thing they were told about. Browser Back walks the tabs, which is what everyone expects once
+   * the URL changes. And the index stops being a magic number: the tab list is conditional, so
+   * `tabIndex.set(2)` was only ever right by coincidence.
+   */
+  readonly tab = signal<string>('overview');
+
+  /**
+   * The tabs actually rendered, in render order. This has to mirror the template's `@if`s —
+   * mat-tab-group only knows about indices, so the mapping has to exist somewhere. Keeping it
+   * here, next to the visibility rules it depends on, is the least bad place for it.
+   */
+  readonly tabKeys = computed<string[]>(() => {
+    const t = this.task();
+    if (!t) return ['overview'];
+
+    const keys = ['overview', 'updates'];
+    if (this.showQualityCheck(t)) keys.push('qc');
+    if (this.canCoordinate()) keys.push('dependencies');
+    keys.push('subtasks');
+    if (this.canCoordinate()) keys.push('scope');
+    if (!this.auth.isRequesterOnly()) keys.push('history');
+    return keys;
+  });
+
+  /** An unknown or now-hidden tab falls back to the overview rather than showing nothing. */
+  readonly tabIndex = computed(() => Math.max(0, this.tabKeys().indexOf(this.tab())));
+
+  /** Written to the URL with `replaceUrl: false`, so Back returns to the previous tab. */
+  selectTab(index: number): void {
+    const key = this.tabKeys()[index] ?? 'overview';
+    if (key === this.tab()) return;
+
+    this.tab.set(key);
+    this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { tab: key === 'overview' ? null : key },
+      queryParamsHandling: 'merge',
+    });
+  }
 
   private taskId = 0;
 
@@ -521,6 +641,21 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
   readonly canAssign = computed(() => this.auth.has(Perm.taskAssign) && !this.isTerminal());
 
   /**
+   * Only the person responsible for the work can attach the proof of it — the same rule the server
+   * enforces, so the control is never offered to somebody who would be refused. Once the task is
+   * closed the record stops changing, proof included.
+   */
+  readonly canAddProof = computed(() => this.isMine() && !this.isTerminal());
+
+  /**
+   * The card is shown once proof exists, and to the person who owes it from the moment work can
+   * start. A requester never owes any, so an empty card on their screen would only read as a
+   * missing thing they cannot supply.
+   */
+  readonly showProof = computed(() =>
+    (this.task()?.completionProof?.length ?? 0) > 0 || this.canAddProof());
+
+  /**
    * Which tabs a reader gets.
    *
    * A worker's screen is Overview, Updates, Smaller tasks and History — the four things doing the
@@ -538,6 +673,9 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
   showQualityCheck(task: TaskDetailDto): boolean {
     const inCheck: WorkTaskStatus[] =
       ['CompletedReadyForQC', 'QCReview', 'QCPassed', 'QCFailedRework', 'ReadyForClosure', 'Closed'];
+
+    // A requester is never sent the attempts, so the tab could only ever be empty for them.
+    if (this.auth.isRequesterOnly()) return false;
 
     return task.qcReviews.length > 0
       || inCheck.includes(task.status)
@@ -586,6 +724,11 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
     this.taskId = Number(this.id());
     this.pendingStart = this.route.snapshot.queryParamMap.get('start') === '1';
     this.load();
+
+    // Subscribed rather than read once, so Back through the tab history actually moves the tab.
+    this.route.queryParamMap
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((params) => this.tab.set(params.get('tab') ?? 'overview'));
 
     this.realtime.subscribeToTask(this.taskId);
 
@@ -643,7 +786,7 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
     });
   }
 
-  label = (value: string) => humanizeEnum(value);
+  label = (value: string) => requestTypeLabel(value as RequestType);
   isTerminal = () => ['Closed', 'Cancelled', 'Duplicate'].includes(this.task()?.status ?? '');
 
   // --- the timer ------------------------------------------------------------------------------
@@ -672,14 +815,32 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
       });
   }
 
+  /**
+   * Folded into the task the client already holds rather than re-fetched. The upload is the whole
+   * change — nothing else on the record moved — and a round trip here would blank the screen to
+   * redraw one thumbnail.
+   */
+  proofAdded(attachment: AttachmentDto): void {
+    this.task.update((t) => (t
+      ? { ...t, completionProof: [...(t.completionProof ?? []), attachment] }
+      : t));
+  }
+
   complete(): void {
+    const hasProof = (this.task()?.completionProof?.length ?? 0) > 0;
+
     this.dialog
       .open<ReasonDialog, ReasonData>(ReasonDialog, {
         data: {
           title: 'Finish this work',
           message:
-            'This sends the task for a quality check. It does not close it — only the ' +
-            'quality check can do that.',
+            'This sends the task for a quality check. It does not close it — only the '
+            + 'quality check can do that.'
+            // Said here rather than enforced, because a task whose result is not a screenshot is
+            // ordinary. Refusing to accept the work without a file would only teach people to
+            // attach anything.
+            + (hasProof ? '' : ' Nothing is attached as proof yet — a screenshot of the result '
+              + 'saves the person checking it a round of questions.'),
           label: 'What did you do? (a short summary for whoever checks it)',
           required: false,
           confirmText: 'Send for checking',
@@ -703,7 +864,7 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
       next: (t) => {
         this.task.set(t);
         this.busy.set(false);
-        this.tabIndex.set(2);
+        this.selectTab(this.tabKeys().indexOf('qc'));
         this.toast.success('You are now the QC reviewer for this task.');
       },
       error: () => this.busy.set(false),
@@ -744,17 +905,17 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
     ];
 
     if (!needsReason.includes(to)) {
-      this.run(this.api.transition(this.taskId, { to }), `Moved to ${humanizeEnum(to)}.`);
+      this.run(this.api.transition(this.taskId, { to }), `Moved to ${taskStatusLabel(to)}.`);
       return;
     }
 
     this.dialog
       .open<ReasonDialog, ReasonData>(ReasonDialog, {
         data: {
-          title: `Move to ${humanizeEnum(to)}`,
+          title: `Move to ${taskStatusLabel(to)}`,
           label: 'Why?',
           danger: to === 'Cancelled',
-          confirmText: humanizeEnum(to),
+          confirmText: taskStatusLabel(to),
           submit: (reason: string, ctx) => this.api.transition(this.taskId, { to, reason }, ctx),
         },
       })
@@ -762,7 +923,7 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
       .subscribe((updated?: unknown) => {
         if (!updated) return;
         this.task.set(updated as TaskDetailDto);
-        this.toast.success(`Moved to ${humanizeEnum(to)}.`);
+        this.toast.success(`Moved to ${taskStatusLabel(to)}.`);
       });
   }
 }

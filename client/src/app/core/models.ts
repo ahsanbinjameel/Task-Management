@@ -186,6 +186,16 @@ export interface AttachmentDto {
 }
 
 /**
+ * What a file is *for*, as opposed to what it hangs off.
+ *
+ * The requester's screenshot of a broken invoice and the worker's screenshot of the fixed one are
+ * both "a file on this piece of work"; without this they are the same row in the same list, and
+ * "show me the evidence it was actually done" cannot be asked. Mirrors `AttachmentKind` on the
+ * server — the API serialises the name, not the ordinal.
+ */
+export type AttachmentKind = 'General' | 'CompletionProof' | 'QCEvidence';
+
+/**
  * What POST /requests/{id}/triage actually returns — a decision, not the request.
  *
  * This was previously typed as RequestDetailDto. The component assigned it straight into the
@@ -227,6 +237,12 @@ export interface RequestDetailDto {
   viewLabel: string;
   /** Null until the request is approved and work exists. */
   progress?: RequestProgressDto | null;
+  /** The submission this arrived in, when it was asked for alongside others. */
+  batchId?: number | null;
+  batchNumber?: string | null;
+  /** Which of the batch this was, 1-based. Zero for a request raised on its own. */
+  ordinalInBatch: number;
+  batchItemCount: number;
 }
 
 // --- tasks ----------------------------------------------------------------------------------
@@ -267,11 +283,13 @@ export interface TaskSummaryDto {
   supportPeople?: string[] | null;
 }
 
+/** The state machine's own record: from-and-to, for people who run the process. */
 export interface StatusHistoryDto {
   id: number;
   fromStatus: WorkTaskStatus;
   toStatus: WorkTaskStatus;
   changedByUserId: number;
+  changedByDisplayName?: string | null;
   changedAt: string;
   reason?: string | null;
   wasOverride: boolean;
@@ -280,16 +298,21 @@ export interface StatusHistoryDto {
 export interface AssignmentHistoryDto {
   id: number;
   fromUserId?: number | null;
+  fromDisplayName?: string | null;
   toUserId?: number | null;
+  toDisplayName?: string | null;
   assignedByUserId: number;
+  assignedByDisplayName?: string | null;
   assignedAt: string;
   reason?: string | null;
 }
 
+/** What happened, in a sentence. The account a person reads. */
 export interface TaskActivityDto {
   id: number;
   type: string;
   actorUserId: number;
+  actorDisplayName?: string | null;
   occurredAt: string;
   description: string;
 }
@@ -328,6 +351,11 @@ export interface QCReviewDto {
   environment?: string | null;
   buildVersion?: string | null;
   criteria: AcceptanceCriterionDto[];
+  /**
+   * What the checker attached to *this attempt*. Per attempt, not per task: the pictures that
+   * justified a failure stay with the failure once a later attempt passes.
+   */
+  attachments?: AttachmentDto[] | null;
 }
 
 /** A smaller task belonging to a parent, summarised for the parent's own page. */
@@ -372,6 +400,96 @@ export interface RequestContextDto {
   currentResult?: string | null;
   reproductionSteps?: string | null;
   attachments: AttachmentDto[];
+  /** The submission this arrived in, when it arrived alongside others. */
+  batchId?: number | null;
+  batchNumber?: string | null;
+  /**
+   * Other requests a reviewer folded into this same task. A worker handed three folded items has
+   * to see all three, or "done" gets declared when only the first one is.
+   */
+  foldedWith?: FoldedRequestDto[] | null;
+}
+
+export interface FoldedRequestDto {
+  requestId: number;
+  requestNumber: string;
+  title: string;
+  description: string;
+  requestedByDisplayName: string;
+}
+
+// --- request batches ---------------------------------------------------------------------------
+
+/**
+ * Several things asked for at once. A wrapper, not a second workflow: every item is an ordinary
+ * request with its own number and its own triage decision, which is why the batch carries no
+ * status of its own — only counts a screen can compute.
+ */
+export interface BatchItemDto {
+  title: string;
+  description: string;
+  type: RequestType;
+  requestedUrgency: RequestedUrgency;
+  targetDate?: string | null;
+}
+
+export interface CreateRequestBatchDto {
+  title: string;
+  note?: string | null;
+  clientName?: string | null;
+  items: BatchItemDto[];
+}
+
+export interface ApproveTogetherDto {
+  requestIds: number[];
+  taskTitle?: string | null;
+  approvedPriority?: Priority | null;
+  estimatedEffortHours?: number | null;
+  dueDate?: string | null;
+  acceptanceCriteria?: string | null;
+}
+
+export interface BatchItemSummaryDto {
+  id: number;
+  requestNumber: string;
+  ordinal: number;
+  title: string;
+  type: RequestType;
+  requestedUrgency: RequestedUrgency;
+  status: RequestStatus;
+  /** Plain-language status, from the same map the rest of the app uses. */
+  statusLabel: string;
+  generatedTaskId?: number | null;
+  generatedTaskNumber?: string | null;
+  /** Other items of this batch folded into the same task. */
+  sharedTaskWith: string[];
+}
+
+export interface RequestBatchSummaryDto {
+  id: number;
+  batchNumber: string;
+  title: string;
+  requestedByDisplayName: string;
+  requestedAt: string;
+  clientName?: string | null;
+  itemCount: number;
+  awaitingDecisionCount: number;
+  approvedCount: number;
+  declinedCount: number;
+}
+
+export interface RequestBatchDetailDto {
+  id: number;
+  batchNumber: string;
+  title: string;
+  note?: string | null;
+  requestedByUserId: number;
+  requestedByDisplayName: string;
+  requestedAt: string;
+  clientId?: number | null;
+  clientName?: string | null;
+  items: BatchItemSummaryDto[];
+  attachments: AttachmentDto[];
 }
 
 export interface TaskDetailDto {
@@ -411,6 +529,13 @@ export interface TaskDetailDto {
   rowVersion?: string | null;
   /** Where this work came from. Null for a task raised without a request. */
   request?: RequestContextDto | null;
+  /**
+   * What the responsible person attached as proof the work is done — kept apart from the
+   * request's own screenshots, which describe the problem rather than the fix.
+   */
+  completionProof?: AttachmentDto[] | null;
+  /** Files added to the task for context, rather than as proof of anything. */
+  attachments?: AttachmentDto[] | null;
 }
 
 export type PauseCategory =
@@ -604,6 +729,43 @@ export interface DashboardItemDto {
   isOverdue: boolean;
 }
 
+/** What a home-screen row points at, so the client knows which route to build. */
+export type AttentionSubject = 'Task' | 'Request';
+
+/**
+ * One thing waiting on the signed-in user. `reason` is the point of the row — it is written for a
+ * person by the server, so the wording cannot drift between the two halves of the app.
+ */
+export interface AttentionItemDto {
+  subject: AttentionSubject;
+  id: number;
+  number: string;
+  title: string;
+  reason: string;
+  rank: number;
+  priority: Priority;
+  /** When it entered the state that put it here. The basis for "waiting 3 days". */
+  since: string;
+  dueDate?: string | null;
+  isOverdue: boolean;
+}
+
+/** Something that happened. Past tense, nothing to act on. */
+export interface ActivityItemDto {
+  subject: AttentionSubject;
+  id: number;
+  number: string;
+  text: string;
+  at: string;
+}
+
+export interface HomeDashboardDto {
+  needsAttention: AttentionItemDto[];
+  recentActivity: ActivityItemDto[];
+  /** The count before truncation, so the page can offer "and N more". */
+  totalNeedingAttention: number;
+}
+
 export interface RequesterDashboardDto {
   submittedCount: number;
   underReviewCount: number;
@@ -696,6 +858,24 @@ export interface DailyUserReportDto {
   supportWork: TaskTimeDto[];
   /** Tasks they are helping with, whether or not they logged time today. */
   supportingOn: SupportedTaskDto[];
+  /** Work that never came through the front door. Its own line: it is neither owned nor support. */
+  quickWork: QuickWorkLineDto[];
+  /** Time on finished quick work. Cancelled records are shown but not counted. */
+  quickWorkTime: string;
+  /** How many times a running task was put down for something else. */
+  interruptions: number;
+}
+
+export interface QuickWorkLineDto {
+  id: number;
+  title: string;
+  startedAt: string;
+  duration: string;
+  clientName?: string | null;
+  outcome?: string | null;
+  interruptedTaskNumber?: string | null;
+  promotedToRequestNumber?: string | null;
+  wasCancelled: boolean;
 }
 
 export interface DailyTeamReportDto {
@@ -705,6 +885,52 @@ export interface DailyTeamReportDto {
   totalProductiveTime: string;
   tasksCompleted: number;
   users: DailyUserReportDto[];
+}
+
+// --- quick work -----------------------------------------------------------------------------
+
+export type QuickWorkStatus = 'Active' | 'Finished' | 'Cancelled';
+
+/**
+ * The five-minute job that arrived by phone. Not a task: no lifecycle, no assignee, no quality
+ * check. A title, a clock and an outcome.
+ */
+export interface QuickWorkDto {
+  id: number;
+  title: string;
+  userId: number;
+  userDisplayName?: string | null;
+  startedAt: string;
+  endedAt?: string | null;
+  /** Climbs while it is running, so the screen needs no arithmetic of its own. */
+  duration: string;
+  status: QuickWorkStatus;
+  clientId?: number | null;
+  clientName?: string | null;
+  outcome?: string | null;
+  /** The task it displaced, so the screen can offer to hand the work back. */
+  interruptedTaskId?: number | null;
+  interruptedTaskNumber?: string | null;
+  promotedToRequestId?: number | null;
+  promotedToRequestNumber?: string | null;
+}
+
+export interface StartQuickWorkDto {
+  title: string;
+  clientName?: string | null;
+  pauseReasonId?: number | null;
+}
+
+export interface FinishQuickWorkDto {
+  outcome: string;
+  resumeInterruptedTask: boolean;
+}
+
+export interface PromoteQuickWorkDto {
+  title?: string | null;
+  description: string;
+  type: RequestType;
+  requestedUrgency: RequestedUrgency;
 }
 
 // --- notifications & audit ----------------------------------------------------------------------

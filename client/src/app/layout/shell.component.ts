@@ -11,6 +11,7 @@ import { AuthService } from '../core/auth.service';
 import { Perm } from '../core/permissions';
 import { NotificationBellComponent } from './notification-bell.component';
 import { ShiftWidgetComponent } from './shift-widget.component';
+import { QuickWorkWidgetComponent } from './quick-work-widget.component';
 
 interface NavItem {
   label: string;
@@ -27,7 +28,7 @@ interface NavItem {
   imports: [
     RouterOutlet, RouterLink, RouterLinkActive, MatIconModule, MatButtonModule, MatMenuModule,
     MatBadgeModule, MatTooltipModule, MatSidenavModule, MatDividerModule,
-    NotificationBellComponent, ShiftWidgetComponent,
+    NotificationBellComponent, ShiftWidgetComponent, QuickWorkWidgetComponent,
   ],
   template: `
     <div class="shell" [class.nav-open]="navOpen()" [class.rail]="collapsed()">
@@ -67,6 +68,7 @@ interface NavItem {
 
           <div class="spacer"></div>
 
+          <app-quick-work-widget />
           <app-shift-widget />
           <app-notification-bell />
 

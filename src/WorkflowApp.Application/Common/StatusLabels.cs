@@ -10,8 +10,12 @@ namespace WorkflowApp.Application.Common;
 /// This is the single place that translates, so the server and the UI cannot drift apart in what
 /// they call the same state.
 ///
-/// Kept deliberately plain: "Ready For Assignment" beats "Ready for assignment" for a
-/// reader who has never used workflow software.
+/// Kept deliberately plain: "Waiting to be given out" beats "ReadyForAssignment" for a reader who
+/// has never used workflow software.
+///
+/// The client mirrors this map in <c>client/src/app/core/labels.ts</c>. The two must stay in step:
+/// a state named one thing in an API message and another in a template is worse than either name
+/// on its own. Change a label here and there in the same edit.
 /// </summary>
 public static class StatusLabels
 {
@@ -22,16 +26,16 @@ public static class StatusLabels
             [WorkTaskStatus.AwaitingReview] = "Waiting for review",
             [WorkTaskStatus.ClarificationRequired] = "Needs information",
             [WorkTaskStatus.Approved] = "Approved",
-            [WorkTaskStatus.ReadyForAssignment] = "Ready For Assignment",
+            [WorkTaskStatus.ReadyForAssignment] = "Waiting to be given out",
             [WorkTaskStatus.Assigned] = "Assigned",
             [WorkTaskStatus.ReadyToStart] = "Ready to start",
-            [WorkTaskStatus.InProgress] = "In Progress",
+            [WorkTaskStatus.InProgress] = "In progress",
             [WorkTaskStatus.Paused] = "Paused",
-            [WorkTaskStatus.Blocked] = "Blocked",
-            [WorkTaskStatus.CompletedReadyForQC] = "Ready For QC",
-            [WorkTaskStatus.QCReview] = "QC Review",
+            [WorkTaskStatus.Blocked] = "Cannot continue",
+            [WorkTaskStatus.CompletedReadyForQC] = "Waiting for quality check",
+            [WorkTaskStatus.QCReview] = "Being checked",
             [WorkTaskStatus.QCFailedRework] = "Needs fixing",
-            [WorkTaskStatus.QCPassed] = "QC Passed",
+            [WorkTaskStatus.QCPassed] = "Passed the check",
             [WorkTaskStatus.ReadyForClosure] = "Ready to close",
             [WorkTaskStatus.Closed] = "Closed",
             [WorkTaskStatus.Cancelled] = "Cancelled",

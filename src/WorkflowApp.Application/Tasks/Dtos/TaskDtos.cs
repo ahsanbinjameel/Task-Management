@@ -116,11 +116,19 @@ public sealed record TaskSummaryDto(
     string? QCUserDisplayName = null,
     IReadOnlyList<string>? SupportPeople = null);
 
+/// <summary>
+/// A status transition, from-and-to. This is the *technical* trail: it is the shape of the state
+/// machine written down, and it says `CompletedReadyForQC -> QCReview` because that is what
+/// happened. Read by people who run the process. The readable account is
+/// <see cref="TaskActivityDto"/>.
+/// </summary>
 public sealed record StatusHistoryDto(
     long Id,
     WorkTaskStatus FromStatus,
     WorkTaskStatus ToStatus,
     long ChangedByUserId,
+    /// <summary>Named, not numbered — a trail of user ids is a trail nobody can read.</summary>
+    string? ChangedByDisplayName,
     DateTimeOffset ChangedAt,
     string? Reason,
     bool WasOverride);
@@ -128,15 +136,27 @@ public sealed record StatusHistoryDto(
 public sealed record AssignmentHistoryDto(
     long Id,
     long? FromUserId,
+    string? FromDisplayName,
     long? ToUserId,
+    string? ToDisplayName,
     long AssignedByUserId,
+    string? AssignedByDisplayName,
     DateTimeOffset AssignedAt,
     string? Reason);
 
+/// <summary>
+/// What happened, in a sentence, in the order it happened. The account a person reads.
+///
+/// Deliberately distinct from both <see cref="StatusHistoryDto"/> (the state machine's own record)
+/// and the audit log (the administrator's before-and-after). One story per audience: merging them
+/// produced a timeline where "Wu started work" sat between two rows of enum names, and the reader
+/// had to filter it themselves every time.
+/// </summary>
 public sealed record TaskActivityDto(
     long Id,
     ActivityType Type,
     long ActorUserId,
+    string? ActorDisplayName,
     DateTimeOffset OccurredAt,
     string Description);
 
@@ -176,7 +196,24 @@ public sealed record RequestContextDto(
     string? CurrentResult,
     string? ReproductionSteps,
     /// <summary>Files attached to the request — usually the screenshots.</summary>
-    IReadOnlyList<AttachmentDto> Attachments);
+    IReadOnlyList<AttachmentDto> Attachments,
+    /// <summary>The submission this arrived in, when it arrived alongside others.</summary>
+    long? BatchId = null,
+    string? BatchNumber = null,
+    /// <summary>
+    /// The other requests folded into this same task, if a reviewer combined several. A worker
+    /// handed three folded items has to be able to see that three separate things were asked for —
+    /// otherwise "done" gets declared when only the first one is.
+    /// </summary>
+    IReadOnlyList<FoldedRequestDto>? FoldedWith = null);
+
+/// <summary>One of the other requests a reviewer folded into the same task.</summary>
+public sealed record FoldedRequestDto(
+    long RequestId,
+    string RequestNumber,
+    string Title,
+    string Description,
+    string RequestedByDisplayName);
 
 public sealed record TaskDetailDto(
     long Id,
@@ -219,7 +256,20 @@ public sealed record TaskDetailDto(
     IReadOnlyList<string> BlockedBy,
     string? RowVersion,
     /// <summary>Where this work came from. Null for a task with no request behind it.</summary>
-    RequestContextDto? Request = null);
+    RequestContextDto? Request = null,
+    /// <summary>
+    /// What the responsible person attached as proof the work is done.
+    ///
+    /// Kept apart from the request's own screenshots, which describe the problem rather than the
+    /// fix. Merged into one list they would be indistinguishable, and "show me the evidence this
+    /// was actually done" — the question a closure decision turns on — could not be asked.
+    ///
+    /// Append-only, like everything else here: work that failed a check and was completed again
+    /// keeps both sets, oldest first, so a reader can see what changed between the attempts.
+    /// </summary>
+    IReadOnlyList<Requests.Dtos.AttachmentDto>? CompletionProof = null,
+    /// <summary>Files added to the task for context, rather than as proof of anything.</summary>
+    IReadOnlyList<Requests.Dtos.AttachmentDto>? Attachments = null);
 
 /// <summary>
 /// Someone helping with a task who does not own it.

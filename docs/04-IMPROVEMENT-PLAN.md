@@ -77,7 +77,7 @@ Everything downstream depends on these. Done once, centrally.
 
 | # | Work | Covers |
 |---|---|---|
-| A1 🚧 | **Wording layer.** *`StatusLabels` (server) is the first half — status names now translate in one place.*  One source-of-truth map of status/role/action labels + supporting text, so terminology is changed in one file rather than scattered across 47 components. | 22, and the label half of 1, 5, 7, 23, 24 |
+| A1 ✅ | **Wording layer.** `StatusLabels` (server) and `core/labels.ts` (client), kept identical by hand and by comment. Statuses, roles, actions, request types, comment categories, dependency types, pause categories, QC results. | 22, and the label half of 1, 5, 7, 23, 24 |
 | A2 ✅ | **Form/dialog inversion.**  Shared `FormDialogBase`: dialog owns submit, stays open on error, maps `ProblemDetails` → inline field errors, focuses first invalid field, never resets input. | 1 |
 | A3 ✅ | **Human error messages.**  Map stable error codes (`closure.not_ready_to_close`, `qc.criteria_unmet`, …) to plain sentences that say what to do next. Feeds A2 and the toast path. | 24, 17 |
 | A4 ✅ | **Real-time hygiene.**  `takeUntilDestroyed` on every subscription; subscribe the screens that are missing (dashboard first); de-duplicate bursts. | 8 |
@@ -104,28 +104,28 @@ Server-side changes; several need a migration.
 | C3 ✅ | **Pause reason.** Category (existing lookup) + free-text details, both persisted, both reportable. | 12 |
 | C4 ✅ | **Client on task.** Surface Client/Project/Module at creation and through detail, assignment, reports, filters. | 19 |
 | C5 ✅ | **Request edit before approval.** Editable fields pre-approval, change history, reviewer notification, blocked after approval. | 3 |
-| C6 | **Quick Work.** New lightweight entity + lifecycle: start in seconds, auto-pause current task, record interruption, resume, outcome, optional promotion to a real Request/Task, appears in daily report. | 15 |
+| C6 ✅ | **Quick Work.** New entity + lifecycle: start in seconds, auto-pause the running task, record the interruption, resume, outcome, optional promotion to a Request, on the daily report. | 15 |
 
 ## Phase D — Experience
 
 | # | Work | Covers |
 |---|---|---|
 | D1 ✅ | QC redesign: Pass / Fail / N/A per criterion, three outcomes with required explanations | 14 |
-| D2 | Dashboard split: **Needs Attention** vs **Recent Activity** | 5 |
-| D3 🚧 | Status tiles with counts on Tasks and Requests ✅; navigation depth review still open | 7 |
+| D2 ✅ | Dashboard split: **Needs Attention** vs **Recent Activity**, both server-derived from the caller's permissions | 5 |
+| D3 ✅ | Status tiles with counts on Tasks and Requests; depth cut by the home attention list and URL-backed task tabs | 7 |
 | D4 ✅ | Notification matrix per role (RC4) with unread count, mark read, deep links | 9 |
-| D5 | Role-scoped task detail — sections, fields and actions per role, enforced server-side too | 10, 11 |
-| D6 | Split user-facing activity history from technical audit | 16 |
-| D7 | Empty states that explain and offer the next action | 23 |
-| D8 | Responsive pass: overlap, wrapping, tables, modal scroll, mobile layouts | 2 |
-| D9 | Confirmation dialogs on destructive/irreversible actions | closing note |
+| D5 ✅ | Role-scoped task detail — the client hides the panels, the server empties them, and the detail endpoint is scoped like the list | 10, 11 |
+| D6 ✅ | Three records, three audiences: the readable stream, the status trail, the audit log | 16 |
+| D7 ✅ | Empty states that explain and offer the next action | 23 |
+| D8 ✅ | Responsive pass: card-list rows wrap, no page scrolls sideways at 390px | 2 |
+| D9 ✅ | Confirmation dialogs on destructive/irreversible actions | closing note |
 
 ## Phase E — Reporting
 
 | # | Work | Covers |
 |---|---|---|
-| E1 | Purpose-built PDF export (header, summary, work detail, quick work, interruptions, notes, page numbers) | 18 |
-| E2 🚧 | Reports separate owned work / supported work *(quick work still to come)* | 21 |
+| E1 ✅ | Purpose-built PDF export (header, summary, work detail, quick work, interruptions, notes, page numbers) | 18 |
+| E2 ✅ | Reports separate owned work / supported work / quick work, and count interruptions | 21 |
 
 ## Phase F — Scenario testing
 
@@ -587,6 +587,171 @@ Cannot continue, Waiting to be given out. Internal names untouched — they are 
 > immediately, and a reminder that renames need to be scoped to template text rather than run
 > across a whole file.
 
+
+### 2026-08-24 — the rest of the plan: A1, C6, D2–D9, E1, E2, F
+
+292 tests green (+18); both builds clean; driven end to end against SQL Server and headlessly
+through the UI. Everything left in Phases A–E is done.
+
+#### A1 — the wording layer, finished
+
+`core/labels.ts` is the client half and mirrors `StatusLabels` on the server; both files carry a
+comment saying so, because two copies of a name is exactly how "Cannot continue" becomes "Blocked"
+on one screen. It covers statuses, request statuses, roles, actions, request types, urgency,
+workforce states, comment categories, dependency types, pause categories, QC results and session
+statuses. `humanizeEnum` survives as the *fallback* for a value with no translation, not as the
+translation.
+
+Three copies of the same PascalCase splitter were in the codebase; there is now one. The server's
+labels moved to the agreed plain wording (`ReadyForAssignment` → "Waiting to be given out",
+`CompletedReadyForQC` → "Waiting for quality check"), so API messages and templates say the same
+thing.
+
+> Urgency deliberately reads with the **same four words as priority**. Urgency is what the requester
+> asked for and priority is what was agreed — they have to be comparable at a glance, and a value
+> reading "Needed immediately" in one column and "Critical" in the next is a difference that is not
+> there.
+
+#### D2 — the dashboard says what to do, then what happened
+
+`GET /api/dashboards/home` returns two lists. **Needs your attention** is a to-do list: every row
+carries the *reason* it is there ("Came back from the quality check and needs fixing", "Needs
+someone to do it", "Waiting 3 days"), written by the server so the wording cannot drift.
+**Recent activity** is news, past tense, nothing to act on.
+
+The rows a caller gets come from their permissions, not a role name, so someone who both works and
+coordinates sees both kinds. A task that qualifies twice — overdue *and* needing an unblock —
+appears once, under the stronger reason.
+
+> **Found by running it, not by reading it:** a worker's own **Paused** task reached none of the
+> rules, so someone with three paused tasks was told nothing was waiting on them. Paused is the
+> commonest state for a worker's own work — it is where everything Quick Work interrupts lands.
+
+#### D3 — task tabs live in the URL
+
+`?tab=qc` opens the quality check directly, Back walks the tabs, and a link in a notification can
+point at the part of the task it is about. It also removed a live bug: `tabIndex.set(2)` after
+starting a QC review was only ever correct by coincidence, because the tab list is conditional.
+
+#### D5 — the task detail is scoped where it counts
+
+Two halves, and only one of them existed before:
+
+- **The endpoint was open.** The task *list* was scoped to work someone is part of, but
+  `GET /api/tasks/{id}` took an id and answered — anyone signed in could walk a URL through every
+  task in the system. It now applies the same three clauses as the list, and answers **404, not
+  403**: "you may not see this" still confirms the task exists.
+- **The payload is scoped by audience.** A requester following their own work through to the task
+  gets what it is and how far along it is — not the estimate, the sitting-by-sitting timings, the
+  reassignment trail or what a checker wrote about a colleague's work. The client hides those
+  panels *and* the server empties them, because one without the other is either a lie or a leak.
+
+#### D6 — three records, three audiences
+
+`TaskActivity` is the account a person reads. `StatusHistory` is the state machine's own record.
+`AuditLog` is the administrator's before-and-after, and stays on its own screen behind its own
+permission. The History tab used to be one list built by re-deriving sentences from the technical
+rows; now the readable stream is shown as written and the technical trail is one toggle away,
+offered only to people who run the process.
+
+All three streams now carry **names** rather than user ids, resolved in one query rather than one
+per row.
+
+> **Found by running it:** the readable stream said *"Assigned to user 36."* — a user id, in the one
+> stream written specifically to be read. It now says *"Moved from Wu Chen to Hunzala Waseem"*.
+> The old rows keep their old wording, because the log is append-only and that is the point.
+
+#### C6 — Quick Work
+
+The phone call, the person at your desk, the five minutes that became forty. A new entity, not a
+`WorkTask`: a task carries a lifecycle, an assignee, a quality check and a closure checklist, and
+every one of those would have to be given a meaningless answer here.
+
+Three rules keep it from being a back door:
+
+| | |
+|---|---|
+| One thing at a time still holds | Starting it pauses the running task through the same close-then-open sequence the task interrupt uses, in one commit. `UX_QuickWork_OneActivePerUser` backs it at the database level — **verified by raw insert**, which SQL Server refused |
+| Promotion produces a **request**, never a task | `TaskCreationService` keeps its monopoly. Verified live: promoting created a `Submitted` request and the task count did not move |
+| An outcome is required to finish | A record of forty busy minutes and nothing else inflates the day and answers nothing. A mis-click is *cancelled* — kept as history, struck through on screen, and excluded from every total |
+
+The interrupted session keeps its recorded time and is flagged `EndedByInterruption`; the task goes
+to **Paused, not Blocked** (nothing is wrong with it, it simply waited); the worker stays
+**Working**, because they are. `InterruptedByTaskId` is deliberately left null — it means
+"displaced by *that task*", and a quick-work id in it would make every reader of the column wrong.
+`QuickWork.InterruptedTaskId` is the sibling column the C3 pass predicted would be needed.
+
+> **A permission I got wrong, found by running it.** Promotion is gated on `Request.Create`, which
+> is right — it creates a request. But the Worker role did not hold it, so the feature was dead for
+> the only role it was built for: promoting returned 403. The fix is the role, not the gate. Worker
+> now has `Request.Create` and `Request.ViewOwn`, backfilled by the seeder on restart. A worker who
+> fields a call and finds real work behind it has to be able to put it into the system, and can now
+> follow what they raised without being able to browse anyone else's.
+
+#### E2 — the day adds up
+
+`DailyUserReportDto` gained `QuickWork`, `QuickWorkTime` and `Interruptions`. Its own line, not
+folded into owned or support work, because it is neither — and because a day reading as six hours
+of work in an eight-hour shift with no explanation is the complaint that produced the feature.
+Interruptions are counted from the work sessions rather than from quick work alone, so the figure
+covers being displaced by another task as well as by a phone call. The CSV gained three columns;
+the per-item detail stays on the report, because a spreadsheet row cannot carry a variable number
+of phone calls.
+
+#### E1 — a PDF worth handing to someone
+
+`PDFsharp-MigraDoc`, MIT-licensed, so there is no revenue condition to keep track of. Header,
+summary strip, work detail, work they helped with, quick work, notes, and **"Page 2 of 7"** on
+every page — a printed page with no number is a page nobody can put back. Table headers repeat when
+a table breaks across a page. The renderer lives in the API layer: PDF is a transport format like
+CSV or JSON, and the Application layer should not know how numbers are drawn.
+
+`GET /api/reports/{me,team,users/{id}}/daily.pdf`.
+
+> PDFsharp 6's cross-platform build ships **no font handling at all** and throws at render time, not
+> at startup. `FileSystemFontResolver` reads TrueType files off the machine, trying Segoe UI, Arial,
+> DejaVu and Liberation in order, and `EnsureAvailable()` fails at startup with the list it looked
+> for. Every unknown family falls back to the resolved default rather than returning null — MigraDoc
+> asks for "Courier New" for its own internal error font, and a null there turns a missing italic
+> into an unhandled exception.
+
+#### D7, D8, D9
+
+- **D7.** Every empty state says why it is empty; the ones with a real next step offer it as a
+  button. Left off where nothing the reader can do would change the answer — "nobody is on shift"
+  is a fact about other people, not an invitation.
+- **D8.** The tables were already wrapped in `.table-scroll` and the dialogs already sized
+  themselves with `min(px, vw)`. What was left was the *card-list* rows: flex rows carrying a name,
+  a chip, a link and sometimes a button, with no `flex-wrap` and in one case a hard `min-width:
+  190px` that pushed the page sideways on a phone.
+- **D9.** Closing a task now asks (reopening already did, and reopening is the harder of the two:
+  a separate permission, a written reason, and a fresh quality check). So do deactivating an
+  account — and the toggle is put back if the answer is no — removing a dependency link, and
+  ending your own shift.
+
+#### Verified
+
+Live against SQL Server, 52 API checks and 25 UI checks, all passing:
+
+- [x] `QuickWork` migration applied; `UX_QuickWork_OneActivePerUser` present with `([Status]=(0))`,
+      `RowVersion` a real `timestamp`
+- [x] Raw insert of a second active row **refused by the database**; a finished row alongside an
+      active one still allowed
+- [x] Timer running → quick work → task Paused, session kept with `EndedByInterruption`, 50 minutes
+      intact → finish with outcome → task back to `InProgress` on a **fresh** session
+- [x] Second quick work refused; blank outcome refused; somebody else's record refused 403
+- [x] Promotion created a request and **no** task; a second promotion refused
+- [x] Unrelated worker reading a task by id gets **404**; requester gets the task with no sessions,
+      no history, no estimate, no worked total — and the coordinator gets it whole
+- [x] All three history streams name people; a new assignment reads "Moved from X to Y"
+- [x] Daily report, CSV columns, and three PDFs (person, team, empty day) — page numbering checked
+      across a 5-page document by extracting the text
+- [x] UI: both dashboard lists, quick-work dialog, URL-backed tabs with Back, the history toggle
+      shown to a coordinator and hidden from a worker, empty states, and **no horizontal scroll at
+      390px** on four screens — with no console errors anywhere
+
+**Still open at the time of writing:** Round 3's multi-item requests (29–37) and the quick-view drawer (18). Both landed the same day — see the entry at the end.
+
 ---
 
 # Round 3 — Requests, Tasks & New Request UX (49 items)
@@ -615,8 +780,8 @@ state it has, and every rule is still enforced server-side. What changes is who 
 | 38–44 | Attachments: thumbnails, viewer, paste, drag-drop | ✅ |
 | 45 | Client picker | ✅ (project/module dropped — see below) |
 | 46 | Responsive | ✅ |
-| 29–37 | Multi-item requests (batch) | ⛔ |
-| 18 | Desktop quick-view drawer | ⛔ (explicitly optional in the brief) |
+| 29–37 | Multi-item requests (batch) | ✅ |
+| 18 | Desktop quick-view drawer | ✅ (read-only by design — see below) |
 
 ## Decisions this round
 
@@ -698,15 +863,133 @@ Driven headlessly (Playwright/Chromium) against the live API:
 - [x] 390px wide: no horizontal overflow on any of the changed screens
 - [x] 274 server tests still pass; no console errors on any screen exercised
 
-## Still to do
+## 2026-08-24 — the last two: multi-item requests and the quick-view drawer
 
-**Multi-item requests (29–37).** The only part needing a schema change: a batch groups items, each
-item is independently reviewable, and a reviewer may fold several approved items into one task
-while traceability (`batch → item → task`) survives. Sketch: `Request` gains a nullable `BatchId`
-and an ordinal, a `RequestBatch` holds the shared client/note/attachments, triage acts per item,
-and `TaskCreationService` keeps its monopoly on creating work — it simply accepts more than one
-request as the origin. Not started.
+307 tests green (+15); both builds clean; 28 API checks and 26 UI checks against SQL Server, all
+passing. **Every item in this plan is now done.**
 
-**Quick-view drawer (18).** The brief marks it optional and warns against duplicating detail-page
-logic. Deferred until the rest has been used in anger.
+### Multi-item requests (29–37)
 
+`RequestBatch` holds what several requests share — a title, a note, a client and the files. Each
+item is a full `Request` with its own number, its own status and its own triage decision.
+
+**The batch carries no status of its own,** and that is the design rather than an omission. A batch
+is a wrapper, not a unit of work: a reviewer can approve three items, reject one and ask a question
+about the rest, and any status on the wrapper would have to be either a lie or a summary — and a
+summary is something a screen can compute. So everything that already worked keeps working on a
+batch item without knowing batches exist: the review queue, clarifications, editing before
+approval, notifications, the requester's progress view.
+
+**Folding needed no new schema.** `Request.GeneratedTaskId` already answered "which task did my
+request become", and nothing stopped several requests answering with the same task;
+`WorkTask.RequestId` answers the other direction with the item the task was raised from. A join
+table would have been a second place to keep one fact — and because the fold rides on the column
+every existing read path already uses, the *second* item reports the shared task's progress to its
+requester with no extra code at all.
+
+| Decision | |
+|---|---|
+| The client is **copied** onto each item, not read through the batch | An item corrected at triage must not drag its siblings with it — which is exactly what happens when eight month-end problems turn out to belong to two clients |
+| The **highest** urgency across folded items wins | Taking the first, or averaging, would let a critical item be quietly downgraded by being submitted next to a trivial one |
+| **One audit row per item**, not one for the fold | An administrator asking "who approved REQ-000031" must find an answer against that request, not a batch operation they then have to unpick |
+| **One notification** for the batch, not one per item | Eight bells for one submission is how people learn to ignore the bell |
+| Every item's words go into the folded task's **description** | A worker handed three folded requests will otherwise finish the first and call it done |
+| Folding is limited to **one batch** | The items arrived together and were judged together; combining unrelated requests would make the task's provenance unreadable, and no screen would show it |
+
+Nothing about the workflow changed. A batch cannot become a task; its items become tasks, and only
+through triage approval — `TaskCreationService` keeps its monopoly, and folding calls it once.
+
+The form asks for one thing until told otherwise: "Ask for something else too" turns the single
+request into the first item of a list. The optional detail fields belong to that first item and are
+folded into its description under their own headings on submit, so nothing typed is discarded and
+nothing is sent that the requester cannot see.
+
+> **A duplicate column, caught by reading the migration.** EF could not tell that
+> `Attachment.BatchId` backed `RequestBatch.Attachments` and silently added a second
+> `RequestBatchId` beside it — two columns holding one fact, in a codebase whose comments are
+> largely about avoiding exactly that. Naming the foreign key explicitly fixed it; the migration
+> was removed and regenerated rather than patched.
+
+### Quick-view drawer (18)
+
+The brief asked for it and warned in the same breath against duplicating the detail page. That
+warning is the design: the drawer is **read-only and deliberately incomplete**. It answers "is this
+the one I am looking for?" and nothing else — no tabs, no comments, no timer, no quality check, no
+actions. Each of those would be a second implementation of a screen that already exists, and would
+drift from it within a month.
+
+It holds no logic of its own either. It calls the same endpoint the full page calls and renders a
+handful of fields; everything beyond that is one click away on the page itself. Desktop only —
+below 1100px there is no room for a panel beside a list, and the full page is the better answer.
+
+> **The trigger was in the wrong cell.** It first went into the table's `action` column, which only
+> exists for views that define a primary action — so it vanished on every view that does not. It
+> now has a column of its own, appended by the table rather than named in `list-views`, which also
+> keeps it out of the per-view column lists it has no business being in.
+
+### Verified
+
+- [x] Three items, three request numbers, one batch number from its own `BAT-` sequence
+- [x] Rejecting one item leaves its siblings untouched; the review queue counts what still waits
+      and the batch drops out once every item is decided
+- [x] Two items folded → **one** task; both approved, both pointing at it, each naming the other
+- [x] `batch → item → task` reads from both ends; the task shows the batch and the folded request
+- [x] Highest urgency won (Critical over Normal); both requests are in the task description
+- [x] The folded-in item still reports the shared task's progress to its requester
+- [x] Refusals: already-decided item, item from another batch, unanswered question, missing
+      `Task.Approve`, unrelated worker reading the batch (404), a batch of blanks
+- [x] UI: the form grows from one request to three, the reviewer's checkboxes and fold dialog, the
+      drawer opening without navigating and carrying no tabs, hidden at 390px, no console errors
+
+> Two checks in the *earlier* pass's UI harness failed on this run. Both were the harness's own
+> doing: its assignment-naming check reassigns a task as a side effect, so the worker it later
+> asserted about no longer had one. The paused-task rule was re-verified directly against the API
+> instead. A verification script that mutates the data it later reads is a bad harness, not a
+> regression — worth remembering next time one is written.
+
+
+---
+
+## 2026-08-24 — proof of work and quality-check evidence
+
+The pipeline could carry a screenshot **in** and nothing back **out**. A requester attached the
+picture of the broken invoice; the worker who fixed it, the checker who verified it and the
+coordinator who closed it all had one undifferentiated list of "files on this work" to put anything
+in — so the question a closure decision actually turns on, *show me the evidence this was done*,
+could not be asked of the data at all.
+
+### The shape of it
+
+`AttachmentKind` says what a file is **for**, as distinct from what it hangs off:
+
+| Kind | Who supplies it | Where it is read |
+|---|---|---|
+| `General` | anyone who may see the record | the request's context, the task's own file list |
+| `CompletionProof` | **only** the task's primary assignee | Overview, above the work sessions — the first thing a checker opens |
+| `QCEvidence` | anyone holding `Task.QCReview` | inside the numbered attempt it justified, never loose on the task |
+
+### Decisions
+
+| Decision | |
+|---|---|
+| A **kind**, not a fourth owner column | The file really does belong to the task, and one task holds all three kinds at once. Another owner column would have said the wrong thing twice |
+| Authorised in the **service**, not by an attribute on the controller | "Is this the person responsible for this work" depends on the task, not on the caller. A coordinator holding every permission there is still cannot supply the proof |
+| Evidence is **staged, then adopted** | The attempt does not exist while the checker is still typing, so evidence uploads unclaimed and the verdict ties it in. Scoped to the uploader: two checkers on one task must not have their pictures swept onto each other's verdict |
+| A **refused verdict leaves it staged** | Otherwise a validation failure costs the checker their screenshots and a second trip through the snipping tool |
+| Evidence lives with the **attempt**, not the task | Attempts are append-only. The pictures that justified a failure have to stay with the failure once a later attempt passes — so QC evidence is returned inside its `QCReviewDto` and deliberately left out of both loose lists |
+| The completion nudge is **said, not enforced** | Work whose result is not a screenshot is ordinary. Refusing to accept it without a file would only teach people to attach anything |
+
+`app-attachment-upload` is the client half: the same choose / drag / **paste** the request form's
+drop zone offers, but posting straight onto a record that already exists rather than staging for a
+form that has not been submitted. Nothing to remember to press afterwards.
+
+### Verified
+
+- [x] 11 new application tests (`AttachmentProofTests`); suite at 318
+- [x] `AttachmentProof` migration applied on startup against SQL Server
+- [x] Live over HTTP: checker refused `CompletionProof` (403 `attachment.not_assignee`), worker
+      refused `QCEvidence` (403 `attachment.not_checker`), assignee's proof accepted
+- [x] A fail-then-pass cycle: attempt 1 keeps `attempt-1.png`, attempt 2 keeps `attempt-2.png`,
+      neither leaks into the task's own file lists, and the request's screenshots stay on the request
+- [x] Evidence downloads back byte-for-byte through the authorised endpoint
+- [x] `ng build --configuration production` clean

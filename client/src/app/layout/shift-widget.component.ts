@@ -6,11 +6,15 @@ import { MatMenuModule } from '@angular/material/menu';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatDividerModule } from '@angular/material/divider';
 import { ApiService } from '../core/api.service';
+import { MatDialog } from '@angular/material/dialog';
+import { HttpContext } from '@angular/common/http';
+import { ConfirmDialog, ConfirmData } from '../shared/dialogs';
 import { AuthService } from '../core/auth.service';
 import { RealtimeService, WorkforceChangedEvent } from '../core/realtime.service';
 import { ToastService } from '../core/toast.service';
 import { WorkforceState, WorkforceStatusDto } from '../core/models';
-import { humanizeEnum, workforceTone } from '../core/format';
+import { workforceTone } from '../core/format';
+import { workforceStateLabel } from '../core/labels';
 
 /**
  * The shift and availability control in the top bar.
@@ -66,6 +70,8 @@ import { humanizeEnum, workforceTone } from '../core/format';
   `,
 })
 export class ShiftWidgetComponent implements OnInit {
+  private readonly dialog = inject(MatDialog);
+
   private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(ApiService);
   private readonly auth = inject(AuthService);
@@ -107,14 +113,35 @@ export class ShiftWidgetComponent implements OnInit {
   }
 
   endShift(): void {
-    this.run(this.api.endShift(), 'Shift ended.');
+    // The server refuses this outright while a work session is open, so the dialog is not what
+    // enforces it — it is what stops someone clicking through a menu and then reading a 409 they
+    // did not expect. Ending a shift is also the one action here that cannot be undone: the
+    // session is closed and the day's total is fixed.
+    this.dialog
+      .open<ConfirmDialog, ConfirmData>(ConfirmDialog, {
+        data: {
+          title: 'Finish for the day?',
+          message: this.status()?.state === 'Working'
+            ? 'The timer is still running on a task. Pause or finish that work first, then end '
+              + 'your shift.'
+            : 'Your shift is closed and today\'s hours are final. Starting again opens a new one.',
+          confirmText: 'End my shift',
+          submit: (ctx: HttpContext) => this.api.endShift(ctx),
+        },
+      })
+      .afterClosed()
+      .subscribe((done?: unknown) => {
+        if (!done) return;
+        this.toast.success('Shift ended.');
+        this.load();
+      });
   }
 
   setState(state: WorkforceState): void {
-    this.run(this.api.setWorkforceState(state), `You are now ${humanizeEnum(state).toLowerCase()}.`);
+    this.run(this.api.setWorkforceState(state), `You are now ${workforceStateLabel(state).toLowerCase()}.`);
   }
 
-  label = (state: WorkforceState) => humanizeEnum(state);
+  label = (state: WorkforceState) => workforceStateLabel(state);
 
   icon(state: WorkforceState): string {
     switch (state) {

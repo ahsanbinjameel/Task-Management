@@ -10,7 +10,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { ApiService } from '../../core/api.service';
 import { DailyTimelineDto, DailyUserReportDto } from '../../core/models';
-import { DurationPipe, isoDate } from '../../core/format';
+import { DurationPipe, isoDate, saveBlob } from '../../core/format';
 import {
   EmptyComponent, LoadingComponent, PageHeaderComponent, StatComponent,
 } from '../../shared/ui';
@@ -35,6 +35,9 @@ import {
           <input matInput type="date" [(ngModel)]="date" (change)="load()" />
         </mat-form-field>
         <button matButton (click)="load()"><mat-icon>refresh</mat-icon></button>
+        <button matButton="filled" (click)="exportPdf()">
+          <mat-icon>picture_as_pdf</mat-icon> PDF
+        </button>
       </app-page-header>
 
       @if (loading()) {
@@ -47,6 +50,10 @@ import {
             <app-stat label="Away" [value]="(r.breakTime | duration)" />
             <app-stat label="Tasks worked" [value]="r.tasksWorked" />
             <app-stat label="Completed" [value]="r.tasksCompleted" />
+            <app-stat label="Quick work" [value]="(r.quickWorkTime | duration)"
+                      [hint]="r.interruptions === 1
+                        ? '1 interruption'
+                        : r.interruptions + ' interruptions'" />
           </div>
         }
 
@@ -54,8 +61,8 @@ import {
           <div class="card">
             <div class="card-pad"><h2 class="card-title" style="margin:0">Timeline</h2></div>
             @if (!timeline() || timeline()!.entries.length === 0) {
-              <app-empty message="No activity recorded" icon="schedule"
-                         hint="Start a shift to begin tracking." />
+              <app-empty message="Nothing recorded today" icon="schedule"
+                         hint="Start your shift from the top bar, and your day is tracked from there." />
             } @else {
               @for (entry of timeline()!.entries; track $index) {
                 <div class="entry">
@@ -73,7 +80,9 @@ import {
           <div class="card">
             <div class="card-pad"><h2 class="card-title" style="margin:0">My tasks</h2></div>
             @if (!report() || report()!.ownedWork.length === 0) {
-              <app-empty message="You have not logged time on your own tasks today" icon="timer_off" />
+              <app-empty message="You have not logged time on your own tasks today" icon="timer_off"
+                         hint="Time is recorded when you start the timer on a task."
+                         actionLabel="Open my queue" actionRoute="/my-queue" />
             } @else {
               @for (line of report()!.ownedWork; track line.taskId) {
                 <a class="entry" [routerLink]="['/tasks', line.taskId]">
@@ -87,7 +96,44 @@ import {
             }
           </div>
 
+          <!--
+            Quick work gets a panel of its own rather than a line among the tasks. It is the answer
+            to "where did the other two hours go", and burying it in a list of task numbers would
+            be the same as not showing it.
+          -->
           @if (report(); as r) {
+            @if (r.quickWork.length > 0) {
+              <div class="card">
+                <div class="card-pad">
+                  <h2 class="card-title" style="margin:0">Work that arrived without a request</h2>
+                  <p class="muted small" style="margin:4px 0 0">
+                    Phone calls and walk-ups. Recorded so the day adds up.
+                  </p>
+                </div>
+                @for (q of r.quickWork; track q.id) {
+                  <div class="entry" [class.cancelled]="q.wasCancelled">
+                    <span class="mono small time">{{ q.startedAt | date: 'HH:mm' }}</span>
+                    <div class="label grow">
+                      <div class="truncate">{{ q.title }}</div>
+                      @if (q.outcome) { <div class="muted small truncate">{{ q.outcome }}</div> }
+                    </div>
+                    <span class="spacer"></span>
+                    @if (q.promotedToRequestNumber) {
+                      <span class="chip tone-good nowrap">{{ q.promotedToRequestNumber }}</span>
+                    }
+                    @if (q.interruptedTaskNumber) {
+                      <span class="muted small nowrap">interrupted {{ q.interruptedTaskNumber }}</span>
+                    }
+                    @if (q.wasCancelled) {
+                      <span class="chip tone-muted">Not counted</span>
+                    } @else {
+                      <span class="mono small">{{ q.duration | duration }}</span>
+                    }
+                  </div>
+                }
+              </div>
+            }
+
             @if (r.supportWork.length > 0 || r.supportingOn.length > 0) {
               <div class="card">
                 <div class="card-pad">
@@ -126,8 +172,11 @@ import {
     .two-col { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
     .top-gap { margin-top: 18px; }
     .date { width: 170px; margin-bottom: -1.25em; }
+    .entry .grow { flex: 1 1 auto; min-width: 0; }
+    /* Struck through rather than hidden: a mis-click is history, it just does not count. */
+    .entry.cancelled .label { text-decoration: line-through; color: var(--text-muted); }
     .entry {
-      display: flex; align-items: center; gap: 12px;
+      display: flex; align-items: center; flex-wrap: wrap; gap: 12px;
       padding: 9px 20px; border-top: 1px solid var(--border);
       color: inherit; text-decoration: none; font-size: 13.5px;
     }
@@ -154,6 +203,12 @@ export class MyDayComponent implements OnInit {
       [this.realtime.workforceChanged, this.realtime.taskChanged],
       () => this.load(),
       this.destroyRef);
+  }
+
+  /** The day as something to file or hand over — the same figures the page is showing. */
+  exportPdf(): void {
+    this.api.myDailyPdf(this.date)
+      .subscribe((blob) => saveBlob(blob, `my-day-${this.date}.pdf`));
   }
 
   load(): void {

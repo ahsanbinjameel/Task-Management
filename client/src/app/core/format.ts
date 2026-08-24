@@ -1,5 +1,6 @@
 import { Pipe, PipeTransform } from '@angular/core';
 import { Priority, WorkTaskStatus, WorkforceState } from './models';
+import { LabelKind, humanizeEnum as humanize, label } from './labels';
 
 /**
  * .NET `TimeSpan` serialises as `[-][d.]hh:mm:ss[.fffffff]`. Rendering that raw in a UI is how you
@@ -35,6 +36,22 @@ export function humanizeDuration(ms: number): string {
   return `${hours}h ${minutes}m`;
 }
 
+/**
+ * "3 days" rather than a date. On a queue the question is never "what was Tuesday's date?" — it is
+ * "how long has this been sitting here?", and a date makes the reader do that subtraction.
+ */
+export function sinceLabel(value: string | null | undefined): string {
+  if (!value) return '—';
+
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 60000));
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 60 * 24) return `${Math.floor(minutes / 60)}h`;
+
+  const days = Math.floor(minutes / (60 * 24));
+  return days === 1 ? '1 day' : `${days} days`;
+}
+
 @Pipe({ name: 'duration' })
 export class DurationPipe implements PipeTransform {
   transform(value: string | null | undefined): string {
@@ -42,25 +59,25 @@ export class DurationPipe implements PipeTransform {
   }
 }
 
-/** Splits PascalCase into words but keeps acronym runs: CompletedReadyForQC → "Completed Ready For QC". */
-export function humanizeEnum(value: string | null | undefined): string {
-  if (!value) return '';
-
-  let result = '';
-  for (let i = 0; i < value.length; i++) {
-    const char = value[i];
-    if (i > 0 && char >= 'A' && char <= 'Z' && !(value[i - 1] >= 'A' && value[i - 1] <= 'Z')) {
-      result += ' ';
-    }
-    result += char;
-  }
-  return result;
-}
+/**
+ * The wording layer lives in `labels.ts`. `humanizeEnum` is re-exported here because it was
+ * imported from this file all over the app before the map existed, and it is still the correct
+ * fallback for a value with no translation — a lookup name typed by a user, say.
+ */
+export { humanizeEnum } from './labels';
 
 @Pipe({ name: 'humanize' })
 export class HumanizePipe implements PipeTransform {
   transform(value: string | null | undefined): string {
-    return humanizeEnum(value);
+    return humanize(value);
+  }
+}
+
+/** Renders any enum through the wording layer: `{{ task.status | label: 'status' }}`. */
+@Pipe({ name: 'label' })
+export class LabelPipe implements PipeTransform {
+  transform(value: string | null | undefined, kind: LabelKind = 'plain'): string {
+    return label(kind, value);
   }
 }
 

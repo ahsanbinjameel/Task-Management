@@ -61,7 +61,13 @@ public sealed record QCReviewDto(
     string? Comments,
     string? Environment,
     string? BuildVersion,
-    IReadOnlyList<AcceptanceCriterionDto> Criteria);
+    IReadOnlyList<AcceptanceCriterionDto> Criteria,
+    /// <summary>
+    /// What the checker attached to *this attempt*. Per attempt rather than per task, because
+    /// attempts are append-only: the pictures that justified a failure must stay with the failure
+    /// when a later attempt passes.
+    /// </summary>
+    IReadOnlyList<Requests.Dtos.AttachmentDto>? Attachments = null);
 
 /// <summary>One closure precondition and whether the task currently satisfies it.</summary>
 public sealed record ClosureRequirementDto(string Code, string Description, bool IsMet, string? Detail);

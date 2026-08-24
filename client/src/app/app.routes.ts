@@ -60,6 +60,14 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./features/requests/request-create.component').then((m) => m.RequestCreateComponent),
       },
+      // Ahead of `requests/:id` on purpose: `batches` is not an id, and a route table is matched
+      // in order.
+      {
+        path: 'requests/batches/:id',
+        title: 'Submission',
+        loadComponent: () =>
+          import('./features/requests/batch-detail.component').then((m) => m.BatchDetailComponent),
+      },
       {
         path: 'requests/:id',
         title: 'Request',

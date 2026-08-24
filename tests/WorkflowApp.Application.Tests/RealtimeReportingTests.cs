@@ -375,7 +375,26 @@ public class RealtimeReportingTests
         var header = csv.Split('\n')[0].Trim();
         var row = csv.Split('\n')[1].Trim();
 
-        Assert.Equal(9, header.Split(',').Length);
+        // The row has to have as many fields as the header, counting the way a spreadsheet counts:
+        // a comma inside quotes is part of a name, not a column break. Asserting a fixed number
+        // here would only pin down today's column list, and the failure that produced when Quick
+        // Work added three columns said nothing at all about quoting.
+        Assert.Equal(FieldCount(header), FieldCount(row));
         Assert.Contains("\"Doe, Jane \"\"JD\"\"\"", row);
+    }
+
+    /// <summary>Splits on commas that are outside quotes, the way a CSV reader does.</summary>
+    private static int FieldCount(string line)
+    {
+        var fields = 1;
+        var inQuotes = false;
+
+        foreach (var c in line)
+        {
+            if (c == '"') inQuotes = !inQuotes;
+            else if (c == ',' && !inQuotes) fields++;
+        }
+
+        return fields;
     }
 }

@@ -5,8 +5,9 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatTableModule } from '@angular/material/table';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { ApiService } from '../../core/api.service';
-import { DailyTeamReportDto } from '../../core/models';
+import { DailyTeamReportDto, DailyUserReportDto } from '../../core/models';
 import { DurationPipe, isoDate, saveBlob } from '../../core/format';
 import {
   EmptyComponent, LoadingComponent, PageHeaderComponent, StatComponent,
@@ -17,7 +18,7 @@ import {
   standalone: true,
   imports: [
     FormsModule, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule,
-    MatTableModule, PageHeaderComponent, StatComponent, EmptyComponent, LoadingComponent,
+    MatTableModule, MatTooltipModule, PageHeaderComponent, StatComponent, EmptyComponent, LoadingComponent,
     DurationPipe,
   ],
   template: `
@@ -29,8 +30,11 @@ import {
           <input matInput type="date" [(ngModel)]="date" (change)="load()" />
         </mat-form-field>
         <button matButton (click)="load()"><mat-icon>refresh</mat-icon></button>
-        <button matButton="filled" (click)="exportCsv()">
-          <mat-icon>download</mat-icon> CSV
+        <button matButton (click)="exportCsv()">
+          <mat-icon>table_view</mat-icon> CSV
+        </button>
+        <button matButton="filled" (click)="exportPdf()">
+          <mat-icon>picture_as_pdf</mat-icon> PDF
         </button>
       </app-page-header>
 
@@ -46,7 +50,8 @@ import {
 
         <div class="card top-gap">
           @if (r.users.length === 0) {
-            <app-empty message="Nobody was on shift that day" icon="event_busy" />
+            <app-empty message="Nobody was on shift that day" icon="event_busy"
+                       hint="Pick another date, or check that people are starting their shifts." />
           } @else {
             <div class="table-scroll">
               <table mat-table [dataSource]="r.users">
@@ -74,6 +79,29 @@ import {
                   <th mat-header-cell *matHeaderCellDef>Completed</th>
                   <td mat-cell *matCellDef="let u" class="mono">{{ u.tasksCompleted }}</td>
                 </ng-container>
+                <!--
+                  Quick work earns a column of its own. Folded into "productive" it would be
+                  invisible, and invisible is exactly what it was before.
+                -->
+                <ng-container matColumnDef="quick">
+                  <th mat-header-cell *matHeaderCellDef>Quick work</th>
+                  <td mat-cell *matCellDef="let u" class="mono">
+                    {{ u.quickWorkTime | duration }}
+                    @if (u.interruptions > 0) {
+                      <span class="muted small">· {{ u.interruptions }} interrupted</span>
+                    }
+                  </td>
+                </ng-container>
+                <ng-container matColumnDef="pdf">
+                  <th mat-header-cell *matHeaderCellDef aria-label="Download"></th>
+                  <td mat-cell *matCellDef="let u">
+                    <button matIconButton (click)="exportPerson(u)"
+                            [attr.aria-label]="'Download ' + u.displayName + ' as PDF'"
+                            matTooltip="This person's day as a PDF">
+                      <mat-icon>picture_as_pdf</mat-icon>
+                    </button>
+                  </td>
+                </ng-container>
                 <tr mat-header-row *matHeaderRowDef="columns"></tr>
                 <tr mat-row *matRowDef="let row; columns: columns"></tr>
               </table>
@@ -94,7 +122,7 @@ export class ReportsComponent implements OnInit {
 
   readonly report = signal<DailyTeamReportDto | null>(null);
   readonly loading = signal(true);
-  readonly columns = ['name', 'shift', 'productive', 'break', 'worked', 'completed'];
+  readonly columns = ['name', 'shift', 'productive', 'break', 'worked', 'completed', 'quick', 'pdf'];
 
   date = isoDate();
 
@@ -111,5 +139,15 @@ export class ReportsComponent implements OnInit {
   exportCsv(): void {
     this.api.teamDailyCsv(this.date)
       .subscribe((blob) => saveBlob(blob, `team-daily-${this.date}.csv`));
+  }
+
+  exportPdf(): void {
+    this.api.teamDailyPdf(this.date)
+      .subscribe((blob) => saveBlob(blob, `team-daily-${this.date}.pdf`));
+  }
+
+  exportPerson(user: DailyUserReportDto): void {
+    this.api.userDailyPdf(user.userId, this.date).subscribe((blob) =>
+      saveBlob(blob, `${user.displayName.replace(/\s+/g, '-')}-${this.date}.pdf`));
   }
 }

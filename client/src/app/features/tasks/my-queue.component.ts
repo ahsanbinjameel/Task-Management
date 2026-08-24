@@ -91,7 +91,7 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
     .item.later:hover { opacity: 1; }
     .waiting { margin-right: 8px; }
     .item {
-      display: flex; align-items: center; gap: 14px;
+      display: flex; align-items: center; flex-wrap: wrap; gap: 14px;
       padding: 14px 18px; border-bottom: 1px solid var(--border); background: var(--surface);
     }
     .item:last-child { border-bottom: none; }

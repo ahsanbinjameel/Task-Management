@@ -36,6 +36,17 @@ export class AuthService {
   /** True when the account is on the clock and should see shift controls at all. */
   readonly tracksShift = computed(() => this.has('Workforce.TrackShift'));
 
+  /**
+   * True when this account only asks for work — it neither does it, coordinates it, reviews it nor
+   * checks it. Mirrors `StatusViews.AudienceFor` on the server, which is what decides how much of
+   * a record they are actually sent. The client hides the panels; the server empties them. Both,
+   * because one without the other is either a lie or a leak.
+   */
+  readonly isRequesterOnly = computed(() => !this.hasAny(
+    'Task.Work', 'Task.Assign', 'Task.Review', 'Task.Approve',
+    'Task.QCReview', 'Task.Close', 'Dashboard.Management', 'Reports.View',
+    'Request.ViewAll', 'Workforce.ViewAll'));
+
   get accessToken(): string | null {
     return localStorage.getItem(ACCESS_TOKEN);
   }

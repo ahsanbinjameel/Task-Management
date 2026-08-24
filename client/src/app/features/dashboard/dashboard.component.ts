@@ -11,8 +11,10 @@ import { AuthService } from '../../core/auth.service';
 import { Perm } from '../../core/permissions';
 import { DurationPipe } from '../../core/format';
 import {
-  CoordinatorDashboardDto, ManagementDashboardDto, RequesterDashboardDto, WorkerDashboardDto,
+  AttentionItemDto, CoordinatorDashboardDto, HomeDashboardDto, ManagementDashboardDto,
+  RequesterDashboardDto, WorkerDashboardDto,
 } from '../../core/models';
+import { sinceLabel } from '../../core/format';
 import { ChipComponent, EmptyComponent, PageHeaderComponent, StatComponent } from '../../shared/ui';
 
 /**
@@ -36,6 +38,68 @@ import { ChipComponent, EmptyComponent, PageHeaderComponent, StatComponent } fro
           </a>
         }
       </app-page-header>
+
+      <!-- --- needs attention / recent activity ---------------------------------------------
+           The lead. Everything below this point is context; these two lists are the reason
+           someone opens the page. Kept apart because "you must do this" and "this happened"
+           are answers to different questions, and merging them makes the reader sort them. -->
+      @if (home(); as h) {
+        <div class="two-col lead">
+          <div class="card">
+            <div class="card-pad row">
+              <h2 class="card-title" style="margin:0">Needs your attention</h2>
+              @if (h.totalNeedingAttention > h.needsAttention.length) {
+                <span class="chip tone-neutral">{{ h.totalNeedingAttention }}</span>
+              }
+            </div>
+
+            @if (h.needsAttention.length === 0) {
+              <app-empty message="Nothing is waiting on you" icon="task_alt"
+                         hint="Anything that needs a decision or a pair of hands will appear here." />
+            } @else {
+              @for (item of h.needsAttention; track item.subject + '-' + item.id) {
+                <a class="item attention" [routerLink]="routeFor(item)">
+                  <span class="reason-dot" [class.urgent]="item.isOverdue || item.priority === 'Critical'"></span>
+                  <div class="grow">
+                    <div class="row-1">
+                      <span class="mono muted small">{{ item.number }}</span>
+                      <span class="truncate">{{ item.title }}</span>
+                    </div>
+                    <div class="muted small">
+                      {{ item.reason }} · {{ waiting(item) }}
+                    </div>
+                  </div>
+                  @if (item.isOverdue) { <span class="chip tone-danger nowrap">Overdue</span> }
+                  <app-chip [value]="item.priority" kind="priority" />
+                </a>
+              }
+              @if (h.totalNeedingAttention > h.needsAttention.length) {
+                <div class="item muted small">
+                  and {{ h.totalNeedingAttention - h.needsAttention.length }} more
+                </div>
+              }
+            }
+          </div>
+
+          <div class="card">
+            <div class="card-pad row">
+              <h2 class="card-title" style="margin:0">Recent activity</h2>
+            </div>
+            @if (h.recentActivity.length === 0) {
+              <app-empty message="Nothing has happened yet" icon="history"
+                         hint="Updates to work you are part of show up here." />
+            } @else {
+              @for (entry of h.recentActivity; track entry.subject + '-' + entry.id + '-' + entry.at) {
+                <a class="item activity" [routerLink]="routeFor(entry)">
+                  <span class="mono muted small">{{ entry.number }}</span>
+                  <span class="truncate grow">{{ entry.text }}</span>
+                  <span class="muted small nowrap">{{ ago(entry.at) }}</span>
+                </a>
+              }
+            }
+          </div>
+        </div>
+      }
 
       <!-- --- worker ------------------------------------------------------------------------ -->
       @if (worker(); as w) {
@@ -71,28 +135,6 @@ import { ChipComponent, EmptyComponent, PageHeaderComponent, StatComponent } fro
             <app-stat label="Worked today" [value]="(w.workedToday | duration)" />
           </div>
 
-          <div class="card">
-            <div class="card-pad row">
-              <h2 class="card-title" style="margin:0">Next up</h2>
-              <span class="spacer"></span>
-              <a matButton routerLink="/my-queue">Open my queue</a>
-            </div>
-            @if (w.queue.length === 0) {
-              <app-empty message="Nothing assigned to you" icon="task_alt"
-                         hint="Work appears here once a coordinator assigns it." />
-            } @else {
-              @for (item of w.queue; track item.id) {
-                <a class="item" [routerLink]="['/tasks', item.id]">
-                  <span class="mono muted small">{{ item.number }}</span>
-                  <span class="truncate">{{ item.title }}</span>
-                  <span class="spacer"></span>
-                  <app-chip [value]="item.priority" kind="priority" />
-                  <app-chip [value]="item.status" kind="status" />
-                  @if (item.isOverdue) { <span class="chip tone-danger">Overdue</span> }
-                </a>
-              }
-            }
-          </div>
         </section>
       }
 
@@ -100,6 +142,9 @@ import { ChipComponent, EmptyComponent, PageHeaderComponent, StatComponent } fro
       @if (coordinator(); as c) {
         <section class="stack section-gap">
           <h2 class="section-title">Coordination</h2>
+          <p class="section-note muted small">
+            The shape of the floor. Anything needing you personally is in the list above.
+          </p>
 
           <div class="stats">
             <app-stat label="Awaiting review" [value]="c.awaitingReviewCount" />
@@ -119,7 +164,8 @@ import { ChipComponent, EmptyComponent, PageHeaderComponent, StatComponent } fro
                 <a matButton routerLink="/assignment">Assign</a>
               </div>
               @if (c.unassigned.length === 0) {
-                <app-empty message="Everything is assigned" icon="done_all" />
+                <app-empty message="Everything is assigned" icon="done_all"
+                           hint="Approved work with nobody on it would appear here." />
               } @else {
                 @for (item of c.unassigned; track item.id) {
                   <a class="item" [routerLink]="['/tasks', item.id]">
@@ -135,7 +181,8 @@ import { ChipComponent, EmptyComponent, PageHeaderComponent, StatComponent } fro
             <div class="card">
               <div class="card-pad"><h2 class="card-title" style="margin:0">Overdue</h2></div>
               @if (c.overdue.length === 0) {
-                <app-empty message="Nothing is late" icon="schedule" />
+                <app-empty message="Nothing is late" icon="schedule"
+                           hint="Work past its due date would appear here." />
               } @else {
                 @for (item of c.overdue; track item.id) {
                   <a class="item" [routerLink]="['/tasks', item.id]">
@@ -201,6 +248,7 @@ import { ChipComponent, EmptyComponent, PageHeaderComponent, StatComponent } fro
       @if (requester(); as r) {
         <section class="stack section-gap">
           <h2 class="section-title">My requests</h2>
+          <p class="section-note muted small">Where everything you have asked for got to.</p>
 
           <div class="stats">
             <app-stat label="Submitted" [value]="r.submittedCount" />
@@ -220,14 +268,15 @@ import { ChipComponent, EmptyComponent, PageHeaderComponent, StatComponent } fro
             </div>
             @if (r.recent.length === 0) {
               <app-empty message="You have not raised anything yet" icon="inbox"
-                         hint="Use New request to get something into the queue." />
+                         hint="Anything you ask for shows up here, with its progress."
+                         actionLabel="Raise a request" actionRoute="/requests/new" />
             } @else {
               @for (item of r.recent; track item.id) {
                 <a class="item" [routerLink]="['/requests', item.id]">
                   <span class="mono muted small">{{ item.number }}</span>
                   <span class="truncate">{{ item.title }}</span>
                   <span class="spacer"></span>
-                  <app-chip [value]="item.status" />
+                  <app-chip [value]="item.status" kind="requestStatus" />
                 </a>
               }
             }
@@ -247,22 +296,32 @@ import { ChipComponent, EmptyComponent, PageHeaderComponent, StatComponent } fro
       font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -0.01em;
     }
     .item {
-      display: flex; align-items: center; gap: 12px;
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
       padding: 11px 20px; border-top: 1px solid var(--border);
       color: inherit; text-decoration: none; font-size: 13.5px;
     }
     .item:hover { background: var(--surface-sunken); }
+    .lead .card { display: flex; flex-direction: column; }
+    .item.attention { align-items: flex-start; padding: 12px 20px; }
+    .item .grow { flex: 1 1 auto; min-width: 0; }
+    .item .row-1 { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+    .reason-dot {
+      flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; margin-top: 6px;
+      background: var(--text-muted);
+    }
+    .reason-dot.urgent { background: var(--tone-danger-fg); }
+    .section-note { margin: 2px 0 0; }
     .item .mono { flex: 0 0 auto; }
     .running-banner, .off-shift {
       display: flex; align-items: center; gap: 14px; padding: 16px 20px;
-      color: inherit; text-decoration: none;
+      color: inherit; text-decoration: none; flex-wrap: wrap;
     }
     .running-banner { border-left: 3px solid var(--tone-running-fg); }
     .running-banner mat-icon { color: var(--tone-running-fg); }
     .off-shift { border-left: 3px solid var(--tone-warn-fg); }
     .off-shift mat-icon { color: var(--tone-warn-fg); }
     .bar-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
-    .bar-label { flex: 0 0 130px; font-size: 13px; }
+    .bar-label { flex: 0 1 130px; min-width: 88px; font-size: 13px; }
     .bar { flex: 1 1 auto; height: 8px; border-radius: 999px; background: var(--surface-sunken); }
     .bar i { display: block; height: 100%; border-radius: 999px; background: #1d69d4; }
   `,
@@ -274,6 +333,7 @@ export class DashboardComponent implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
   readonly Perm = Perm;
 
+  readonly home = signal<HomeDashboardDto | null>(null);
   readonly worker = signal<WorkerDashboardDto | null>(null);
   readonly coordinator = signal<CoordinatorDashboardDto | null>(null);
   readonly management = signal<ManagementDashboardDto | null>(null);
@@ -309,6 +369,10 @@ export class DashboardComponent implements OnInit {
 
   /** Reloads only the panels this user can actually see. */
   private load(): void {
+    // Not gated on a permission: everyone has a home screen, and the server decides what goes in
+    // it from the caller's own token. A client-side gate here would only be a second, wronger copy.
+    this.api.homeDashboard().subscribe((d) => this.home.set(d));
+
     if (this.auth.has(Perm.taskWork)) {
       this.api.workerDashboard().subscribe((d) => this.worker.set(d));
     }
@@ -322,6 +386,16 @@ export class DashboardComponent implements OnInit {
       this.api.requesterDashboard().subscribe((d) => this.requester.set(d));
     }
   }
+
+  /** Links are built from the subject rather than guessed from the number's prefix. */
+  routeFor(item: { subject: string; id: number }): unknown[] {
+    return item.subject === 'Request' ? ['/requests', item.id] : ['/tasks', item.id];
+  }
+
+  /** "waiting 3 days" — the reason a row is worth acting on now rather than eventually. */
+  waiting = (item: AttentionItemDto) => `waiting ${sinceLabel(item.since)}`;
+
+  ago = (at: string) => sinceLabel(at) + ' ago';
 
   percent = (value: number) => `${Math.round(value * 100)}%`;
 

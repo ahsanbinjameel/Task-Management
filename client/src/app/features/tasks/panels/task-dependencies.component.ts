@@ -7,11 +7,14 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { ApiService } from '../../../core/api.service';
+import { MatDialog } from '@angular/material/dialog';
+import { HttpContext } from '@angular/common/http';
+import { ConfirmDialog, ConfirmData } from '../../../shared/dialogs';
 import { AuthService } from '../../../core/auth.service';
 import { ToastService } from '../../../core/toast.service';
 import { Perm } from '../../../core/permissions';
 import { DependencyType, TaskDependencyGraphDto, TaskSummaryDto } from '../../../core/models';
-import { humanizeEnum } from '../../../core/format';
+import { dependencyTypeLabel } from '../../../core/labels';
 import { SearchSelectComponent, SelectOption } from '../../../shared/search-select.component';
 import { ChipComponent, EmptyComponent } from '../../../shared/ui';
 
@@ -67,7 +70,8 @@ import { ChipComponent, EmptyComponent } from '../../../shared/ui';
         <div class="card">
           <div class="card-pad"><h2 class="card-title" style="margin:0">This task…</h2></div>
           @if (g.outgoing.length === 0) {
-            <app-empty message="No links from this task" icon="link" />
+            <app-empty message="Nothing is linked to this task" icon="link"
+                       hint="Link work that has to happen first, or that this one holds up." />
           } @else {
             @for (dep of g.outgoing; track dep.id) {
               <div class="dep">
@@ -80,7 +84,7 @@ import { ChipComponent, EmptyComponent } from '../../../shared/ui';
                 <span class="spacer"></span>
                 <app-chip [value]="dep.relatedTaskStatus" kind="status" />
                 @if (canEdit) {
-                  <button matIconButton (click)="remove(dep.id)" matTooltip="Remove link">
+                  <button matIconButton (click)="remove(dep.id, dep.relatedTaskNumber)" matTooltip="Remove link">
                     <mat-icon>close</mat-icon>
                   </button>
                 }
@@ -108,13 +112,13 @@ import { ChipComponent, EmptyComponent } from '../../../shared/ui';
   `,
   styles: `
     .banner {
-      display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+      display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 16px;
       border-radius: var(--radius); background: var(--tone-danger-bg); color: var(--tone-danger-fg);
     }
     .grow { flex: 1 1 220px; margin-bottom: -1.25em; }
     .type { width: 240px; margin-bottom: -1.25em; }
     .result, .dep {
-      display: flex; align-items: center; gap: 10px;
+      display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
       padding: 9px 20px; border-top: 1px solid var(--border);
     }
     .result { padding-left: 0; padding-right: 0; }
@@ -122,6 +126,8 @@ import { ChipComponent, EmptyComponent } from '../../../shared/ui';
   `,
 })
 export class TaskDependenciesComponent implements OnInit {
+  private readonly dialog = inject(MatDialog);
+
   readonly taskId = input.required<number>();
   readonly changed = output<void>();
 
@@ -143,7 +149,7 @@ export class TaskDependenciesComponent implements OnInit {
     { value: 'Duplicate', label: 'Duplicate of' },
   ];
 
-  label = (value: string) => humanizeEnum(value);
+  label = (value: string) => dependencyTypeLabel(value as DependencyType);
 
   ngOnInit(): void { this.load(); }
 
@@ -168,11 +174,27 @@ export class TaskDependenciesComponent implements OnInit {
     });
   }
 
-  remove(dependencyId: number): void {
-    this.api.removeDependency(this.taskId(), dependencyId).subscribe((g) => {
-      this.graph.set(g);
-      this.toast.success('Link removed.');
-      this.changed.emit();
-    });
+  remove(dependencyId: number, relatedNumber: string): void {
+    // A link is not just a label: removing a "waits for" is what lets the timer start on work that
+    // is genuinely not ready. Worth a sentence before it happens.
+    this.dialog
+      .open<ConfirmDialog, ConfirmData>(ConfirmDialog, {
+        data: {
+          title: 'Remove this link?',
+          message:
+            `The connection to ${relatedNumber} is deleted. If it was holding this task back, work `
+            + 'can start straight away.',
+          confirmText: 'Remove it',
+          danger: true,
+          submit: (ctx: HttpContext) => this.api.removeDependency(this.taskId(), dependencyId, ctx),
+        },
+      })
+      .afterClosed()
+      .subscribe((graph?: unknown) => {
+        if (!graph) return;
+        this.graph.set(graph as TaskDependencyGraphDto);
+        this.toast.success('Link removed.');
+        this.changed.emit();
+      });
   }
 }

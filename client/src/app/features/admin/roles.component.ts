@@ -3,6 +3,7 @@ import { MatExpansionModule } from '@angular/material/expansion';
 import { MatIconModule } from '@angular/material/icon';
 import { ApiService } from '../../core/api.service';
 import { RoleDto } from '../../core/models';
+import { roleLabel } from '../../core/labels';
 import { LoadingComponent, PageHeaderComponent } from '../../shared/ui';
 
 /**
@@ -26,7 +27,7 @@ import { LoadingComponent, PageHeaderComponent } from '../../shared/ui';
             <mat-expansion-panel>
               <mat-expansion-panel-header>
                 <mat-panel-title>
-                  <strong>{{ role.name }}</strong>
+                  <strong>{{ roleLabel(role.name) }}</strong>
                   @if (role.isSystemRole) { <span class="chip tone-muted sys">System</span> }
                 </mat-panel-title>
                 <mat-panel-description>
@@ -56,6 +57,9 @@ import { LoadingComponent, PageHeaderComponent } from '../../shared/ui';
   `,
 })
 export class RolesComponent implements OnInit {
+  /** The wording layer — `AssignmentManager` is not a word anyone says. */
+  readonly roleLabel = roleLabel;
+
   private readonly api = inject(ApiService);
 
   readonly roles = signal<RoleDto[]>([]);

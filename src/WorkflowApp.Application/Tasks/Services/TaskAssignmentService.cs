@@ -148,6 +148,9 @@ public sealed class TaskAssignmentService : ITaskAssignmentService
                 task.Status = WorkTaskStatus.ReadyForAssignment;
         }
 
+        var described = await DescribeAssignmentAsync(
+            previousAssignee, request.AssigneeUserId, request.Reason, ct);
+
         // Assigning moves the task's status, so it belongs in the status trail too. Without this
         // the history jumps from ReadyForAssignment straight to InProgress with no explanation.
         if (task.Status != previousStatus)
@@ -159,7 +162,7 @@ public sealed class TaskAssignmentService : ITaskAssignmentService
                 ToStatus = task.Status,
                 ChangedByUserId = actingUserId,
                 ChangedAt = now,
-                Reason = request.Reason ?? DescribeAssignment(previousAssignee, request.AssigneeUserId, null)
+                Reason = request.Reason ?? described
             });
         }
 
@@ -180,7 +183,7 @@ public sealed class TaskAssignmentService : ITaskAssignmentService
             Type = ActivityType.AssignmentChanged,
             ActorUserId = actingUserId,
             OccurredAt = now,
-            Description = DescribeAssignment(previousAssignee, request.AssigneeUserId, request.Reason)
+            Description = described
         });
 
         // Being given work is the one thing nobody should have to discover by refreshing.
@@ -353,13 +356,34 @@ public sealed class TaskAssignmentService : ITaskAssignmentService
         return Result.Success();
     }
 
-    private static string DescribeAssignment(long? from, long? to, string? reason)
+    /// <summary>
+    /// Names, not ids.
+    ///
+    /// This text goes into <c>TaskActivity</c>, which is the stream written for people to read —
+    /// the readable half of the history split. "Assigned to user 36" is the schema talking, and a
+    /// reader cannot act on it without going and looking up who 36 is.
+    /// </summary>
+    private async Task<string> DescribeAssignmentAsync(
+        long? from, long? to, string? reason, CancellationToken ct)
     {
+        var ids = new[] { from, to }.Where(id => id.HasValue).Select(id => id!.Value).Distinct().ToList();
+
+        var names = ids.Count == 0
+            ? new Dictionary<long, string>()
+            : await _db.Users.AsNoTracking()
+                .Where(u => ids.Contains(u.Id))
+                .ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
+
+        // A deleted or renamed account must not make the line unreadable, so the id is the
+        // fallback rather than the default.
+        string Name(long? id) =>
+            id is { } value && names.TryGetValue(value, out var name) ? name : $"user {id}";
+
         var text = (from, to) switch
         {
-            (null, not null) => $"Assigned to user {to}",
-            (not null, null) => $"Unassigned from user {from}",
-            (not null, not null) => $"Reassigned from user {from} to user {to}",
+            (null, not null) => $"Given to {Name(to)}",
+            (not null, null) => $"Taken off {Name(from)}",
+            (not null, not null) => $"Moved from {Name(from)} to {Name(to)}",
             _ => "Assignment unchanged"
         };
 

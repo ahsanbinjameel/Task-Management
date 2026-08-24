@@ -342,6 +342,9 @@ namespace WorkflowApp.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
+                    b.Property<long?>("BatchId")
+                        .HasColumnType("bigint");
+
                     b.Property<string>("ContentType")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -353,10 +356,16 @@ namespace WorkflowApp.Infrastructure.Persistence.Migrations
                     b.Property<long?>("CreatedByUserId")
                         .HasColumnType("bigint");
 
+                    b.Property<int>("Kind")
+                        .HasColumnType("int");
+
                     b.Property<string>("OriginalFileName")
                         .IsRequired()
                         .HasMaxLength(400)
                         .HasColumnType("nvarchar(400)");
+
+                    b.Property<long?>("QCReviewId")
+                        .HasColumnType("bigint");
 
                     b.Property<long?>("RequestId")
                         .HasColumnType("bigint");
@@ -392,11 +401,17 @@ namespace WorkflowApp.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("BatchId");
+
+                    b.HasIndex("QCReviewId");
+
                     b.HasIndex("RequestId");
 
                     b.HasIndex("Sha256");
 
                     b.HasIndex("TaskId");
+
+                    b.HasIndex("TaskId", "Kind");
 
                     b.ToTable("Attachments");
                 });
@@ -632,6 +647,9 @@ namespace WorkflowApp.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
+                    b.Property<long?>("BatchId")
+                        .HasColumnType("bigint");
+
                     b.Property<string>("BusinessImpact")
                         .HasColumnType("nvarchar(max)");
 
@@ -659,6 +677,9 @@ namespace WorkflowApp.Infrastructure.Persistence.Migrations
 
                     b.Property<long?>("ModuleId")
                         .HasColumnType("bigint");
+
+                    b.Property<int>("OrdinalInBatch")
+                        .HasColumnType("int");
 
                     b.Property<long?>("ProjectId")
                         .HasColumnType("bigint");
@@ -717,6 +738,8 @@ namespace WorkflowApp.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("Status");
 
+                    b.HasIndex("BatchId", "OrdinalInBatch");
+
                     b.ToTable("Requests");
                 });
 
@@ -765,6 +788,66 @@ namespace WorkflowApp.Infrastructure.Persistence.Migrations
                     b.HasIndex("RequestId", "OccurredAt");
 
                     b.ToTable("RequestActivities");
+                });
+
+            modelBuilder.Entity("WorkflowApp.Domain.Entities.Requests.RequestBatch", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("BatchNumber")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<long?>("ClientId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long?>("CreatedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<DateTimeOffset>("RequestedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long>("RequestedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long?>("UpdatedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BatchNumber")
+                        .IsUnique();
+
+                    b.HasIndex("ClientId");
+
+                    b.HasIndex("RequestedByUserId");
+
+                    b.ToTable("RequestBatches");
                 });
 
             modelBuilder.Entity("WorkflowApp.Domain.Entities.Requests.RequestClarification", b =>
@@ -1090,6 +1173,79 @@ namespace WorkflowApp.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("QCReviews");
+                });
+
+            modelBuilder.Entity("WorkflowApp.Domain.Entities.Tasks.QuickWork", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<long?>("ClientId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long?>("CreatedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset?>("EndedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long?>("InterruptedTaskId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Outcome")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<long?>("PromotedToRequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<DateTimeOffset>("StartedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long?>("UpdatedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("UserId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ClientId");
+
+                    b.HasIndex("InterruptedTaskId");
+
+                    b.HasIndex("PromotedToRequestId");
+
+                    b.HasIndex("UserId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_QuickWork_OneActivePerUser")
+                        .HasFilter("[Status] = 0");
+
+                    b.HasIndex("UserId", "StartedAt");
+
+                    b.ToTable("QuickWork");
                 });
 
             modelBuilder.Entity("WorkflowApp.Domain.Entities.Tasks.ScopeChange", b =>
@@ -1734,6 +1890,16 @@ namespace WorkflowApp.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("WorkflowApp.Domain.Entities.Requests.Attachment", b =>
                 {
+                    b.HasOne("WorkflowApp.Domain.Entities.Requests.RequestBatch", null)
+                        .WithMany("Attachments")
+                        .HasForeignKey("BatchId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("WorkflowApp.Domain.Entities.Tasks.QCReview", null)
+                        .WithMany()
+                        .HasForeignKey("QCReviewId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("WorkflowApp.Domain.Entities.Requests.Request", null)
                         .WithMany("Attachments")
                         .HasForeignKey("RequestId");
@@ -1741,11 +1907,36 @@ namespace WorkflowApp.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("WorkflowApp.Domain.Entities.Requests.Request", b =>
                 {
+                    b.HasOne("WorkflowApp.Domain.Entities.Requests.RequestBatch", "Batch")
+                        .WithMany("Items")
+                        .HasForeignKey("BatchId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("WorkflowApp.Domain.Entities.Identity.User", "RequestedByUser")
                         .WithMany()
                         .HasForeignKey("RequestedByUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.Navigation("Batch");
+
+                    b.Navigation("RequestedByUser");
+                });
+
+            modelBuilder.Entity("WorkflowApp.Domain.Entities.Requests.RequestBatch", b =>
+                {
+                    b.HasOne("WorkflowApp.Domain.Entities.Requests.Client", "Client")
+                        .WithMany()
+                        .HasForeignKey("ClientId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("WorkflowApp.Domain.Entities.Identity.User", "RequestedByUser")
+                        .WithMany()
+                        .HasForeignKey("RequestedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Client");
 
                     b.Navigation("RequestedByUser");
                 });
@@ -1777,6 +1968,38 @@ namespace WorkflowApp.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Task");
+                });
+
+            modelBuilder.Entity("WorkflowApp.Domain.Entities.Tasks.QuickWork", b =>
+                {
+                    b.HasOne("WorkflowApp.Domain.Entities.Requests.Client", "Client")
+                        .WithMany()
+                        .HasForeignKey("ClientId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("WorkflowApp.Domain.Entities.Tasks.WorkTask", "InterruptedTask")
+                        .WithMany()
+                        .HasForeignKey("InterruptedTaskId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("WorkflowApp.Domain.Entities.Requests.Request", "PromotedToRequest")
+                        .WithMany()
+                        .HasForeignKey("PromotedToRequestId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("WorkflowApp.Domain.Entities.Identity.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Client");
+
+                    b.Navigation("InterruptedTask");
+
+                    b.Navigation("PromotedToRequest");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("WorkflowApp.Domain.Entities.Tasks.ScopeChange", b =>
@@ -1920,6 +2143,13 @@ namespace WorkflowApp.Infrastructure.Persistence.Migrations
                     b.Navigation("Attachments");
 
                     b.Navigation("Clarifications");
+                });
+
+            modelBuilder.Entity("WorkflowApp.Domain.Entities.Requests.RequestBatch", b =>
+                {
+                    b.Navigation("Attachments");
+
+                    b.Navigation("Items");
                 });
 
             modelBuilder.Entity("WorkflowApp.Domain.Entities.Tasks.WorkTask", b =>

@@ -44,10 +44,17 @@ public abstract class ApiControllerBase : ControllerBase
     /// How much of the workflow this caller is shown. Derived from their permissions, so it needs
     /// no extra plumbing on the client and cannot be asked for by someone it does not belong to.
     /// </summary>
-    protected StatusAudience Audience => StatusViews.AudienceFor(
+    protected StatusAudience Audience => StatusViews.AudienceFor(CurrentPermissions);
+
+    /// <summary>
+    /// The caller's effective permissions, straight off the token. For the handful of services
+    /// that shape a whole response around what someone is allowed to do rather than simply being
+    /// gated on one permission.
+    /// </summary>
+    protected IReadOnlySet<string> CurrentPermissions =>
         User.Claims.Where(c => c.Type == AppClaimTypes.Permission)
             .Select(c => c.Value)
-            .ToHashSet());
+            .ToHashSet();
 
     /// <summary>
     /// Whether the caller holds a permission. Used where the check is conditional rather than a

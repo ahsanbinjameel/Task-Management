@@ -7,7 +7,7 @@ import { ApiService } from '../../core/api.service';
 import { ToastService } from '../../core/toast.service';
 import { RealtimeService } from '../../core/realtime.service';
 import { PagedResult, TaskSummaryDto, WorkloadDto } from '../../core/models';
-import { EmptyComponent, LoadingComponent, PageHeaderComponent, StatComponent } from '../../shared/ui';
+import { EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../shared/ui';
 import { TaskTableComponent } from '../../shared/task-table.component';
 import { AssignDialogComponent, AssignDialogResult } from './assign-dialog.component';
 
@@ -20,7 +20,7 @@ import { AssignDialogComponent, AssignDialogResult } from './assign-dialog.compo
   standalone: true,
   imports: [
     MatButtonModule, MatIconModule, PageHeaderComponent, EmptyComponent, LoadingComponent,
-    StatComponent, TaskTableComponent,
+    TaskTableComponent,
   ],
   template: `
     <div class="page">
@@ -68,7 +68,7 @@ import { AssignDialogComponent, AssignDialogResult } from './assign-dialog.compo
     .layout { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) 290px; }
     @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } }
     .person {
-      display: flex; align-items: center; gap: 10px;
+      display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
       padding: 9px 0; border-top: 1px solid var(--border);
     }
     .person:first-of-type { border-top: none; }

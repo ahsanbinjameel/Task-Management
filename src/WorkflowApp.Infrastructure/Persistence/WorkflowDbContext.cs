@@ -41,6 +41,7 @@ public class WorkflowDbContext : DbContext, IWorkflowDbContext
 
     // Requests
     public DbSet<Request> Requests => Set<Request>();
+    public DbSet<RequestBatch> RequestBatches => Set<RequestBatch>();
     public DbSet<RequestClarification> RequestClarifications => Set<RequestClarification>();
     public DbSet<RequestActivity> RequestActivities => Set<RequestActivity>();
     public DbSet<Attachment> Attachments => Set<Attachment>();
@@ -49,6 +50,7 @@ public class WorkflowDbContext : DbContext, IWorkflowDbContext
     public DbSet<WorkTask> Tasks => Set<WorkTask>();
     public DbSet<TaskCollaborator> TaskCollaborators => Set<TaskCollaborator>();
     public DbSet<WorkSession> WorkSessions => Set<WorkSession>();
+    public DbSet<QuickWork> QuickWork => Set<QuickWork>();
     public DbSet<QCReview> QCReviews => Set<QCReview>();
     public DbSet<AssignmentHistory> AssignmentHistories => Set<AssignmentHistory>();
     public DbSet<StatusHistory> StatusHistories => Set<StatusHistory>();

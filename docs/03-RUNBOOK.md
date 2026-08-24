@@ -16,12 +16,19 @@ during an incident.
 | IIS | Application Initialization + WebSocket Protocol features enabled |
 | SQL Server | 2019 or later, reachable from the app pool identity |
 | TLS | A real certificate bound to the site. The app issues HSTS-relevant headers and redirects to HTTPS |
+| Fonts | At least one of **Segoe UI**, Arial, DejaVu Sans or Liberation Sans installed |
 
 **WebSockets must be enabled.** SignalR falls back to long polling without it, which works but costs
 a connection per client. `Install-WindowsFeature Web-WebSockets`.
 
 **App pool:** No Managed Code (the app self-hosts Kestrel behind IIS), `LoadUserProfile = true`,
 and an identity that can read the file-storage root and connect to SQL Server.
+
+**A font must be installed.** PDF report rendering needs one, and the application **refuses to
+start** without it rather than failing on the first report somebody prints — the startup error
+names every family and directory it searched. A normal Windows Server has Segoe UI and Arial; a
+Server Core install or a slim container may have neither. Install one, or drop a `.ttf` into the
+fonts directory. This is a display concern only: nothing else in the application depends on it.
 
 ---
 
@@ -165,7 +172,7 @@ then, run a single instance or use sticky sessions.
 
 ## 6. Verifying the database guarantees
 
-Three constraints carry business rules that the application also enforces. If they are missing, the
+Four constraints carry business rules that the application also enforces. If they are missing, the
 application still behaves correctly under normal use and silently loses its last line of defence
 under a race — so check them after any manual schema work:
 
@@ -173,6 +180,7 @@ under a race — so check them after any manual schema work:
     FROM sys.indexes i
     WHERE i.name IN (
       'UX_WorkSession_OneActivePerUser',   -- WHERE [Status] = 0
+      'UX_QuickWork_OneActivePerUser',     -- WHERE [Status] = 0
       'UX_ShiftSession_OneOpenPerUser',    -- WHERE [ShiftEnd] IS NULL
       'UX_RefreshToken_TokenHash');
 
@@ -180,7 +188,7 @@ under a race — so check them after any manual schema work:
     SELECT OBJECT_NAME(object_id) + '.' + name
     FROM sys.columns
     WHERE name = 'RowVersion' AND system_type_id = TYPE_ID('timestamp');
-    -- expect: Users, Requests, Tasks, WorkSessions, ShiftSessions
+    -- expect: Users, Requests, Tasks, WorkSessions, ShiftSessions, QuickWork, RequestBatches
 
 ---
 

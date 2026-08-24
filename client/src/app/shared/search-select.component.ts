@@ -7,7 +7,7 @@ import { MatChipsModule } from '@angular/material/chips';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
-import { humanizeEnum } from '../core/format';
+import { humanizeEnum } from '../core/labels';
 import { ChipComponent } from './ui';
 
 /** One row of a searchable dropdown. `chip` renders the tone-coded chip used elsewhere. */

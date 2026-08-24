@@ -19,6 +19,7 @@ using WorkflowApp.Domain.Enums;
 using WorkflowApp.Infrastructure.Identity;
 using WorkflowApp.Infrastructure.Persistence;
 using WorkflowApp.Infrastructure.Persistence.Interceptors;
+using WorkflowApp.Infrastructure.Storage;
 
 namespace WorkflowApp.Application.Tests;
 
@@ -161,11 +162,30 @@ public sealed class TestHarness : IDisposable
             Db, TaskQueries, Dependencies, Activity, Notifications, Clock,
             NullLogger<WorkSessionService>.Instance);
 
+        // Real storage under a throwaway directory, not a stub: the attachment path writes files,
+        // hashes them and enforces the extension allow-list, and a fake would test none of that.
+        // Disposed with the harness.
+        FileStorageRoot = Path.Combine(Path.GetTempPath(), "wfa-tests", Guid.NewGuid().ToString("N"));
+
+        Storage = new DiskFileStorage(
+            Options.Create(new FileStorageOptions { Root = FileStorageRoot }),
+            NullLogger<DiskFileStorage>.Instance);
+
+        Attachments = new AttachmentService(Db, Storage, Audit, CurrentUser);
+
         QC = new QCService(
-            Db, TaskQueries, Activity, Audit, Notifications, Clock, NullLogger<QCService>.Instance);
+            Db, Attachments, TaskQueries, Activity, Audit, Notifications, Clock, NullLogger<QCService>.Instance);
 
         Closure = new ClosureService(
             Db, TaskQueries, Activity, Audit, Notifications, Clock, NullLogger<ClosureService>.Instance);
+
+        Batches = new RequestBatchService(
+            Db, Numbers, Notifications, Lookups, TaskCreation, Audit, Clock,
+            NullLogger<RequestBatchService>.Instance);
+
+        QuickWork = new QuickWorkService(
+            Db, WorkSessions, Requests, Lookups, Activity, Calendar, Clock,
+            NullLogger<QuickWorkService>.Instance);
 
         Comments = new TaskCommentService(Db, CurrentUser, Clock);
         ScopeChanges = new ScopeChangeService(Db, Audit, Clock);
@@ -197,7 +217,14 @@ public sealed class TestHarness : IDisposable
     public ITaskWorkflowService TaskWorkflow { get; }
     public ITaskAssignmentService Assignment { get; }
     public IWorkSessionService WorkSessions { get; }
+    public IQuickWorkService QuickWork { get; }
+    public IRequestBatchService Batches { get; }
     public IQCService QC { get; }
+    public IAttachmentService Attachments { get; }
+    public IFileStorage Storage { get; }
+
+    /// <summary>Throwaway directory the attachment tests write into. Removed on dispose.</summary>
+    public string FileStorageRoot { get; }
     public IClosureService Closure { get; }
     public ITaskDependencyService Dependencies { get; }
     public ILookupService Lookups { get; }
@@ -344,5 +371,17 @@ public sealed class TestHarness : IDisposable
         return user;
     }
 
-    public void Dispose() => Db.Dispose();
+    public void Dispose()
+    {
+        Db.Dispose();
+
+        // The files a test wrote go with it. Best effort: a locked handle on a temp file is not
+        // worth failing an otherwise green test run over.
+        try
+        {
+            if (Directory.Exists(FileStorageRoot)) Directory.Delete(FileStorageRoot, recursive: true);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
 }

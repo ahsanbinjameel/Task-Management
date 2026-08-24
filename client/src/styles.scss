@@ -179,6 +179,26 @@ table.mat-mdc-table {
 
 .full-span { grid-column: 1 / -1; }
 
+/*
+ * Narrow screens.
+ *
+ * The rule the whole app has to keep: the page never scrolls sideways. Wide content — tables,
+ * timelines — scrolls inside its own container instead, so the left edge of every other row stays
+ * where the reader left it. `overflow-x: hidden` on the body would hide the symptom by cutting the
+ * content off; these rules stop it arising.
+ */
 @media (max-width: 900px) {
   .page { padding: 16px 14px 40px; }
+}
+
+@media (max-width: 560px) {
+  .page { padding: 14px 12px 36px; }
+
+  /*
+   * Dialogs take the width they are given. Every dialog already sizes itself with
+   * `min(px, vw)`, but a nested form field with its own min-width can still hold one open wider
+   * than the screen, and a dialog that overflows cannot be scrolled back into view.
+   */
+  .mat-mdc-dialog-content { min-width: 0 !important; }
+  .mat-mdc-dialog-content > * { max-width: 100%; }
 }

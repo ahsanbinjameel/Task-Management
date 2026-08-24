@@ -28,6 +28,16 @@ public class Request : BaseEntity
 
     public long? RelatedRequestId { get; set; }
 
+    /// <summary>
+    /// The batch this arrived in, if it arrived with others. Null for a request raised on its own,
+    /// which stays the ordinary case — a batch is a convenience at intake, not a new kind of thing.
+    /// </summary>
+    public long? BatchId { get; set; }
+    public RequestBatch? Batch { get; set; }
+
+    /// <summary>Position within the batch, 1-based, so items read in the order they were typed.</summary>
+    public int OrdinalInBatch { get; set; }
+
     public long RequestedByUserId { get; set; }
     public User RequestedByUser { get; set; } = default!;
     public DateTimeOffset RequestedAt { get; set; } = DateTimeOffset.UtcNow;
@@ -35,7 +45,15 @@ public class Request : BaseEntity
 
     public RequestStatus Status { get; set; } = RequestStatus.Submitted;
 
-    /// <summary>Set once approved and a task is generated.</summary>
+    /// <summary>
+    /// Set once approved and a task is generated.
+    ///
+    /// <b>Several requests may point at the same task.</b> That is how a reviewer folds three
+    /// related items from one batch into a single piece of work without losing the fact that three
+    /// separate things were asked for. It needs no join table: this column already answers "which
+    /// task did my request become", and <c>WorkTask.RequestId</c> answers the other direction with
+    /// the item the task was raised from. Both keep exactly one definition.
+    /// </summary>
     public long? GeneratedTaskId { get; set; }
 
     public ICollection<RequestClarification> Clarifications { get; set; } = new List<RequestClarification>();
@@ -64,6 +82,19 @@ public class RequestClarification : BaseEntity
 /// File metadata only — the binary lives on disk (configurable root). Access is always
 /// through an authorized endpoint; the row records who/what/where for auditing.
 /// </summary>
+/// <summary>What a file is for, as opposed to what it is attached to.</summary>
+public enum AttachmentKind
+{
+    /// <summary>Context: the requester's screenshots, a reference document. The default.</summary>
+    General = 0,
+
+    /// <summary>What the worker attached when marking the work finished.</summary>
+    CompletionProof = 1,
+
+    /// <summary>What the checker attached to a quality-check verdict.</summary>
+    QCEvidence = 2,
+}
+
 public class Attachment : BaseEntity
 {
     public string OriginalFileName { get; set; } = default!;
@@ -74,9 +105,30 @@ public class Attachment : BaseEntity
 
     public long UploadedByUserId { get; set; }
 
-    // Polymorphic owner: an attachment belongs to a request OR a task (exactly one).
+    // Polymorphic owner: an attachment belongs to a request, a task, or a batch — exactly one.
+    // The batch case exists so the screenshot showing all eight problems is uploaded once rather
+    // than once per item.
     public long? RequestId { get; set; }
     public long? TaskId { get; set; }
+    public long? BatchId { get; set; }
+
+    /// <summary>
+    /// Why this file is here. The owner says what it is attached to; this says what it is *for*.
+    ///
+    /// Without it, the screenshot a requester supplied to describe a problem and the screenshot a
+    /// worker supplied to prove they fixed it are the same row in the same list, and the one thing
+    /// anybody wants to know — "show me the evidence this was actually done" — cannot be asked.
+    /// </summary>
+    public AttachmentKind Kind { get; set; } = AttachmentKind.General;
+
+    /// <summary>
+    /// The quality-check attempt this evidence belongs to, for <see cref="AttachmentKind.QCEvidence"/>.
+    ///
+    /// Attempts are numbered and append-only: attempt 1 failed with one set of screenshots and
+    /// attempt 2 passed with another, and a reader looking at attempt 1 must see attempt 1's. Null
+    /// while the evidence has been uploaded but the verdict has not yet been submitted.
+    /// </summary>
+    public long? QCReviewId { get; set; }
 }
 
 /// <summary>

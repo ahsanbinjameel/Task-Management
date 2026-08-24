@@ -33,6 +33,17 @@ builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, CurrentUserService>();
 
+// Rendering, not business logic: it holds no state and takes no dependencies, so a singleton.
+//
+// PDFsharp resolves fonts through one process-wide hook rather than through DI, so it is set here
+// and checked here. EnsureAvailable() throws at startup on a machine with no usable font, which is
+// far better than the first person to open a report discovering it.
+var fontResolver = new FileSystemFontResolver();
+fontResolver.EnsureAvailable();
+PdfSharp.Fonts.GlobalFontSettings.FontResolver = fontResolver;
+
+builder.Services.AddSingleton<IDailyReportPdf, DailyReportPdf>();
+
 // --- Authentication (JWT bearer) ----------------------------------------------------------
 var jwtOptions = builder.Configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>()
     ?? throw new InvalidOperationException("Missing required configuration section 'Jwt'.");

@@ -4,8 +4,11 @@ using WorkflowApp.Application.Common.Interfaces;
 using WorkflowApp.Application.Common.Models;
 using WorkflowApp.Application.Common.Services;
 using WorkflowApp.Application.Notifications;
+using WorkflowApp.Application.Requests.Services;
+using WorkflowApp.Application.Requests.Dtos;
 using WorkflowApp.Application.Tasks.Dtos;
 using WorkflowApp.Domain.Entities.Tasks;
+using WorkflowApp.Domain.Entities.Requests;
 using WorkflowApp.Domain.Enums;
 
 namespace WorkflowApp.Application.Tasks.Services;
@@ -44,6 +47,7 @@ public interface IQCService
 public sealed class QCService : IQCService
 {
     private readonly IWorkflowDbContext _db;
+    private readonly IAttachmentService _attachments;
     private readonly ITaskQueryService _queries;
     private readonly IActivityLogger _activity;
     private readonly IAuditService _audit;
@@ -53,6 +57,7 @@ public sealed class QCService : IQCService
 
     public QCService(
         IWorkflowDbContext db,
+        IAttachmentService attachments,
         ITaskQueryService queries,
         IActivityLogger activity,
         IAuditService audit,
@@ -61,6 +66,7 @@ public sealed class QCService : IQCService
         ILogger<QCService> logger)
     {
         _db = db;
+        _attachments = attachments;
         _queries = queries;
         _activity = activity;
         _audit = audit;
@@ -142,7 +148,7 @@ public sealed class QCService : IQCService
 
         var attemptNumber = (highest ?? 0) + 1;
 
-        _db.QCReviews.Add(new QCReview
+        var review = new QCReview
         {
             TaskId = task.Id,
             ReviewerUserId = reviewerId,
@@ -153,7 +159,19 @@ public sealed class QCService : IQCService
             BuildVersion = request.BuildVersion,
             AttemptNumber = attemptNumber,
             AcceptanceCriteriaResults = criteria.Count == 0 ? null : AcceptanceCriteria.Serialize(criteria)
-        });
+        };
+
+        _db.QCReviews.Add(review);
+
+        // The attempt's id has to exist before the evidence can point at it. Saved here rather than
+        // at the end so the claim below has something to write; the status change, the notification
+        // and the audit row still commit together in the save that follows.
+        await _db.SaveChangesAsync(ct);
+
+        // Evidence is uploaded before the verdict — the attempt does not exist until this moment —
+        // so it is staged unclaimed and tied to the attempt here. A verdict that was refused
+        // earlier leaves the files staged for the retry rather than stranding them.
+        await _attachments.ClaimQCEvidenceAsync(task.Id, reviewerId, review.Id, ct);
 
         switch (request.Result)
         {
@@ -248,11 +266,25 @@ public sealed class QCService : IQCService
             .Where(u => reviewerIds.Contains(u.Id))
             .ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
 
+        // One query for every attempt's evidence rather than one per attempt.
+        var reviewIds = reviews.Select(r => r.Id).ToList();
+        var evidence = (await _db.Attachments.AsNoTracking()
+                .Where(a => a.QCReviewId != null && reviewIds.Contains(a.QCReviewId!.Value))
+                .OrderBy(a => a.CreatedAt)
+                .ToListAsync(ct))
+            .GroupBy(a => a.QCReviewId!.Value)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<AttachmentDto>)g.Select(a => new AttachmentDto(
+                    a.Id, a.OriginalFileName, a.ContentType, a.SizeBytes,
+                    a.UploadedByUserId, a.CreatedAt)).ToList());
+
         return reviews.Select(q => new QCReviewDto(
             q.Id, q.TaskId, q.AttemptNumber, q.ReviewerUserId,
             names.TryGetValue(q.ReviewerUserId, out var name) ? name : null,
             q.ReviewedAt, q.Result, q.Comments, q.Environment, q.BuildVersion,
-            AcceptanceCriteria.Deserialize(q.AcceptanceCriteriaResults))).ToList();
+            AcceptanceCriteria.Deserialize(q.AcceptanceCriteriaResults),
+            evidence.TryGetValue(q.Id, out var files) ? files : Array.Empty<AttachmentDto>())).ToList();
     }
 
     // --- helpers -------------------------------------------------------------------------

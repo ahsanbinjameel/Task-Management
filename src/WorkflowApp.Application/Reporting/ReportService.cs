@@ -5,6 +5,7 @@ using WorkflowApp.Application.Common.Interfaces;
 using WorkflowApp.Application.Common.Services;
 using WorkflowApp.Application.Workforce.Services;
 using WorkflowApp.Domain.Entities.Workforce;
+using WorkflowApp.Domain.Entities.Tasks;
 using WorkflowApp.Domain.Enums;
 
 namespace WorkflowApp.Application.Reporting;
@@ -106,11 +107,45 @@ public sealed class ReportService : IReportService
                              && h.ToStatus == WorkTaskStatus.CompletedReadyForQC
                              && h.ChangedAt >= dayStart && h.ChangedAt < dayEnd, ct);
 
+        // Quick work, by the business day it started in. A record still running is measured to now,
+        // the same way the screen shows it, so opening the report mid-call does not report zero.
+        var now = _clock.UtcNow;
+
+        var quickWork = await _db.QuickWork.AsNoTracking()
+            .Where(q => q.UserId == userId && q.StartedAt >= dayStart && q.StartedAt < dayEnd)
+            .OrderBy(q => q.StartedAt)
+            .Select(q => new QuickWorkLineDto(
+                q.Id,
+                q.Title,
+                q.StartedAt,
+                (q.EndedAt ?? now) - q.StartedAt,
+                q.Client != null ? q.Client.Name : null,
+                q.Outcome,
+                q.InterruptedTask != null ? q.InterruptedTask.TaskNumber : null,
+                q.PromotedToRequest != null ? q.PromotedToRequest.RequestNumber : null,
+                q.Status == QuickWorkStatus.Cancelled))
+            .ToListAsync(ct);
+
+        // Cancelled quick work is shown but not totalled: it was started by mistake, and counting
+        // it would inflate the day exactly as badly as leaving the time out altogether.
+        var quickWorkTime = quickWork
+            .Where(q => !q.WasCancelled)
+            .Aggregate(TimeSpan.Zero, (sum, q) => sum + q.Duration);
+
+        // An interruption is a session somebody put down for something else — another task or a
+        // phone call. Counted from the sessions rather than from quick work alone, so the figure
+        // covers both kinds.
+        var interruptions = await _db.WorkSessions.AsNoTracking()
+            .CountAsync(w => w.UserId == userId && w.EndedByInterruption
+                             && w.SessionEnd != null
+                             && w.SessionEnd >= dayStart && w.SessionEnd < dayEnd, ct);
+
         return new DailyUserReportDto(
             date, userId, displayName,
             shift?.ShiftStart, shift?.ShiftEnd, onShift, productive, away,
             // "Worked" counts only what they are responsible for; support is reported on its own.
-            ownedWork.Count, completed, ownedWork, supportWork, supportingOn);
+            ownedWork.Count, completed, ownedWork, supportWork, supportingOn,
+            quickWork, quickWorkTime, interruptions);
     }
 
     public async Task<DailyTeamReportDto> DailyTeamAsync(DateOnly date, CancellationToken ct = default)
@@ -143,7 +178,9 @@ public sealed class ReportService : IReportService
         var report = await DailyTeamAsync(date, ct);
 
         var csv = new StringBuilder();
-        csv.AppendLine("Date,User,ShiftStart,ShiftEnd,ShiftHours,ProductiveHours,BreakHours,TasksWorked,TasksCompleted");
+        csv.AppendLine(
+            "Date,User,ShiftStart,ShiftEnd,ShiftHours,ProductiveHours,BreakHours,"
+            + "TasksWorked,TasksCompleted,QuickWorkItems,QuickWorkHours,Interruptions");
 
         foreach (var u in report.Users)
         {
@@ -156,7 +193,12 @@ public sealed class ReportService : IReportService
                 Hours(u.ProductiveTime),
                 Hours(u.BreakTime),
                 u.TasksWorked.ToString(CultureInfo.InvariantCulture),
-                u.TasksCompleted.ToString(CultureInfo.InvariantCulture)));
+                u.TasksCompleted.ToString(CultureInfo.InvariantCulture),
+                // Counted, not listed: a spreadsheet row per person cannot carry a variable number
+                // of phone calls, and the per-item detail is on the daily report itself.
+                u.QuickWork.Count(q => !q.WasCancelled).ToString(CultureInfo.InvariantCulture),
+                Hours(u.QuickWorkTime),
+                u.Interruptions.ToString(CultureInfo.InvariantCulture)));
         }
 
         return csv.ToString();

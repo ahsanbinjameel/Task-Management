@@ -10,8 +10,12 @@ import { ApiService } from '../../../core/api.service';
 import { AuthService } from '../../../core/auth.service';
 import { ToastService } from '../../../core/toast.service';
 import { Perm } from '../../../core/permissions';
-import { AcceptanceCriterionDto, QCResult, QCReviewDto, TaskDetailDto } from '../../../core/models';
+import {
+  AcceptanceCriterionDto, AttachmentDto, QCResult, QCReviewDto, TaskDetailDto,
+} from '../../../core/models';
 import { EmptyComponent } from '../../../shared/ui';
+import { AttachmentsComponent } from '../../../shared/attachments.component';
+import { AttachmentUploadComponent } from '../../../shared/attachment-upload.component';
 
 /** What the reviewer picked for one item. `undefined` means they have not answered it yet. */
 type Answer = 'pass' | 'fail' | 'na' | undefined;
@@ -51,6 +55,7 @@ const fromMet = (met: boolean | null | undefined): Answer =>
   imports: [
     DatePipe, FormsModule, MatButtonModule, MatButtonToggleModule,
     MatFormFieldModule, MatIconModule, MatInputModule, EmptyComponent,
+    AttachmentsComponent, AttachmentUploadComponent,
   ],
   template: `
     <div class="stack">
@@ -133,6 +138,17 @@ const fromMet = (met: boolean | null | undefined): Answer =>
             </mat-form-field>
           </div>
 
+          <h3 class="sub">What you saw</h3>
+          <p class="muted small">
+            Screenshots of the check itself. They stay with this attempt, so a later one passing
+            does not erase what was wrong with this one.
+          </p>
+          <app-attachments [attachments]="evidence()" emptyText="Nothing attached yet." />
+          <app-attachment-upload
+            [taskId]="task().id" kind="QCEvidence"
+            label="Attach a screenshot" icon="photo_camera"
+            (uploaded)="evidenceAdded($event)" />
+
           @if (blockedReason(); as reason) {
             <p class="warn small"><mat-icon>error_outline</mat-icon> {{ reason }}</p>
           }
@@ -156,7 +172,8 @@ const fromMet = (met: boolean | null | undefined): Answer =>
       <div class="card">
         <div class="card-pad"><h2 class="card-title" style="margin:0">Previous checks</h2></div>
         @if (history().length === 0) {
-          <app-empty message="This task has not been checked yet" icon="verified" />
+          <app-empty message="This task has not been checked yet" icon="verified"
+                     hint="A quality check starts once the work is marked finished." />
         } @else {
           @for (review of history(); track review.id) {
             <div class="attempt">
@@ -174,6 +191,11 @@ const fromMet = (met: boolean | null | undefined): Answer =>
                 <p class="muted small">
                   {{ review.environment }}{{ review.environment && review.buildVersion ? ' · ' : '' }}{{ review.buildVersion }}
                 </p>
+              }
+              @if (review.attachments?.length) {
+                <div class="evidence">
+                  <app-attachments [attachments]="review.attachments ?? []" />
+                </div>
               }
               @for (c of review.criteria; track c.index) {
                 <div class="criterion-result small">
@@ -219,6 +241,7 @@ const fromMet = (met: boolean | null | undefined): Answer =>
     .warn { color: var(--tone-danger-fg); }
     .hint mat-icon, .warn mat-icon { font-size: 17px; width: 17px; height: 17px; }
     .attempt { padding: 14px 20px; border-top: 1px solid var(--border); }
+    .evidence { margin: 10px 0 6px; }
     .comments { margin: 8px 0 4px; white-space: pre-wrap; font-size: 13.5px; }
     .criterion-result { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
     .criterion-result mat-icon { font-size: 16px; width: 16px; height: 16px; color: var(--text-muted); }
@@ -243,6 +266,16 @@ export class TaskQcComponent implements OnInit {
   readonly history = signal<QCReviewDto[]>([]);
   readonly verdicts = signal<Verdict[]>([]);
   readonly busy = signal(false);
+
+  /**
+   * Evidence uploaded while the check is being written up.
+   *
+   * It goes to the server straight away and waits there unclaimed, because the attempt it belongs
+   * to does not exist until the verdict is recorded — the verdict adopts whatever this checker
+   * staged. A verdict the server refuses therefore leaves the files where they are, ready for the
+   * corrected submission, instead of making somebody find the screenshots again.
+   */
+  readonly evidence = signal<AttachmentDto[]>([]);
 
   readonly result = signal<QCResult>('Passed');
   readonly comments = signal('');
@@ -342,6 +375,10 @@ export class TaskQcComponent implements OnInit {
     this.result.set(result);
   }
 
+  evidenceAdded(attachment: AttachmentDto): void {
+    this.evidence.update((all) => [...all, attachment]);
+  }
+
   resultLabel = (result: QCResult) =>
     result === 'Passed' ? 'Passed' : result === 'Failed' ? 'Needs fixing' : 'Need information';
 
@@ -372,6 +409,8 @@ export class TaskQcComponent implements OnInit {
         this.busy.set(false);
         this.history.set(task.qcReviews);
         this.comments.set('');
+        // The attempt has adopted them; they are now part of its record above.
+        this.evidence.set([]);
         this.toast.success(
           this.result() === 'Passed' ? 'Quality check passed.'
           : this.result() === 'Failed' ? 'Sent back to be fixed.'

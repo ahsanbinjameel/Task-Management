@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using WorkflowApp.Api.Authorization;
 using WorkflowApp.Api.Common;
 using WorkflowApp.Application.Common;
+using WorkflowApp.Api.Services;
 using WorkflowApp.Application.Reporting;
 
 namespace WorkflowApp.Api.Controllers;
@@ -17,6 +18,16 @@ public sealed class DashboardsController : ApiControllerBase
     private readonly IDashboardService _dashboards;
 
     public DashboardsController(IDashboardService dashboards) => _dashboards = dashboards;
+
+    /// <summary>
+    /// What is waiting on the caller, and what has happened around their work. Two lists rather
+    /// than one: a screen that mixes "you must do this" with "this happened" makes the reader sort
+    /// them, every visit. Scoped by the caller's own permissions, taken from the token.
+    /// </summary>
+    [HttpGet("home")]
+    [ProducesResponseType(typeof(HomeDashboardDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Home(CancellationToken ct)
+        => Ok(await _dashboards.HomeAsync(CurrentUserId, CurrentPermissions, ct));
 
     /// <summary>Where the caller's own requests got to.</summary>
     [HttpGet("requester")]
@@ -67,30 +78,77 @@ public sealed class ReportsController : ApiControllerBase
     [HttpGet("me/daily")]
     [ProducesResponseType(typeof(DailyUserReportDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> MyDaily([FromQuery] DateOnly? date, CancellationToken ct)
-        => Ok(await _reports.DailyUserAsync(CurrentUserId, Today(date), ct));
+        => Ok(await _reports.DailyUserAsync(CurrentUserId, DayOrToday(date), ct));
 
     [HttpGet("users/{userId:long}/daily")]
     [HasPermission(Permissions.ReportsView)]
     [ProducesResponseType(typeof(DailyUserReportDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> UserDaily(long userId, [FromQuery] DateOnly? date, CancellationToken ct)
-        => Ok(await _reports.DailyUserAsync(userId, Today(date), ct));
+        => Ok(await _reports.DailyUserAsync(userId, DayOrToday(date), ct));
 
     [HttpGet("team/daily")]
     [HasPermission(Permissions.ReportsView)]
     [ProducesResponseType(typeof(DailyTeamReportDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> TeamDaily([FromQuery] DateOnly? date, CancellationToken ct)
-        => Ok(await _reports.DailyTeamAsync(Today(date), ct));
+        => Ok(await _reports.DailyTeamAsync(DayOrToday(date), ct));
 
     [HttpGet("team/daily.csv")]
     [HasPermission(Permissions.ReportsView)]
     [Produces("text/csv")]
     public async Task<IActionResult> TeamDailyCsv([FromQuery] DateOnly? date, CancellationToken ct)
     {
-        var day = Today(date);
+        var day = DayOrToday(date);
         var csv = await _reports.DailyTeamCsvAsync(day, ct);
 
         return File(System.Text.Encoding.UTF8.GetBytes(csv), "text/csv", $"team-daily-{day:yyyy-MM-dd}.csv");
     }
 
-    private static DateOnly Today(DateOnly? date) => date ?? DateOnly.FromDateTime(DateTime.UtcNow);
+    /// <summary>
+    /// The requested day, or today. "Today" comes from <see cref="ApiControllerBase.Today"/>, which
+    /// resolves it in the configured business time zone — this used to default to UTC, which put an
+    /// evening shift's hours on tomorrow's report for anyone east of Greenwich.
+    /// </summary>
+    /// <summary>
+    /// The same day, as a document rather than a spreadsheet. The CSV is one flat row per person,
+    /// which is what makes it the wrong shape to read: a day's quick work is a variable number of
+    /// lines and a row cannot hold them.
+    /// </summary>
+    [HttpGet("team/daily.pdf")]
+    [HasPermission(Permissions.ReportsView)]
+    [Produces("application/pdf")]
+    public async Task<IActionResult> TeamDailyPdf(
+        [FromQuery] DateOnly? date, [FromServices] IDailyReportPdf pdf, CancellationToken ct)
+    {
+        var day = DayOrToday(date);
+        var report = await _reports.DailyTeamAsync(day, ct);
+
+        return File(pdf.Team(report), "application/pdf", $"team-daily-{day:yyyy-MM-dd}.pdf");
+    }
+
+    /// <summary>The caller's own day as a document. Ungated, like the JSON version of the same thing.</summary>
+    [HttpGet("me/daily.pdf")]
+    [Produces("application/pdf")]
+    public async Task<IActionResult> MyDailyPdf(
+        [FromQuery] DateOnly? date, [FromServices] IDailyReportPdf pdf, CancellationToken ct)
+    {
+        var day = DayOrToday(date);
+        var report = await _reports.DailyUserAsync(CurrentUserId, day, ct);
+
+        return File(pdf.Person(report), "application/pdf", $"my-day-{day:yyyy-MM-dd}.pdf");
+    }
+
+    [HttpGet("users/{userId:long}/daily.pdf")]
+    [HasPermission(Permissions.ReportsView)]
+    [Produces("application/pdf")]
+    public async Task<IActionResult> UserDailyPdf(
+        long userId, [FromQuery] DateOnly? date, [FromServices] IDailyReportPdf pdf, CancellationToken ct)
+    {
+        var day = DayOrToday(date);
+        var report = await _reports.DailyUserAsync(userId, day, ct);
+
+        return File(pdf.Person(report), "application/pdf",
+            $"{report.DisplayName}-{day:yyyy-MM-dd}.pdf".Replace(' ', '-'));
+    }
+
+    private DateOnly DayOrToday(DateOnly? date) => date ?? Today;
 }

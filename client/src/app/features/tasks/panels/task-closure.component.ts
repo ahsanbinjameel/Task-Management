@@ -2,12 +2,13 @@ import { Component, OnInit, computed, inject, input, output, signal } from '@ang
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatDialog } from '@angular/material/dialog';
+import { HttpContext } from '@angular/common/http';
 import { ApiService } from '../../../core/api.service';
 import { AuthService } from '../../../core/auth.service';
 import { ToastService } from '../../../core/toast.service';
 import { Perm } from '../../../core/permissions';
 import { ClosureChecklistDto, TaskDetailDto } from '../../../core/models';
-import { ReasonDialog, ReasonData} from '../../../shared/dialogs';
+import { ConfirmDialog, ConfirmData, ReasonDialog, ReasonData } from '../../../shared/dialogs';
 
 /**
  * The closure checklist.
@@ -103,15 +104,26 @@ export class TaskClosureComponent implements OnInit {
   }
 
   close(): void {
-    this.busy.set(true);
-    this.api.closeTask(this.task().id).subscribe({
-      next: () => {
-        this.busy.set(false);
+    // Asked for, even though the checklist above already had to be satisfied. Reopening is not the
+    // undo button it looks like: it needs a separate permission, a written reason, and the work
+    // then has to pass a fresh quality check before it can be closed a second time.
+    this.dialog
+      .open<ConfirmDialog, ConfirmData>(ConfirmDialog, {
+        data: {
+          title: `Close ${this.task().taskNumber}?`,
+          message:
+            'This finishes the work. Opening it again needs a reason and another quality check, '
+            + 'so it is not a step to take on a hunch.',
+          confirmText: 'Close it',
+          submit: (ctx: HttpContext) => this.api.closeTask(this.task().id, undefined, undefined, ctx),
+        },
+      })
+      .afterClosed()
+      .subscribe((done?: unknown) => {
+        if (!done) return;
         this.toast.success('Task closed.');
         this.changed.emit();
-      },
-      error: () => this.busy.set(false),
-    });
+      });
   }
 
   reopen(): void {

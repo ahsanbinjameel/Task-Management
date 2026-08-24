@@ -18,6 +18,7 @@ import { ApiService } from '../../core/api.service';
 import { SubmitFailure, describeFailure, handledLocally } from '../../core/form-errors';
 import { ToastService } from '../../core/toast.service';
 import { PagedResult, RoleDto, UserDto } from '../../core/models';
+import { roleLabel } from '../../core/labels';
 import { SearchSelectComponent } from '../../shared/search-select.component';
 import {
   ChipComponent,
@@ -25,7 +26,7 @@ import {
   LoadingComponent,
   PageHeaderComponent,
 } from '../../shared/ui';
-import { ReasonDialog, ReasonData } from '../../shared/dialogs';
+import { ConfirmDialog, ConfirmData, ReasonDialog, ReasonData } from '../../shared/dialogs';
 
 @Component({
   selector: 'app-user-dialog',
@@ -161,7 +162,7 @@ export class UserDialog {
   email = '';
   password = '';
   roles: string[] = [];
-  readonly roleOptions = this.data.roles.map((role) => ({ value: role.name, label: role.name }));
+  readonly roleOptions = this.data.roles.map((role) => ({ value: role.name, label: roleLabel(role.name) }));
 
   readonly busy = signal(false);
   readonly failure = signal<SubmitFailure | null>(null);
@@ -259,7 +260,8 @@ export class UserDialog {
         @if (loading()) {
           <app-loading />
         } @else if (users().length === 0) {
-          <app-empty message="No users" icon="group" />
+          <app-empty message="No accounts yet" icon="group"
+                     hint="Add someone before they can raise a request or be given work." />
         } @else {
           <div class="table-scroll">
             <table mat-table [dataSource]="users()">
@@ -278,7 +280,7 @@ export class UserDialog {
                 <td mat-cell *matCellDef="let u">
                   <div class="row row-wrap" style="gap:5px">
                     @for (role of u.roles; track role) {
-                      <span class="chip tone-neutral">{{ role }}</span>
+                      <span class="chip tone-neutral">{{ roleLabel(role) }}</span>
                     } @empty {
                       <span class="muted small">None</span>
                     }
@@ -340,7 +342,7 @@ export class UserDialog {
                 [checked]="selectedRoles.includes(role.name)"
                 (change)="toggleRole(role.name, $event.checked)"
               >
-                {{ role.name }}
+                {{ roleLabel(role.name) }}
                 <span class="muted small"> — {{ role.permissions.length }} permissions</span>
               </mat-checkbox>
             }
@@ -369,6 +371,9 @@ export class UserDialog {
   `,
 })
 export class UsersComponent implements OnInit {
+  /** The wording layer — `AssignmentManager` is not a word anyone says. */
+  readonly roleLabel = roleLabel;
+
   private readonly api = inject(ApiService);
   private readonly dialog = inject(MatDialog);
   private readonly toast = inject(ToastService);
@@ -408,6 +413,34 @@ export class UsersComponent implements OnInit {
   }
 
   setActive(user: UserDto, isActive: boolean): void {
+    // Switching someone back on is harmless. Switching them off locks them out of the system
+    // mid-shift, and a toggle is the easiest control in the app to hit by accident, so only the
+    // destructive direction asks. The toggle is put back if the answer is no — otherwise it sits
+    // there showing a state the server never accepted.
+    if (isActive) {
+      this.apply(user, true);
+      return;
+    }
+
+    this.dialog
+      .open<ConfirmDialog, ConfirmData>(ConfirmDialog, {
+        data: {
+          title: `Turn off ${user.displayName}'s account?`,
+          message:
+            'They will be signed out and will not be able to sign in again. Work already assigned '
+            + 'to them stays assigned.',
+          confirmText: 'Turn it off',
+          danger: true,
+        },
+      })
+      .afterClosed()
+      .subscribe((confirmed?: boolean) => {
+        if (confirmed) this.apply(user, false);
+        else this.load();
+      });
+  }
+
+  private apply(user: UserDto, isActive: boolean): void {
     this.api.setUserActive(user.id, isActive).subscribe(() => {
       this.toast.success(`${user.displayName} ${isActive ? 'activated' : 'deactivated'}.`);
       this.load();

@@ -58,6 +58,56 @@ public sealed record ManagementDashboardDto(
 
 public sealed record CountByLabelDto(string Label, int Count);
 
+// --- the home dashboard: what to do, and what has happened -------------------------------------
+
+/// <summary>
+/// The dashboard split in two, because a screen that mixes them serves neither half well.
+///
+/// <see cref="NeedsAttention"/> is a to-do list: every row is something *this caller* can act on
+/// now, with the reason it is here and how long it has been waiting. <see cref="RecentActivity"/>
+/// is news: things that happened around their work which they may want to know but need do
+/// nothing about. Before the split, a closed task and a task waiting three days for someone to
+/// pick it up sat in the same list looking equally urgent.
+/// </summary>
+public sealed record HomeDashboardDto(
+    IReadOnlyList<AttentionItemDto> NeedsAttention,
+    IReadOnlyList<ActivityItemDto> RecentActivity,
+    /// <summary>The full count before the list was truncated, so the page can say "and 14 more".</summary>
+    int TotalNeedingAttention);
+
+/// <summary>What kind of record a row points at, so the client can build the right link.</summary>
+public enum AttentionSubject
+{
+    Task = 0,
+    Request = 1,
+}
+
+/// <summary>
+/// One thing waiting on the caller. <paramref name="Reason"/> is written for a person and is the
+/// point of the row: "Needs someone to do it" is actionable where "ReadyForAssignment" is not.
+/// </summary>
+public sealed record AttentionItemDto(
+    AttentionSubject Subject,
+    long Id,
+    string Number,
+    string Title,
+    string Reason,
+    /// <summary>Ranks the list. Lower sorts first. Not shown.</summary>
+    int Rank,
+    Priority Priority,
+    /// <summary>When it entered the state that put it here — the basis for "waiting 3 days".</summary>
+    DateTimeOffset Since,
+    DateTimeOffset? DueDate,
+    bool IsOverdue);
+
+/// <summary>Something that happened. Past tense, no action attached.</summary>
+public sealed record ActivityItemDto(
+    AttentionSubject Subject,
+    long Id,
+    string Number,
+    string Text,
+    DateTimeOffset At);
+
 /// <summary>A task or request reduced to what a dashboard tile needs.</summary>
 public sealed record DashboardItemDto(
     long Id,
@@ -89,7 +139,37 @@ public sealed record DailyUserReportDto(
     /// </summary>
     IReadOnlyList<TaskTimeDto> SupportWork,
     /// <summary>Tasks they are listed as helping with, whether or not they logged time today.</summary>
-    IReadOnlyList<SupportedTaskDto> SupportingOn);
+    IReadOnlyList<SupportedTaskDto> SupportingOn,
+    /// <summary>
+    /// Work that never came through the front door: the phone calls and desk visits.
+    ///
+    /// Reported as its own line rather than folded into either of the two above, because it is
+    /// neither. Without it a day reads as six hours of work in an eight-hour shift and nobody can
+    /// say where the other two went — which is the complaint that produced Quick Work in the first
+    /// place.
+    /// </summary>
+    IReadOnlyList<QuickWorkLineDto> QuickWork,
+    /// <summary>Time on finished quick work. Cancelled records are excluded, deliberately.</summary>
+    TimeSpan QuickWorkTime,
+    /// <summary>
+    /// How many times a running task was put down for something else today. The number people
+    /// actually argue about, and until now nothing counted it.
+    /// </summary>
+    int Interruptions);
+
+/// <summary>One piece of quick work, as a report reads it.</summary>
+public sealed record QuickWorkLineDto(
+    long Id,
+    string Title,
+    DateTimeOffset StartedAt,
+    TimeSpan Duration,
+    string? ClientName,
+    string? Outcome,
+    /// <summary>The task it displaced, where it displaced one.</summary>
+    string? InterruptedTaskNumber,
+    /// <summary>Set when it turned out to be real work and a request was raised.</summary>
+    string? PromotedToRequestNumber,
+    bool WasCancelled);
 
 public sealed record TaskTimeDto(long TaskId, string TaskNumber, string Title, TimeSpan TimeSpent, int Sessions);
 

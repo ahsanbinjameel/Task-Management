@@ -77,6 +77,41 @@ public class RequestConfig : IEntityTypeConfiguration<Request>
         b.HasIndex(r => r.Status);
         b.HasOne(r => r.RequestedByUser).WithMany().HasForeignKey(r => r.RequestedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        // "The items in this batch, in the order they were typed" is asked on every batch screen
+        // and every fold-together decision.
+        b.HasIndex(r => new { r.BatchId, r.OrdinalInBatch });
+
+        BaseEntityConventions.ApplyRowVersion(b);
+    }
+}
+
+public class RequestBatchConfig : IEntityTypeConfiguration<RequestBatch>
+{
+    public void Configure(EntityTypeBuilder<RequestBatch> b)
+    {
+        b.HasIndex(x => x.BatchNumber).IsUnique();
+        b.Property(x => x.BatchNumber).HasMaxLength(30).IsRequired();
+        b.Property(x => x.Title).HasMaxLength(300).IsRequired();
+        b.Property(x => x.Note).HasMaxLength(4000);
+
+        b.HasOne(x => x.RequestedByUser).WithMany().HasForeignKey(x => x.RequestedByUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.Client).WithMany().HasForeignKey(x => x.ClientId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        // Deleting a batch must never take its items with it: each one is a request in its own
+        // right, and some of them may already have become work.
+        b.HasMany(x => x.Items).WithOne(r => r.Batch!).HasForeignKey(r => r.BatchId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // The FK is named explicitly. Left to convention, EF cannot tell that `Attachment.BatchId`
+        // backs this navigation and silently adds a second `RequestBatchId` column beside it —
+        // two columns holding one fact, which is the drift this codebase spends its comments
+        // avoiding.
+        b.HasMany(x => x.Attachments).WithOne().HasForeignKey(a => a.BatchId)
+            .OnDelete(DeleteBehavior.Cascade);
+
         BaseEntityConventions.ApplyRowVersion(b);
     }
 }
@@ -130,6 +165,38 @@ public class WorkSessionConfig : IEntityTypeConfiguration<WorkSession>
     }
 }
 
+public class QuickWorkConfig : IEntityTypeConfiguration<QuickWork>
+{
+    public void Configure(EntityTypeBuilder<QuickWork> b)
+    {
+        b.Property(q => q.Title).IsRequired().HasMaxLength(200);
+        b.Property(q => q.Outcome).HasMaxLength(2000);
+
+        b.HasOne(q => q.User).WithMany().HasForeignKey(q => q.UserId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(q => q.Client).WithMany().HasForeignKey(q => q.ClientId).OnDelete(DeleteBehavior.SetNull);
+
+        // Both point at records that outlive this one and must never take it with them: losing the
+        // account of an interruption because the task it interrupted was cancelled would put a
+        // hole in somebody's day that nothing else could explain.
+        b.HasOne(q => q.InterruptedTask).WithMany()
+            .HasForeignKey(q => q.InterruptedTaskId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(q => q.PromotedToRequest).WithMany()
+            .HasForeignKey(q => q.PromotedToRequestId).OnDelete(DeleteBehavior.Restrict);
+
+        // The same rule the task timer keeps, for the same reason: one thing at a time, enforced
+        // by the database and not only by the service that happens to be in front of it today.
+        b.HasIndex(q => q.UserId)
+            .IsUnique()
+            .HasFilter("[Status] = 0")
+            .HasDatabaseName("UX_QuickWork_OneActivePerUser");
+
+        // The daily report asks "what did this person do on this day" every time it runs.
+        b.HasIndex(q => new { q.UserId, q.StartedAt });
+
+        BaseEntityConventions.ApplyRowVersion(b);
+    }
+}
+
 public class ShiftSessionConfig : IEntityTypeConfiguration<ShiftSession>
 {
     public void Configure(EntityTypeBuilder<ShiftSession> b)
@@ -161,7 +228,18 @@ public class AttachmentConfig : IEntityTypeConfiguration<Attachment>
         b.Property(a => a.Sha256).HasMaxLength(64).IsFixedLength().IsRequired();
         b.HasIndex(a => a.RequestId);
         b.HasIndex(a => a.TaskId);
+        b.HasIndex(a => a.BatchId);
         b.HasIndex(a => a.Sha256);
+
+        // "The completion proof on this task", "this attempt's evidence" — both asked on every
+        // task screen that shows either.
+        b.HasIndex(a => new { a.TaskId, a.Kind });
+        b.HasIndex(a => a.QCReviewId);
+
+        // Evidence outlives nothing: a quality-check attempt is append-only history, so removing
+        // one must never silently take the pictures that justified it.
+        b.HasOne<QCReview>().WithMany()
+            .HasForeignKey(a => a.QCReviewId).OnDelete(DeleteBehavior.Restrict);
     }
 }
 

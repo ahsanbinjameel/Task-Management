@@ -6,6 +6,7 @@ using WorkflowApp.Application.Common.Models;
 using WorkflowApp.Application.Requests.Services;
 using WorkflowApp.Application.Tasks.Dtos;
 using WorkflowApp.Application.Tasks.Services;
+using WorkflowApp.Domain.Entities.Requests;
 using WorkflowApp.Domain.Enums;
 
 namespace WorkflowApp.Api.Controllers;
@@ -425,10 +426,25 @@ public sealed class TasksController : ApiControllerBase
 
     // --- attachments ---------------------------------------------------------------------
 
+    /// <summary>
+    /// Attaches a file to the task.
+    ///
+    /// <paramref name="kind"/> says what it is <i>for</i>: context by default,
+    /// <c>CompletionProof</c> for the evidence the responsible person supplies when marking the
+    /// work finished, <c>QCEvidence</c> for what a checker attaches to a verdict. The kinds are
+    /// authorized in the service, not here — who may claim to have proved something depends on the
+    /// task, not only on a permission.
+    ///
+    /// Quality-check evidence is uploaded <b>before</b> the verdict: the attempt does not exist
+    /// until the verdict is recorded, so the files are staged and claimed by it. A verdict that is
+    /// refused therefore leaves them staged for the retry rather than stranding them.
+    /// </summary>
     [HttpPost("{id:long}/attachments")]
     [RequestSizeLimit(30 * 1024 * 1024)]
     [ProducesResponseType(typeof(Application.Requests.Dtos.AttachmentDto), StatusCodes.Status200OK)]
-    public async Task<IActionResult> Upload(long id, IFormFile file, CancellationToken ct)
+    public async Task<IActionResult> Upload(
+        long id, IFormFile file, CancellationToken ct,
+        [FromQuery] AttachmentKind kind = AttachmentKind.General)
     {
         if (file is null || file.Length == 0)
             return Problem(Error.Validation("attachment.empty", "No file was supplied."));
@@ -437,7 +453,7 @@ public sealed class TasksController : ApiControllerBase
 
         return FromResult(await _attachments.UploadAsync(
             requestId: null, taskId: id, uploaderId: CurrentUserId,
-            stream, file.FileName, file.ContentType, ct));
+            stream, file.FileName, file.ContentType, ct, batchId: null, kind: kind));
     }
 }
 

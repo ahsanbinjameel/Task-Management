@@ -217,4 +217,13 @@ public sealed record RequestDetailDto(
     string ViewKey = "",
     string ViewLabel = "",
     /// <summary>Null until the request has been approved and work exists.</summary>
-    RequestProgressDto? Progress = null);
+    RequestProgressDto? Progress = null,
+    /// <summary>
+    /// The submission this arrived in, when it was asked for alongside others. Carried so a
+    /// requester who raised eight things at once can get back to the other seven.
+    /// </summary>
+    long? BatchId = null,
+    string? BatchNumber = null,
+    /// <summary>Which of the batch this was, 1-based. Zero for a request raised on its own.</summary>
+    int OrdinalInBatch = 0,
+    int BatchItemCount = 0);

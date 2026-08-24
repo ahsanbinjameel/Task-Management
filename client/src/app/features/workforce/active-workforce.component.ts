@@ -41,7 +41,8 @@ import {
 
         <div class="card top-gap">
           @if (d.workers.length === 0) {
-            <app-empty message="Nobody is on shift" icon="sensors_off" />
+            <app-empty message="Nobody is on shift" icon="sensors_off"
+                       hint="People appear here as they start their day." />
           } @else {
             @for (worker of d.workers; track worker.userId) {
               <div class="worker">
@@ -78,11 +79,12 @@ import {
     .stats { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
     .top-gap { margin-top: 18px; }
     .worker {
-      display: flex; align-items: center; gap: 14px;
+      display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
       padding: 12px 18px; border-bottom: 1px solid var(--border);
     }
     .worker:last-child { border-bottom: none; }
-    .who { display: flex; flex-direction: column; min-width: 190px; }
+    /* Was a hard 190px, which could not shrink and pushed the row off a phone screen. */
+    .who { display: flex; flex-direction: column; flex: 1 1 190px; min-width: 0; }
   `,
 })
 export class ActiveWorkforceComponent implements OnInit {

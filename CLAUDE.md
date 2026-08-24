@@ -48,7 +48,9 @@ on the local SQL Server 2019 Developer Edition default instance. Base/prod:
     dotnet ef database update --project ../WorkflowApp.Infrastructure --startup-project .   # needs SQL Server
     dotnet run --project src/WorkflowApp.Api                                                # needs SQL Server
 
-**Demo mode** (no SQL Server needed) — see §10:
+    dotnet run --project src/WorkflowApp.Api --launch-profile Development   # against SQL Server
+
+**Demo mode** (no SQL Server needed, and the default with no profile) — see §10:
 
     dotnet run --project src/WorkflowApp.Api --launch-profile Demo   # http://localhost:5099
 
@@ -95,8 +97,10 @@ script for SSMS.
 | `Entities/Identity/UserRolePermission.cs` | `User`, `Role`, `Permission`, `UserRole`, `RolePermission`, `LoginAttempt`, `RefreshToken` |
 | `Entities/Workforce/ShiftAndActivity.cs` | `ShiftSession` (incl. `EndedImproperly`, `EndedByUserId`, `EndNote`), `ActivityEvent` |
 | `Entities/Requests/Organization.cs` | `Department`, `Team`, `Client`, `Project`, `Module`, `PauseReason` |
-| `Entities/Requests/Request.cs` | `Request`, `RequestClarification`, `Attachment` |
+| `Entities/Requests/Request.cs` | `Request` (incl. `BatchId`/`OrdinalInBatch`), `RequestClarification`, `AttachmentKind`, `Attachment` (owner is exactly one of request/task/batch; `Kind` says what it is *for*, `QCReviewId` ties evidence to its attempt) |
+| `Entities/Requests/RequestBatch.cs` | `RequestBatch` — several things asked for at once. Holds the shared client/note/files; carries **no status of its own** |
 | `Entities/Tasks/WorkTask.cs` | `WorkTask`, `TaskCollaborator` |
+| `Entities/Tasks/QuickWork.cs` | `QuickWork`, `QuickWorkStatus` — work that arrived without a request. Not a `WorkTask`, deliberately |
 | `Entities/Tasks/WorkSessionAndHistory.cs` | `WorkSession`, `QCReview`, `AssignmentHistory`, `StatusHistory`, `TaskActivity` |
 | `Entities/Tasks/CommentsDependenciesAudit.cs` | `TaskComment`, `TaskDependency`, `ScopeChange`, `Notification`, `AuditLog` |
 
@@ -106,6 +110,7 @@ script for SSMS.
 |---|---|---|
 | `Common/Permissions.cs` | ✅ | `Permissions.*` key catalog + `DefaultRoles.Map` (role → permission bundles) |
 | `Common/TaskTransitionService.cs` | ✅ | Pure transition validation (workflow map + permission + reason + override) |
+| `Common/StatusLabels.cs` | ✅ | **The words users see for internal status names.** Mirrored on the client by `core/labels.ts` — change both together |
 | `Common/StatusViews.cs` | ✅ | **Who is shown which statuses.** Groups internal states into per-audience views (requester / worker / coordinator), resolves the audience from permissions, and folds a request's status onto its task |
 | `Common/Interfaces/IWorkflowDbContext.cs` | ✅ | The persistence surface the Application layer sees (all DbSets + `Database` + `SaveChangesAsync`) |
 | `Common/Interfaces/IIdentityAbstractions.cs` | ✅ | `ICurrentUser`, `IDateTimeProvider`, `IPasswordHasher`, `ITokenService`, `AccessToken`, `IssuedRefreshToken` |
@@ -131,6 +136,8 @@ script for SSMS.
 | `Requests/Dtos/RequestDtos.cs` | ✅ | Create/update/triage DTOs, `TriageOutcome`, summary + detail projections |
 | `Requests/Services/RequestService.cs` | ✅ | Intake CRUD, listing, review queue |
 | `Requests/Services/RequestTriageService.cs` | ✅ | **The request→work gate.** Six outcomes; only Approve creates a task |
+| `Requests/Services/RequestBatchService.cs` | ✅ | Batch intake, and the fold: several approved items into one task. Still calls `TaskCreationService` |
+| `Requests/Dtos/RequestBatchDtos.cs` | ✅ | Batch create/detail/summary DTOs, `ApproveTogetherDto` |
 | `Requests/Services/AttachmentService.cs` | ✅ | Metadata + access control; owner must be exactly one of request/task |
 | `Tasks/Dtos/TaskDtos.cs` | ✅ | Transition/assign/queue DTOs, task summary + detail, workload, sessions |
 | `Tasks/Services/TaskCreationService.cs` | ✅ | **The only place a WorkTask is created.** One caller: triage approval |
@@ -138,6 +145,8 @@ script for SSMS.
 | `Tasks/Services/TaskQueryService.cs` | ✅ | Task reads, queues, workload, assignable users, pause reasons |
 | `Tasks/Services/TaskAssignmentService.cs` | ✅ | Assignment (row-version guarded), collaborators, roles, queue order |
 | `Tasks/Services/WorkSessionService.cs` | ✅ | The timer: start/pause/block/complete/interrupt; single-active rule |
+| `Tasks/Services/QuickWorkService.cs` | ✅ | **The clock for work that never came through the front door.** Pauses the running task in the same commit; promotion raises a *request*, never a task |
+| `Tasks/Dtos/QuickWorkDtos.cs` | ✅ | Start/finish/promote DTOs and the projection |
 | `Tasks/Services/TaskStatusJournal.cs` | ✅ | Shared status-change writer: status + StatusHistory + TaskActivity + workforce echo. Used by the timer, QC and closure |
 | `Tasks/Services/QCService.cs` | ✅ | **The only way into QCPassed / QCFailedRework.** Numbered attempts, criteria gate, segregation of duties |
 | `Tasks/Services/AcceptanceCriteria.cs` | ✅ | **Pure**: parses the criteria text into items, serialises the evaluation |
@@ -150,7 +159,7 @@ script for SSMS.
 | `Common/Events/IntegrationEvents.cs` | ✅ | Event records, `RealtimeGroups` names, the scoped queue, the no-op publisher |
 | `Notifications/NotificationService.cs` | ✅ | The bell icon. `Raise` stages; caller commits |
 | `Notifications/AuditQueryService.cs` | ✅ | Read-only access to the append-only audit trail |
-| `Reporting/DashboardService.cs` | ✅ | Four dashboards: requester, worker, coordinator, management |
+| `Reporting/DashboardService.cs` | ✅ | The home screen (needs-attention / recent-activity) plus four audience dashboards |
 | `Reporting/ReportService.cs` | ✅ | Daily user/team attendance + effort, and the CSV |
 | `Reporting/DashboardDtos.cs` | ✅ | Dashboard and report projections |
 | `DependencyInjection.cs` | ✅ | `AddApplication()` |
@@ -167,7 +176,7 @@ script for SSMS.
 | `Persistence/Interceptors/AuditableEntityInterceptor.cs` | ✅ | **Sole** writer of CreatedAt/UpdatedAt/CreatedByUserId/UpdatedByUserId — never set these by hand |
 | `Persistence/Interceptors/IntegrationEventDispatchInterceptor.cs` | ✅ | Derives real-time events from the change tracker; dispatches **after** commit, drops them on rollback |
 | `Persistence/Seed/DatabaseSeeder.cs` | ✅ | Idempotent: permissions, roles+grants, pause reasons, bootstrap admin |
-| `Persistence/Migrations/` | ✅ | Single `InitialCreate` + model snapshot. Squashed while still unapplied — **do not squash again once it has run anywhere** |
+| `Persistence/Migrations/` | ✅ | `InitialCreate` (squashed while still unapplied — **do not squash again**), then `QuickWork`, `RequestBatches`, `AttachmentProof`, + model snapshot |
 | `Identity/JwtTokenService.cs` | ✅ | Access-token issuance + `AppClaimTypes`; refresh token generation and SHA-256 hashing |
 | `Identity/PasswordHasherAdapter.cs` | ✅ | Wraps `PasswordHasher<User>` (PBKDF2-HMAC-SHA256) |
 | `Storage/DiskFileStorage.cs` | ✅ | Generated stored names, path-traversal guard, hash-while-writing |
@@ -191,10 +200,14 @@ script for SSMS.
 | `Controllers/WorkforceController.cs` | ✅ | Supervisory views + force-end |
 | `Services/StaleShiftSweepService.cs` | ✅ | `BackgroundService` driving `IShiftMaintenanceService`; fails soft |
 | `Controllers/RequestsController.cs` | ✅ | Intake, review queue, triage, clarifications + `AttachmentsController` |
+| `Controllers/RequestBatchesController.cs` | ✅ | Only the two genuinely new operations: create items together, fold approved items into one task |
 | `Controllers/TasksController.cs` | ✅ | Queues, workflow, assignment, timer, QC, closure, comments, dependencies, subtasks, scope, attachments |
 | `Hubs/WorkflowHub.cs` | ✅ | The SignalR hub. Notification-only; groups come from the token |
 | `Services/SignalRIntegrationEventPublisher.cs` | ✅ | **The one place** that decides who hears about what |
-| `Controllers/DashboardsController.cs` | ✅ | The four dashboards + `ReportsController` (daily reports, CSV) |
+| `Controllers/DashboardsController.cs` | ✅ | The home screen, the four dashboards + `ReportsController` (daily reports, CSV, PDF) |
+| `Controllers/QuickWorkController.cs` | ✅ | Quick work — always the caller's own record; gated on `Workforce.TrackShift` |
+| `Services/DailyReportPdf.cs` | ✅ | The daily report as a document (MigraDoc). Header, summary, detail, quick work, notes, page numbers |
+| `Services/FileSystemFontResolver.cs` | ✅ | PDFsharp 6 ships no font handling; this finds one on the machine and fails at **startup** if it cannot |
 | `Controllers/NotificationsController.cs` | ✅ | The bell icon + `AuditController` (audit stream) |
 | `Middleware/SecurityHeadersMiddleware.cs` | ✅ | nosniff, frame-deny, Referrer/Permissions-Policy, CSP |
 | `wwwroot/` | ✅ | **Build output** of the Angular client. Gitignored — a fresh clone must run `npm run build` |
@@ -234,10 +247,16 @@ script for SSMS.
 | Method | Route | Permission |
 |---|---|---|
 | POST/GET/PUT | `/api/requests`, `/api/requests/{id}` | `Request.Create` / scoped by `Request.ViewAll` |
+| POST | `/api/requests/batches` | `Request.Create` |
+| GET | `/api/requests/batches/{id}`, `/mine` | authenticated (own, or anyone who reviews/coordinates/reports) |
+| GET | `/api/requests/batches/review-queue` | `Task.Review` |
+| POST | `/api/requests/batches/{id}/approve-together` | `Task.Approve` |
+| POST | `/api/requests/batches/{id}/attachments` | authenticated |
 | GET | `/api/requests/review-queue` | `Task.Review` |
 | POST | `/api/requests/{id}/start-review`, `/triage` | `Task.Review` (+ `Task.Approve` to approve) |
 | POST | `/api/requests/clarifications/{id}/answer` | authenticated (requester only) |
-| POST | `/api/requests/{id}/attachments`, `/api/tasks/{id}/attachments` | authenticated |
+| POST | `/api/requests/{id}/attachments` | authenticated |
+| POST | `/api/tasks/{id}/attachments?kind=` | authenticated; `CompletionProof` assignee only, `QCEvidence` needs `Task.QCReview` |
 | GET/DELETE | `/api/attachments/{id}` | authenticated (uploader only to delete) |
 | GET | `/api/tasks`, `/api/tasks/{id}`, `/my-queue`, `/pause-reasons`, `/active-session` | authenticated |
 | GET | `/api/tasks/assignment-queue`, `/assignable-users` | `Task.Assign` |
@@ -275,11 +294,18 @@ script for SSMS.
 | Method | Route | Permission |
 |---|---|---|
 | WS | `/hubs/workflow` | authenticated (token via the `access_token` query parameter) |
+| GET | `/api/dashboards/home` | authenticated (scoped by the caller's own permissions) |
 | GET | `/api/dashboards/requester`, `/worker` | authenticated (own data) |
 | GET | `/api/dashboards/coordinator` | `Task.Assign` |
 | GET | `/api/dashboards/management` | `Dashboard.Management` |
 | GET | `/api/reports/me/daily` | authenticated (own hours) |
 | GET | `/api/reports/users/{id}/daily`, `/team/daily`, `/team/daily.csv` | `Reports.View` |
+| GET | `/api/reports/me/daily.pdf` | authenticated (own hours) |
+| GET | `/api/reports/team/daily.pdf`, `/users/{id}/daily.pdf` | `Reports.View` |
+| GET/POST | `/api/quick-work`, `/active` | authenticated (own record) |
+| POST | `/api/quick-work` | `Workforce.TrackShift` |
+| POST | `/api/quick-work/{id}/finish\|cancel` | authenticated (own record) |
+| POST | `/api/quick-work/{id}/promote` | `Request.Create` (raises a request, never a task) |
 | GET/POST | `/api/notifications`, `/unread-count`, `/read`, `/read-all` | authenticated (own inbox) |
 | GET | `/api/audit`, `/api/audit/actions` | `Admin.ViewAudit` |
 | GET | `/health/ready` | anonymous; checks the database |
@@ -294,14 +320,17 @@ script for SSMS.
 | `src/app/core/http.interceptors.ts` | Bearer token + **serialised** refresh-on-401, and ProblemDetails → toast |
 | `src/app/core/realtime.service.ts` | SignalR. Exposes event streams; screens re-fetch, never patch |
 | `src/app/core/guards.ts` | `authGuard`, `requirePermission(...)` |
-| `src/app/core/format.ts` | TimeSpan parsing, status→tone mapping, CSV/blob download |
+| `src/app/core/labels.ts` | **The words users see, in one place.** Mirrors `StatusLabels` server-side; also roles, actions, categories, dependency and pause types |
+| `src/app/core/format.ts` | TimeSpan parsing, `sinceLabel` ("3 days"), status→tone mapping, CSV/blob download |
 | `src/app/shared/` | Chips, stats, empty/loading states, the shared task table, confirm + reason dialogs |
 | `src/app/shared/search-select.component.ts` | `app-search-select` — **the** dropdown. Type-to-filter, single or multi (chips). Works with `ngModel` and `formControlName`; `enumOptions()` builds the options for enum lists |
 | `src/app/shared/list-views.ts` | Columns + primary action per status view. The server says which statuses a view covers; this says what is worth showing once you are in it |
 | `src/app/shared/attachments.component.ts` | `app-attachments` (thumbnails, file rows) and the image viewer dialog — zoom, pan, next/previous. Download is secondary |
 | `src/app/shared/file-drop.component.ts` | `app-file-drop` — choose / drag / **paste** (Win+Shift+S → Ctrl+V), with previews before anything is submitted |
-| `src/app/layout/` | Shell, permission-filtered nav, notification bell, shift widget |
-| `src/app/features/` | One folder per area: dashboard, tasks (+ `panels/`), requests, qc, workforce, reports, admin, me |
+| `src/app/shared/attachment-upload.component.ts` | `app-attachment-upload` — the same three ways in, but straight onto a record that already exists. Carries the `kind` |
+| `src/app/layout/` | Shell, permission-filtered nav, notification bell, shift widget, quick-work widget (live clock) |
+| `src/app/features/` | One folder per area: dashboard, tasks (+ `panels/`), requests (incl. `batch-detail`), qc, workforce, reports, admin, me |
+| `src/app/shared/quick-view.component.ts` | `app-quick-view` — the read-only drawer. Same endpoint as the full page, no tabs, no actions, desktop only |
 | `proxy.conf.json` | Dev-server proxy for `/api`, `/hubs`, `/health` |
 
 ### Scripts
@@ -312,8 +341,10 @@ script for SSMS.
 
 ## 5. Non-negotiable business rules (enforce in every phase)
 
-1. A request never auto-becomes a task — approval creates it explicitly.
-2. Only one active primary work session per user.
+1. A request never auto-becomes a task — approval creates it explicitly. A *batch* cannot become
+   a task at all; its items can, one at a time or several folded into one.
+2. Only one active primary work session per user — and Quick Work respects it rather than
+   bypassing it: starting one pauses the running task in the same commit.
 3. No status transition outside `TaskWorkflow.Transitions`.
 4. Every mutating transition is permission-checked **server-side**; UI hiding is not security.
 5. Reason mandatory for: reject, pause, block, QC fail, reopen, override, reassign.
@@ -328,7 +359,9 @@ script for SSMS.
 
 - `UX_WorkSession_OneActivePerUser` — filtered unique index, `WHERE [Status] = 0`
 - `UX_ShiftSession_OneOpenPerUser` — filtered unique index, `WHERE [ShiftEnd] IS NULL`
-- `RowVersion` concurrency token on `User`, `Request`, `WorkTask`, `WorkSession`, `ShiftSession`
+- `UX_QuickWork_OneActivePerUser` — filtered unique index, `WHERE [Status] = 0`
+- `RowVersion` concurrency token on `User`, `Request`, `WorkTask`, `WorkSession`, `ShiftSession`,
+  `QuickWork`, `RequestBatch`
 
 ## 6. Decisions made (don't re-litigate)
 
@@ -465,6 +498,27 @@ script for SSMS.
   and drag-drop on the way in. Attachments are fetched as blobs because an `<img src>` cannot carry
   a bearer token, which is why `img-src` in the CSP allows `blob:` — those URLs are same-origin,
   unguessable, and live only as long as the page.
+- **What a file is *for* is a kind, not a second owner.** `AttachmentKind` separates the
+  requester's screenshot of a broken invoice (`General`) from the worker's screenshot of the fixed
+  one (`CompletionProof`) and from what a checker looked at (`QCEvidence`). In one undifferentiated
+  list the only question anybody asks — "show me the evidence this was actually done" — cannot be
+  asked at all. Modelling it as another owner column instead would have been wrong twice: the file
+  really does belong to the task, and a task can hold all three kinds at once.
+- **Who may claim what is decided in the service, not on the controller.** Proof that work is done
+  is the responsible person's to give — the check is `PrimaryAssigneeUserId == uploader`, so a
+  coordinator holding every permission there is still cannot supply it. Evidence needs
+  `Task.QCReview`. A permission attribute alone could not express the first, because the answer
+  depends on the task rather than on the caller.
+- **QC evidence is staged before the verdict and adopted by it.** The attempt does not exist until
+  the verdict is recorded, so there is nothing to point at while the checker is still typing.
+  `ClaimQCEvidenceAsync` ties whatever *that* checker left unclaimed on the task to the attempt just
+  written — scoped to the uploader, because two checkers can be looking at one task and one of them
+  must not have their pictures swept onto the other's verdict. A verdict the server refuses leaves
+  the files staged for the retry rather than stranding them.
+- **Evidence belongs to a numbered attempt, not to the task.** Attempts are append-only: the
+  pictures that justified a failure have to stay with the failure once a later attempt passes. So
+  `QCEvidence` is returned inside its `QCReviewDto` and deliberately left out of the task's own
+  file lists, where it would lose the one thing that makes it mean anything.
 - **The New Request form asks for four things.** Optional detail (business impact, expected result,
   what happens instead, steps to reproduce) is a row of chips, suggested by request type. Closing a
   chip clears the field: a value the requester can no longer see must never be submitted on their
@@ -481,6 +535,55 @@ script for SSMS.
   once after picking.
 - **Angular Material 21 needs no `@angular/animations`.** It uses native CSS animations, and
   `provideAnimationsAsync()` would fail to resolve its lazy import.
+- **A batch is a wrapper, not a second workflow.** `RequestBatch` holds only what several requests
+  share; every item is a full `Request` with its own number, status and triage decision, so the
+  review queue, clarifications, editing and notifications all work on a batch item without knowing
+  batches exist. It deliberately carries **no status of its own**: a reviewer can approve three,
+  reject one and question the rest, and a status on the wrapper would be either a lie or a summary
+  — and a summary is something a screen can compute.
+- **Several requests may share one task, and that needed no join table.**
+  `Request.GeneratedTaskId` already meant "which task did this become", and nothing stopped several
+  requests meaning it about the same task; `WorkTask.RequestId` still points at the item the task
+  was raised from. Because the fold rides on the column every read path already uses, a folded-in
+  request reports the shared task's progress to its requester with no extra code. The client is
+  *copied* onto each item rather than read through the batch, so correcting one item at triage
+  cannot drag its siblings with it.
+- **The quick-view drawer is read-only and deliberately incomplete.** It answers "is this the one I
+  am looking for?" and nothing else — no tabs, no actions, no second copy of the detail page's
+  logic. It calls the same endpoint the full page calls. Desktop only: below 1100px there is no
+  room for a panel beside a list, and the full page is the better answer anyway.
+- **Quick Work is not a task, and not exempt from the rules.** A task carries a lifecycle, an
+  assignee, a quality check and a closure checklist, and every one would have to be given a
+  meaningless answer for a phone call. But starting one pauses the running task through the same
+  close-then-open sequence a task interrupt uses, in one commit, so "one thing at a time" still
+  holds. `InterruptedByTaskId` on the work session stays **null** — it means "displaced by *that
+  task*", and a quick-work id in it would make every reader of the column wrong;
+  `QuickWork.InterruptedTaskId` is the sibling column instead.
+- **Promoting quick work raises a request, never a task.** `TaskCreationService` keeps its monopoly,
+  so approval is still what creates work. Promotion saves the retyping, not the review. It is gated
+  on `Request.Create`, and the **Worker role therefore holds `Request.Create` + `Request.ViewOwn`**:
+  a worker who fields a call and finds real work behind it has to be able to put it into the system.
+- **Quick work needs an outcome to finish; a mis-click is cancelled, not deleted.** A record of
+  forty busy minutes with nothing to show inflates the day and answers nothing. Cancelled rows are
+  kept, shown struck through, and excluded from every total.
+- **The home screen answers two questions separately.** "What must I do" and "what has happened" are
+  different questions, and a list that mixes them makes the reader sort it every visit. Both come
+  from the server, scoped by the caller's permissions, and every attention row carries the *reason*
+  it is there — so the wording cannot drift between the two halves of the app.
+- **The task detail is scoped, not just decorated.** The list was scoped to work someone is part of
+  while `GET /api/tasks/{id}` answered for any id — a lock on the door of an unwalled room. It now
+  applies the same rule and returns **404, not 403**: "you may not see this" still confirms it
+  exists. And a requester is *sent* less, not merely shown less — no sessions, no history, no
+  estimate. Hiding a panel client-side without emptying the payload is a leak; emptying it without
+  hiding the panel is a lie.
+- **Three histories, three audiences, never merged.** `TaskActivity` is the account a person reads;
+  `StatusHistory` is the state machine's own record, in its own vocabulary; `AuditLog` is the
+  administrator's before-and-after. The technical toggle is offered only to people who run the
+  process. All three name people rather than user ids.
+- **PDF rendering lives in the API layer.** PDF is a transport format like CSV or JSON: the
+  Application layer knows what the numbers mean and should not know how they are drawn. MigraDoc
+  (MIT) rather than a hand-built PDF, because page numbers and tables that break across pages are
+  the sort of thing that looks easy until the third page.
 - **Activity events ordered by `(OccurredAt, Id)` everywhere.** Two events can share a timestamp;
   without the `Id` tie-break, "the latest state" resolves arbitrarily and timelines go wrong.
 
@@ -497,6 +600,8 @@ script for SSMS.
   go through `TestHarness` in `tests/WorkflowApp.Application.Tests/TestHarness.cs`, which wires
   the real services against InMemory with a controllable `FixedClock`.
 - Never assign `CreatedAt`/`UpdatedAt`/`*ByUserId` by hand — `AuditableEntityInterceptor` owns them.
+- User-facing words come from the wording layer, never from a local PascalCase split:
+  `StatusLabels` on the server, `core/labels.ts` on the client. Change both in the same edit.
 - Expected failures return `Result`/`Result<T>`; only genuinely exceptional conditions throw.
 - State machines live in `Domain` and govern *shape only*. Cross-aggregate rules (e.g. "cannot end
   a shift while a work session is open") belong in the Application service.
@@ -532,7 +637,18 @@ all seven tabs, and the narrow-viewport layout — with no console errors.
 
 What remains is the production configuration in §9.
 
-**Tests:** 258 passing (`dotnet test`) — 29 domain state machines, 229 application services.
+Since then, `docs/04-IMPROVEMENT-PLAN.md` has taken it through three rounds of test feedback.
+As of 2026-08-24 **that plan is complete** — every item across all three feedback rounds: the
+wording layer, Quick Work, the needs-attention/recent-activity home screen, role-scoped task detail
+(enforced server-side), the history split, empty states, the responsive pass, confirmations, PDF
+export, multi-item requests, and the quick-view drawer.
+
+Added on top of it, 2026-08-24: **proof of work and quality-check evidence** — `AttachmentKind`
+separates the picture describing a problem from the picture proving it was fixed and from what a
+checker looked at, with the proof gated on being the person responsible for the work and the
+evidence kept with the numbered attempt it justified.
+
+**Tests:** 318 passing (`dotnet test`) — 29 domain state machines, 289 application services.
 All on EF Core InMemory or pure functions, so the suite runs with no SQL Server.
 
 ## 9. SQL Server: done and still outstanding
@@ -557,7 +673,12 @@ been created, migrated and seeded, and every phase has been driven end to end ov
 
 Verified:
 
-- [x] `InitialCreate` applied and recorded in `__EFMigrationsHistory`. Phases 7-12 added no schema
+- [x] `InitialCreate` applied and recorded in `__EFMigrationsHistory`. Phases 7-12 added no schema;
+      `QuickWork`, `RequestBatches` and `AttachmentProof` applied on top, on startup, since
+- [x] Proof and evidence driven end to end over HTTP: a checker is refused `CompletionProof`
+      (403 `attachment.not_assignee`) and a worker is refused `QCEvidence`
+      (403 `attachment.not_checker`); the assignee's proof comes back under `completionProof`,
+      and each numbered QC attempt keeps its own screenshots across a fail-then-pass cycle
 - [x] Seeder populated 22 permissions, the 7 system roles with grants, pause reasons and the
       bootstrap admin. It backfills new grants on restart
 - [x] The filtered unique indexes exist with the right predicates:
@@ -597,9 +718,12 @@ Still outstanding before this is anything but a dev box:
       handshake has been exercised so far, not an actual pushed message
 - [ ] Phase 9: SignalR group membership is per-process. Running more than one instance needs a
       Redis backplane, or sticky sessions
-- [ ] `WorkflowApp_Dev` holds smoke-test rows (users prefixed `smoke_`/`p8_`/`p9_`, several
-      requests and tasks). Drop the database to start clean - it is recreated on the next
-      `dotnet run`
+- [ ] `WorkflowApp_Dev` holds smoke-test rows (users prefixed `smoke_`/`p8_`/`p9_`/`qw1_`/`qw2_`/`bat1_`/`pf_`,
+      several requests, tasks and quick-work records). Drop the database to start clean - it is
+      recreated on the next `dotnet run`
+- [ ] The PDF export resolves a font off the machine (`FileSystemFontResolver`). A stripped Windows
+      Server Core or a slim Linux container may have none of Segoe UI / Arial / DejaVu / Liberation,
+      and startup will refuse with the list it looked for. Install one, or ship a `.ttf`
 
 Everything above is covered operationally by `docs/03-RUNBOOK.md`.
 
@@ -628,3 +752,8 @@ loads on SQLite. Don't extend them to carry real behaviour:
 
 **Do not run anything that matters on Demo mode.** No ROWVERSION means the assignment concurrency
 guard is exercised in code but not enforced by the database.
+
+Demo mode uses `EnsureCreated()`, which does **not** migrate. An existing `workflowapp-demo.db`
+created before a schema change will be missing the new tables — delete the file to have it rebuilt.
+`dotnet run --project src/WorkflowApp.Api` with no `--launch-profile` starts **Demo**, not
+Development; pass `--launch-profile Development` to run against SQL Server.

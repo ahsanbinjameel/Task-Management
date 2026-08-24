@@ -42,6 +42,9 @@ public interface IWorkflowDbContext
 
     // Requests
     DbSet<Request> Requests { get; }
+
+    /// <summary>Several things asked for at once. See <see cref="RequestBatch"/>.</summary>
+    DbSet<RequestBatch> RequestBatches { get; }
     DbSet<RequestClarification> RequestClarifications { get; }
     DbSet<RequestActivity> RequestActivities { get; }
     DbSet<Attachment> Attachments { get; }
@@ -50,6 +53,9 @@ public interface IWorkflowDbContext
     DbSet<WorkTask> Tasks { get; }
     DbSet<TaskCollaborator> TaskCollaborators { get; }
     DbSet<WorkSession> WorkSessions { get; }
+
+    /// <summary>Interruptions that never became requests. See <see cref="QuickWork"/>.</summary>
+    DbSet<QuickWork> QuickWork { get; }
     DbSet<QCReview> QCReviews { get; }
     DbSet<AssignmentHistory> AssignmentHistories { get; }
     DbSet<StatusHistory> StatusHistories { get; }

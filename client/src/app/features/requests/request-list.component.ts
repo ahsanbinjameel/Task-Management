@@ -17,10 +17,14 @@ import { StatusTilesComponent } from '../../shared/status-tiles.component';
 import { SortHeaderComponent, SortState } from '../../shared/sort-header.component';
 import { AuthService } from '../../core/auth.service';
 import { Perm } from '../../core/permissions';
-import { PagedResult, RequestStatus, RequestSummaryDto , ClientOptionDto, StatusCountDto} from '../../core/models';
-import { humanizeEnum } from '../../core/format';
+import {
+  PagedResult, RequestedUrgency, RequestStatus, RequestSummaryDto, ClientOptionDto,
+  RequestBatchSummaryDto, StatusCountDto,
+} from '../../core/models';
+import { urgencyLabel } from '../../core/labels';
 import { SearchSelectComponent } from '../../shared/search-select.component';
 import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../shared/ui';
+import { QuickViewComponent, QuickViewTarget } from '../../shared/quick-view.component';
 
 const STATUSES: RequestStatus[] = [
   'Submitted', 'InReview', 'ClarificationRequired', 'Approved', 'Rejected', 'Duplicate',
@@ -33,7 +37,7 @@ const STATUSES: RequestStatus[] = [
   imports: [
     DatePipe, FormsModule, RouterLink, MatButtonModule, MatFormFieldModule, MatIconModule,
     MatInputModule, MatSlideToggleModule, MatTableModule, MatPaginatorModule,
-    MatTooltipModule, PageHeaderComponent, ChipComponent, EmptyComponent, LoadingComponent,
+    MatTooltipModule, QuickViewComponent, PageHeaderComponent, ChipComponent, EmptyComponent, LoadingComponent,
     StatusTilesComponent, SortHeaderComponent, SearchSelectComponent,
   ],
   template: `
@@ -51,6 +55,25 @@ const STATUSES: RequestStatus[] = [
         [selected]="view()"
         [total]="totalAcross()"
         (pick)="pickView($event)" />
+
+      <!--
+        Submissions the caller made as a set. A strip rather than a section: the items are already
+        in the table below, each with its own row and its own status — this is only a way back to
+        the whole submission, for somebody who raised eight things and wants to see how the eight
+        are getting on together.
+      -->
+      @if (batches().length > 0) {
+        <div class="batch-strip">
+          <span class="muted small">Asked for as a set:</span>
+          @for (batch of batches(); track batch.id) {
+            <a class="batch-pill" [routerLink]="['/requests/batches', batch.id]">
+              <span class="mono small">{{ batch.batchNumber }}</span>
+              <span class="truncate">{{ batch.title }}</span>
+              <span class="muted small nowrap">{{ batch.itemCount }} items</span>
+            </a>
+          }
+        </div>
+      }
 
       <div class="card card-pad filters">
         <mat-form-field class="search">
@@ -73,7 +96,9 @@ const STATUSES: RequestStatus[] = [
         @if (loading()) {
           <app-loading />
         } @else if (page().items.length === 0) {
-          <app-empty message="No requests found" icon="inbox" />
+          <app-empty message="No requests match" icon="inbox"
+                     hint="Clear the search box, the client filter or the status card above."
+                     actionLabel="Raise a request" actionRoute="/requests/new" />
         } @else {
           <div class="table-scroll">
             <table mat-table [dataSource]="page().items">
@@ -152,6 +177,12 @@ const STATUSES: RequestStatus[] = [
               <ng-container matColumnDef="action">
                 <th mat-header-cell *matHeaderCellDef aria-label="Actions"></th>
                 <td mat-cell *matCellDef="let r" class="action-cell">
+                  <!-- A look without leaving the list. Chrome, not a column; desktop only. -->
+                  <button matIconButton class="peek" type="button" matTooltip="Quick look"
+                          [attr.aria-label]="'Quick look at ' + r.requestNumber"
+                          (click)="peek(r); $event.stopPropagation()">
+                    <mat-icon>visibility</mat-icon>
+                  </button>
                   @if (r.hasOpenClarification) {
                     <a class="action" [routerLink]="['/requests', r.id]"
                        (click)="$event.stopPropagation()">Reply</a>
@@ -165,7 +196,7 @@ const STATUSES: RequestStatus[] = [
                                    (sortChange)="applySort($event)" />
                 </th>
                 <td mat-cell *matCellDef="let r">
-                  <app-chip [value]="r.requestedUrgency" kind="priority" />
+                  <app-chip [value]="r.requestedUrgency" kind="urgency" />
                 </td>
               </ng-container>
 
@@ -207,9 +238,24 @@ const STATUSES: RequestStatus[] = [
                          (page)="onPage($event)" />
         }
       </div>
+
+      <app-quick-view [target]="peeking()" (close)="peeking.set(null)" />
     </div>
   `,
   styles: `
+    .batch-strip {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 14px 0 -2px;
+    }
+    .batch-pill {
+      display: inline-flex; align-items: center; gap: 8px; max-width: 340px;
+      border: 1px solid var(--border); border-radius: 999px; padding: 5px 14px;
+      background: var(--surface-raised); color: inherit; text-decoration: none; font-size: 13px;
+    }
+    .batch-pill:hover { background: var(--surface-sunken); }
+    .action-cell { text-align: right; white-space: nowrap; }
+    .peek { margin-right: 2px; vertical-align: middle; }
+    .peek mat-icon { font-size: 18px; width: 18px; height: 18px; color: var(--text-muted); }
+    @media (max-width: 1100px) { .peek { display: none; } }
     .filters { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
     .filters mat-form-field { margin-bottom: -1.25em; }
     .filters app-search-select { width: 200px; margin-bottom: -1.25em; }
@@ -260,6 +306,13 @@ export class RequestListComponent implements OnInit {
   clientId: number | null = null;
   mine = false;
 
+  readonly batches = signal<RequestBatchSummaryDto[]>([]);
+  /** The row the drawer is showing, or null when it is closed. */
+  readonly peeking = signal<QuickViewTarget | null>(null);
+
+  peek(request: { id: number }): void {
+    this.peeking.set({ kind: 'request', id: request.id });
+  }
   readonly loading = signal(true);
   readonly page = signal<PagedResult<RequestSummaryDto>>(
     { items: [], page: 1, pageSize: 25, totalCount: 0, totalPages: 0 });
@@ -267,7 +320,7 @@ export class RequestListComponent implements OnInit {
   private pageIndex = 0;
   private pageSize = 25;
 
-  label = (value: string) => humanizeEnum(value);
+  label = (value: string) => urgencyLabel(value as RequestedUrgency);
 
   ngOnInit(): void {
     const view = this.route.snapshot.queryParamMap.get('view');
@@ -341,6 +394,13 @@ export class RequestListComponent implements OnInit {
   }
 
   reload(): void {
+    // The caller's own, always — a batch is a way back to a submission they made, not a
+    // browsing view. Reviewers reach other people's through the review queue.
+    this.api.myBatches().subscribe({
+      next: (p) => this.batches.set(p.items),
+      error: () => this.batches.set([]),
+    });
+
     this.loadCounts();
     this.loading.set(true);
     this.api.requests({

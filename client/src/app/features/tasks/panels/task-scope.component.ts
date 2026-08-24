@@ -55,7 +55,8 @@ import { EmptyComponent } from '../../../shared/ui';
       <div class="card">
         <div class="card-pad"><h2 class="card-title" style="margin:0">History</h2></div>
         @if (changes().length === 0) {
-          <app-empty message="No scope changes" icon="rule" />
+          <app-empty message="The scope has not changed" icon="rule"
+                     hint="Record a change when the job turns out bigger or smaller than agreed — the original estimate is kept either way." />
         } @else {
           @for (change of changes(); track change.id) {
             <div class="change">

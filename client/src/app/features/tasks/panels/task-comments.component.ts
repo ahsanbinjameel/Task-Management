@@ -11,7 +11,7 @@ import { ApiService } from '../../../core/api.service';
 import { AuthService } from '../../../core/auth.service';
 import { Perm } from '../../../core/permissions';
 import { CommentCategory, TaskCommentDto } from '../../../core/models';
-import { humanizeEnum } from '../../../core/format';
+import { commentCategoryLabel } from '../../../core/labels';
 import { enumOptions, SearchSelectComponent } from '../../../shared/search-select.component';
 import { EmptyComponent } from '../../../shared/ui';
 
@@ -106,7 +106,7 @@ export class TaskCommentsComponent implements OnInit {
 
   readonly categoryOptions = enumOptions(this.categories);
 
-  label = (value: string) => humanizeEnum(value);
+  label = (value: string) => commentCategoryLabel(value as CommentCategory);
 
   ngOnInit(): void { this.load(); }
 

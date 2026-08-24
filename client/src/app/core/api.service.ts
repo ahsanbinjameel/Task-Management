@@ -3,7 +3,10 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
   AcceptanceCriteriaDto, ActiveWorkforceDto, ActivityEventDto, AssignableUserDto, AttachmentDto,
-  AuditLogDto, ClientOptionDto, ClosureChecklistDto, StatusCountDto, TriageResultDto, CoordinatorDashboardDto, CommentCategory, DailyTeamReportDto,
+  AttachmentKind,
+  AuditLogDto, ClientOptionDto, HomeDashboardDto, QuickWorkDto, StartQuickWorkDto,
+  CreateRequestBatchDto, RequestBatchDetailDto, RequestBatchSummaryDto, ApproveTogetherDto,
+  FinishQuickWorkDto, PromoteQuickWorkDto, ClosureChecklistDto, StatusCountDto, TriageResultDto, CoordinatorDashboardDto, CommentCategory, DailyTeamReportDto,
   DailyTimelineDto, DailyUserReportDto, DependencyType, ManagementDashboardDto, NotificationDto,
   PagedResult, PauseReasonDto, Priority, QCReviewDto, QCResult, RequestDetailDto,
   RequesterDashboardDto, RequestStatus, RequestSummaryDto, RequestType, RequestedUrgency, RoleDto,
@@ -141,10 +144,19 @@ export class ApiService {
     return this.http.post<AttachmentDto>(`/api/requests/${requestId}/attachments`, form);
   }
 
-  uploadTaskAttachment(taskId: number, file: File): Observable<AttachmentDto> {
+  /**
+   * `kind` says what the file is for. The server decides who may claim what: only the person
+   * responsible for the work may attach proof of it, and only a checker may attach evidence to a
+   * check — so a caller that gets this wrong is refused rather than quietly filed under the wrong
+   * heading.
+   */
+  uploadTaskAttachment(
+    taskId: number, file: File, kind: AttachmentKind = 'General',
+  ): Observable<AttachmentDto> {
     const form = new FormData();
     form.append('file', file);
-    return this.http.post<AttachmentDto>(`/api/tasks/${taskId}/attachments`, form);
+    return this.http.post<AttachmentDto>(
+      `/api/tasks/${taskId}/attachments`, form, { params: { kind } });
   }
 
   downloadAttachment(id: number): Observable<Blob> {
@@ -326,8 +338,11 @@ export class ApiService {
     }, { context });
   }
 
-  removeDependency(id: number, dependencyId: number): Observable<TaskDependencyGraphDto> {
-    return this.http.delete<TaskDependencyGraphDto>(`/api/tasks/${id}/dependencies/${dependencyId}`);
+  removeDependency(
+    id: number, dependencyId: number, context?: HttpContext,
+  ): Observable<TaskDependencyGraphDto> {
+    return this.http.delete<TaskDependencyGraphDto>(
+      `/api/tasks/${id}/dependencies/${dependencyId}`, { context });
   }
 
   subtasks(id: number): Observable<PagedResult<TaskSummaryDto>> {
@@ -363,12 +378,80 @@ export class ApiService {
     return this.http.get<WorkforceStatusDto>('/api/shifts/current');
   }
 
+  // --- request batches ------------------------------------------------------------------------
+
+  createBatch(body: CreateRequestBatchDto, context?: HttpContext): Observable<RequestBatchDetailDto> {
+    return this.http.post<RequestBatchDetailDto>('/api/requests/batches', body, { context });
+  }
+
+  batch(id: number): Observable<RequestBatchDetailDto> {
+    return this.http.get<RequestBatchDetailDto>(`/api/requests/batches/${id}`);
+  }
+
+  myBatches(page = 1, pageSize = 25): Observable<PagedResult<RequestBatchSummaryDto>> {
+    return this.http.get<PagedResult<RequestBatchSummaryDto>>('/api/requests/batches/mine', {
+      params: params({ page, pageSize }),
+    });
+  }
+
+  batchReviewQueue(page = 1, pageSize = 25): Observable<PagedResult<RequestBatchSummaryDto>> {
+    return this.http.get<PagedResult<RequestBatchSummaryDto>>('/api/requests/batches/review-queue', {
+      params: params({ page, pageSize }),
+    });
+  }
+
+  approveTogether(
+    batchId: number, body: ApproveTogetherDto, context?: HttpContext,
+  ): Observable<TriageResultDto> {
+    return this.http.post<TriageResultDto>(
+      `/api/requests/batches/${batchId}/approve-together`, body, { context });
+  }
+
+  uploadBatchAttachment(batchId: number, file: File): Observable<AttachmentDto> {
+    const form = new FormData();
+    form.append('file', file);
+    return this.http.post<AttachmentDto>(`/api/requests/batches/${batchId}/attachments`, form);
+  }
+
+  // --- quick work ---------------------------------------------------------------------------
+
+  /** 204 when nothing is running, which `HttpClient` gives us as null. */
+  activeQuickWork(): Observable<QuickWorkDto | null> {
+    return this.http.get<QuickWorkDto | null>('/api/quick-work/active');
+  }
+
+  quickWorkForDay(date?: string): Observable<QuickWorkDto[]> {
+    return this.http.get<QuickWorkDto[]>('/api/quick-work', {
+      params: date ? { date } : {},
+    });
+  }
+
+  startQuickWork(body: StartQuickWorkDto, context?: HttpContext): Observable<QuickWorkDto> {
+    return this.http.post<QuickWorkDto>('/api/quick-work', body, { context });
+  }
+
+  finishQuickWork(
+    id: number, body: FinishQuickWorkDto, context?: HttpContext,
+  ): Observable<QuickWorkDto> {
+    return this.http.post<QuickWorkDto>(`/api/quick-work/${id}/finish`, body, { context });
+  }
+
+  cancelQuickWork(id: number, context?: HttpContext): Observable<QuickWorkDto> {
+    return this.http.post<QuickWorkDto>(`/api/quick-work/${id}/cancel`, {}, { context });
+  }
+
+  promoteQuickWork(
+    id: number, body: PromoteQuickWorkDto, context?: HttpContext,
+  ): Observable<QuickWorkDto> {
+    return this.http.post<QuickWorkDto>(`/api/quick-work/${id}/promote`, body, { context });
+  }
+
   startShift(): Observable<WorkforceStatusDto> {
     return this.http.post<WorkforceStatusDto>('/api/shifts/start', {});
   }
 
-  endShift(note?: string): Observable<WorkforceStatusDto> {
-    return this.http.post<WorkforceStatusDto>('/api/shifts/end', { note });
+  endShift(context?: HttpContext, note?: string): Observable<WorkforceStatusDto> {
+    return this.http.post<WorkforceStatusDto>('/api/shifts/end', { note }, { context });
   }
 
   setWorkforceState(state: WorkforceState, note?: string): Observable<WorkforceStatusDto> {
@@ -405,6 +488,11 @@ export class ApiService {
 
   // --- dashboards & reports ----------------------------------------------------------------------
 
+  /** The home screen: what is waiting on me, and what has happened. */
+  homeDashboard(): Observable<HomeDashboardDto> {
+    return this.http.get<HomeDashboardDto>('/api/dashboards/home');
+  }
+
   requesterDashboard(): Observable<RequesterDashboardDto> {
     return this.http.get<RequesterDashboardDto>('/api/dashboards/requester');
   }
@@ -433,6 +521,31 @@ export class ApiService {
 
   teamDailyCsv(date?: string): Observable<Blob> {
     return this.http.get('/api/reports/team/daily.csv', {
+      params: params({ date }),
+      responseType: 'blob',
+    });
+  }
+
+  /**
+   * The same day as a document rather than a spreadsheet — header, summary, work detail, quick
+   * work, interruptions, notes and page numbers, rendered server-side.
+   */
+  teamDailyPdf(date?: string): Observable<Blob> {
+    return this.http.get('/api/reports/team/daily.pdf', {
+      params: params({ date }),
+      responseType: 'blob',
+    });
+  }
+
+  myDailyPdf(date?: string): Observable<Blob> {
+    return this.http.get('/api/reports/me/daily.pdf', {
+      params: params({ date }),
+      responseType: 'blob',
+    });
+  }
+
+  userDailyPdf(userId: number, date?: string): Observable<Blob> {
+    return this.http.get(`/api/reports/users/${userId}/daily.pdf`, {
       params: params({ date }),
       responseType: 'blob',
     });

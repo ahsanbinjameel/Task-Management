@@ -92,7 +92,18 @@ public static class DefaultRoles
             Permissions.WorkforceManageOthers, Permissions.DashboardManagement
         },
         // Workers are the only default role on the clock — see Permissions.WorkforceTrackShift.
-        [Worker] = new[] { Permissions.TaskWork, Permissions.WorkforceTrackShift },
+        //
+        // They can also raise a request and read their own. Not scope creep: a worker who fields a
+        // phone call and finds real work behind it has to be able to put it into the system, and
+        // Quick Work's promotion step is exactly that — it creates a Request, so it is gated on
+        // Request.Create like every other way of creating one. Without this the feature is dead for
+        // the only role it was built for. ViewOwn comes with it so they can follow what they raised;
+        // they still cannot browse anyone else's, which needs Request.ViewAll.
+        [Worker] = new[]
+        {
+            Permissions.TaskWork, Permissions.WorkforceTrackShift,
+            Permissions.RequestCreate, Permissions.RequestViewOwn
+        },
         [QC] = new[] { Permissions.TaskQCReview, Permissions.TaskClose },
         [Management] = new[]
         {

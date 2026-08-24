@@ -19,7 +19,8 @@ import { enumOptions, SearchSelectComponent } from '../../shared/search-select.c
 import { taskView } from '../../shared/list-views';
 import { EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../shared/ui';
 import { TaskTableComponent } from '../../shared/task-table.component';
-import { humanizeEnum } from '../../core/format';
+import { QuickViewComponent, QuickViewTarget } from '../../shared/quick-view.component';
+import { priorityLabel } from '../../core/labels';
 
 const STATUSES: WorkTaskStatus[] = [
   'ReadyForAssignment', 'Assigned', 'ReadyToStart', 'InProgress', 'Paused', 'Blocked',
@@ -33,7 +34,7 @@ const STATUSES: WorkTaskStatus[] = [
   imports: [
     FormsModule, MatFormFieldModule, MatInputModule, MatButtonModule,
     MatIconModule, MatPaginatorModule, MatSlideToggleModule,
-    PageHeaderComponent, EmptyComponent, LoadingComponent, TaskTableComponent,
+    PageHeaderComponent, EmptyComponent, LoadingComponent, TaskTableComponent, QuickViewComponent,
     StatusTilesComponent, SearchSelectComponent,
   ],
   template: `
@@ -69,19 +70,22 @@ const STATUSES: WorkTaskStatus[] = [
         @if (loading()) {
           <app-loading />
         } @else if (page().items.length === 0) {
-          <app-empty message="No tasks match those filters" icon="search_off"
-                     hint="Try clearing the status or search box." />
+          <app-empty message="No work matches" icon="search_off"
+                     hint="Clear the search box, the client filter or the status card above." />
         } @else {
           <app-task-table [tasks]="page().items" (action)="act($event)"
                           [columns]="grid().columns.concat(grid().action ? ['action'] : [])"
                           [actionLabel]="grid().action?.label ?? 'Open'"
                           [actionWhen]="grid().action?.when ?? null"
-                          [sortable]="true" [sort]="sort()" (sortChange)="applySort($event)" />
+                          [sortable]="true" [sort]="sort()" (sortChange)="applySort($event)" 
+                          [showPreview]="true" (preview)="peek($event)"/>
           <mat-paginator [length]="page().totalCount" [pageSize]="page().pageSize"
                          [pageIndex]="page().page - 1" [pageSizeOptions]="[25, 50, 100]"
                          (page)="onPage($event)" />
         }
       </div>
+
+      <app-quick-view [target]="peeking()" (close)="peeking.set(null)" />
     </div>
   `,
   styles: `
@@ -110,6 +114,12 @@ export class TaskListComponent implements OnInit {
   priority: Priority | null = null;
   openOnly = true;
 
+  /** The row the drawer is showing, or null when it is closed. */
+  readonly peeking = signal<QuickViewTarget | null>(null);
+
+  peek(task: { id: number }): void {
+    this.peeking.set({ kind: 'task', id: task.id });
+  }
   readonly loading = signal(true);
   readonly page = signal<PagedResult<TaskSummaryDto>>(
     { items: [], page: 1, pageSize: 25, totalCount: 0, totalPages: 0 });
@@ -117,7 +127,7 @@ export class TaskListComponent implements OnInit {
   private pageIndex = 0;
   private pageSize = 25;
 
-  label = (value: string) => humanizeEnum(value);
+  label = (value: string) => priorityLabel(value as Priority);
 
   ngOnInit(): void {
     // A view in the URL wins over the default, so a bookmarked or shared queue opens on it.

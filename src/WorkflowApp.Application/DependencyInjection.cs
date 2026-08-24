@@ -45,6 +45,7 @@ public static class DependencyInjection
         // Requests
         services.AddScoped<IRequestService, RequestService>();
         services.AddScoped<IRequestTriageService, RequestTriageService>();
+        services.AddScoped<IRequestBatchService, RequestBatchService>();
         services.AddScoped<IAttachmentService, AttachmentService>();
 
         // Tasks
@@ -53,6 +54,7 @@ public static class DependencyInjection
         services.AddScoped<ITaskWorkflowService, TaskWorkflowService>();
         services.AddScoped<ITaskAssignmentService, TaskAssignmentService>();
         services.AddScoped<IWorkSessionService, WorkSessionService>();
+        services.AddScoped<IQuickWorkService, QuickWorkService>();
         services.AddScoped<IQCService, QCService>();
         services.AddScoped<IClosureService, ClosureService>();
         services.AddScoped<ITaskCommentService, TaskCommentService>();

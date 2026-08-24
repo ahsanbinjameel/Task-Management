@@ -215,7 +215,7 @@ export class ImageViewerDialog {
       text-overflow: ellipsis; white-space: nowrap;
     }
     .file {
-      display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+      display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 10px;
       border: 1px solid var(--border); border-radius: 10px; min-width: 220px;
     }
     .file .meta { display: flex; flex-direction: column; min-width: 0; }

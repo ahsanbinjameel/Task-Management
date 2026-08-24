@@ -1,12 +1,13 @@
-import { Component, inject, input, output } from '@angular/core';
+import { Component, inject, input, output, computed } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
 import { MatTableModule } from '@angular/material/table';
 import { SortHeaderComponent, SortState } from './sort-header.component';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { MatButtonModule } from '@angular/material/button';
 import { TaskSummaryDto } from '../core/models';
-import { DurationPipe } from '../core/format';
+import { DurationPipe, sinceLabel } from '../core/format';
 import { ChipComponent } from './ui';
 
 /**
@@ -18,7 +19,8 @@ import { ChipComponent } from './ui';
   selector: 'app-task-table',
   standalone: true,
   imports: [
-    RouterLink, DatePipe, MatTableModule, MatIconModule, MatTooltipModule, ChipComponent,
+    RouterLink, DatePipe, MatTableModule, MatIconModule, MatTooltipModule, MatButtonModule,
+    ChipComponent,
     SortHeaderComponent,
     DurationPipe,
   ],
@@ -252,8 +254,27 @@ import { ChipComponent } from './ui';
           </td>
         </ng-container>
 
-        <tr mat-header-row *matHeaderRowDef="columns()"></tr>
-        <tr mat-row *matRowDef="let row; columns: columns()"
+        <!--
+          A look without leaving the list.
+
+          Its own column, appended here rather than named in list-views: the action column only
+          exists for views that define an action, so hanging the trigger off that one made it
+          vanish on every view that does not. Hidden below 1100px, where there is no room for a
+          panel beside a list and the full page is the better answer anyway.
+        -->
+        <ng-container matColumnDef="preview">
+          <th mat-header-cell *matHeaderCellDef aria-label="Quick look"></th>
+          <td mat-cell *matCellDef="let t" class="peek-cell">
+            <button matIconButton class="peek" type="button" matTooltip="Quick look"
+                    [attr.aria-label]="'Quick look at ' + t.taskNumber"
+                    (click)="preview.emit(t); $event.stopPropagation()">
+              <mat-icon>visibility</mat-icon>
+            </button>
+          </td>
+        </ng-container>
+
+        <tr mat-header-row *matHeaderRowDef="renderedColumns()"></tr>
+        <tr mat-row *matRowDef="let row; columns: renderedColumns()"
             class="clickable" tabindex="0"
             (click)="open(row)" (keydown.enter)="open(row)"></tr>
       </table>
@@ -271,7 +292,11 @@ import { ChipComponent } from './ui';
     .running { color: var(--tone-running-fg); font-size: 17px; width: 17px; height: 17px; }
     .progress { width: 74px; height: 6px; border-radius: 999px; background: var(--surface-sunken); }
     .progress i { display: block; height: 100%; border-radius: 999px; background: #1d69d4; }
-    .action-cell { text-align: right; }
+    .action-cell { text-align: right; white-space: nowrap; }
+    .peek-cell { width: 44px; padding-right: 4px !important; }
+    .peek { vertical-align: middle; }
+    .peek mat-icon { font-size: 18px; width: 18px; height: 18px; color: var(--text-muted); }
+    @media (max-width: 1100px) { .peek-cell, .peek { display: none; } }
     tr.clickable { cursor: pointer; }
     tr.clickable:hover { background: var(--surface-sunken); }
     tr.clickable:focus-visible { outline: 2px solid #1d69d4; outline-offset: -2px; }
@@ -300,6 +325,18 @@ export class TaskTableComponent {
   readonly action = output<TaskSummaryDto>();
 
   /**
+   * Opens the quick-view drawer. Asked for explicitly rather than inferred from whether anyone is
+   * listening: `OutputEmitterRef` has no subscriber count, and a control that appears depending on
+   * how a parent happens to be wired is one nobody can reason about.
+   */
+  readonly showPreview = input(false);
+  readonly preview = output<TaskSummaryDto>();
+
+  /** Whatever the view asked for, plus the quick-look column when it is switched on. */
+  readonly renderedColumns = computed(() =>
+    this.showPreview() ? [...this.columns(), 'preview'] : this.columns());
+
+  /**
    * Clicking the row opens the task. Aiming at a five-character reference number is a needless
    * demand on the reader; the links inside the row still work, and the action button stops the
    * click so it never does two things at once.
@@ -314,18 +351,6 @@ export class TaskTableComponent {
     return !!task.dueDate && new Date(task.dueDate) < new Date() && task.status !== 'Closed';
   }
 
-  /**
-   * "3 days" rather than a date. On a queue the question is never "what was Tuesday's date?" —
-   * it is "how long has this been sitting here?", and a date makes the reader do that subtraction.
-   */
-  since(value: string | null | undefined): string {
-    if (!value) return '—';
-
-    const minutes = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 60000));
-    if (minutes < 60) return `${minutes}m`;
-    if (minutes < 60 * 24) return `${Math.floor(minutes / 60)}h`;
-
-    const days = Math.floor(minutes / (60 * 24));
-    return days === 1 ? '1 day' : `${days} days`;
-  }
+  /** Shared with the home screen — see `sinceLabel`. */
+  readonly since = sinceLabel;
 }

@@ -47,7 +47,8 @@ import { EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../sha
         @if (loading()) {
           <app-loading />
         } @else if (page().items.length === 0) {
-          <app-empty message="No audit entries match" icon="policy" />
+          <app-empty message="No audit entries match" icon="policy"
+                     hint="Widen the date range, or clear the action filter." />
         } @else {
           <div class="table-scroll">
             <table mat-table [dataSource]="page().items">

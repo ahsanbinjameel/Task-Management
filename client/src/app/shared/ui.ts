@@ -1,8 +1,11 @@
 import { Component, Input, input } from '@angular/core';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatButtonModule } from '@angular/material/button';
+import { RouterLink } from '@angular/router';
 import { Priority, WorkTaskStatus, WorkforceState } from '../core/models';
-import { humanizeEnum, priorityTone, statusTone, workforceTone } from '../core/format';
+import { priorityTone, statusTone, workforceTone } from '../core/format';
+import { LabelKind, label } from '../core/labels';
 
 /** A status, priority or availability value rendered as a tone-coded chip. */
 @Component({
@@ -12,15 +15,17 @@ import { humanizeEnum, priorityTone, statusTone, workforceTone } from '../core/f
 })
 export class ChipComponent {
   readonly value = input.required<string>();
-  readonly kind = input<'status' | 'priority' | 'workforce' | 'plain'>('plain');
+  /** Which map in the wording layer translates this value. */
+  readonly kind = input<LabelKind>('plain');
   readonly dot = input(false);
 
-  label = () => humanizeEnum(this.value());
+  label = () => label(this.kind(), this.value());
 
   tone = () => {
     switch (this.kind()) {
       case 'status': return statusTone(this.value() as WorkTaskStatus);
-      case 'priority': return priorityTone(this.value() as Priority);
+      case 'priority':
+      case 'urgency': return priorityTone(this.value() as Priority);
       case 'workforce': return workforceTone(this.value() as WorkforceState);
       default: return 'neutral';
     }
@@ -49,6 +54,13 @@ export class ChipComponent {
     h1 { font-size: 22px; font-weight: 600; margin: 0 0 2px; letter-spacing: -0.01em; }
     p { margin: 0; font-size: 13.5px; }
     .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+    /* Two half-width buttons squeezed onto one line read as one control. Stack them instead. */
+    @media (max-width: 560px) {
+      .header { gap: 12px; }
+      .actions { width: 100%; }
+      .actions > * { flex: 1 1 auto; }
+    }
   `,
 })
 export class PageHeaderComponent {
@@ -63,12 +75,16 @@ export class PageHeaderComponent {
 @Component({
   selector: 'app-empty',
   standalone: true,
-  imports: [MatIconModule],
+  imports: [MatIconModule, MatButtonModule, RouterLink],
   template: `
     <div class="empty">
       <mat-icon>{{ icon() }}</mat-icon>
       <p class="title">{{ message() }}</p>
       @if (hint()) { <p class="muted small">{{ hint() }}</p> }
+
+      @if (actionLabel() && actionRoute()) {
+        <a matButton="filled" class="action" [routerLink]="actionRoute()">{{ actionLabel() }}</a>
+      }
       <ng-content />
     </div>
   `,
@@ -80,12 +96,28 @@ export class PageHeaderComponent {
     mat-icon { width: 40px; height: 40px; font-size: 40px; opacity: 0.4; }
     .title { margin: 6px 0 0; font-size: 14.5px; font-weight: 500; color: var(--text); }
     p { margin: 0; }
+    .action { margin-top: 12px; }
   `,
 })
 export class EmptyComponent {
   readonly message = input.required<string>();
+
+  /**
+   * Why the list is empty and what fills it. A blank space is ambiguous in a way that matters:
+   * "nothing is assigned to you" and "the filter matched nothing" look identical, and only one of
+   * them means you should change what you just did.
+   */
   readonly hint = input<string>();
   readonly icon = input('inbox');
+
+  /**
+   * The one thing to do next, where there is one. An empty screen with no way off it is a dead
+   * end — the reader has to work out for themselves which part of the menu fills it. Left unset
+   * where nothing the reader can do would change the answer ("nobody is on shift" is a fact about
+   * other people, not an invitation).
+   */
+  readonly actionLabel = input<string>();
+  readonly actionRoute = input<string | unknown[]>();
 }
 
 @Component({

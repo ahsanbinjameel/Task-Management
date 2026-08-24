@@ -70,4 +70,9 @@ public static class NumberSequences
 
     public const string Task = "Task";
     public const string TaskPrefix = "TSK";
+
+    // Its own counter, like the others: printed numbers must be dense, and a batch sharing the
+    // request sequence would put gaps in both.
+    public const string Batch = "Batch";
+    public const string BatchPrefix = "BAT";
 }

@@ -7,7 +7,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { ApiService } from '../../core/api.service';
 import { ToastService } from '../../core/toast.service';
 import { RealtimeService } from '../../core/realtime.service';
-import { PagedResult, RequestSummaryDto } from '../../core/models';
+import { PagedResult, RequestBatchSummaryDto, RequestSummaryDto } from '../../core/models';
 import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../shared/ui';
 
 /**
@@ -28,6 +28,49 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
         <button matButton (click)="load()"><mat-icon>refresh</mat-icon> Refresh</button>
       </app-page-header>
 
+      <!--
+        Submissions that arrived as a set, above the individual requests.
+        They are listed separately rather than flattened in among them because the decision they
+        invite is a different one: "which of these eight are the same job" cannot be made from a
+        list where the eight are scattered between unrelated requests. The items are still in the
+        list below as well — each is an ordinary request and can be reviewed on its own.
+      -->
+      @if (batches().length > 0) {
+        <div class="card batches">
+          <div class="card-pad">
+            <h2 class="card-title" style="margin:0">Asked for as a set</h2>
+            <p class="muted small" style="margin:3px 0 0">
+              Several things submitted together. Open one to decide on the items, or to combine
+              some of them into a single piece of work.
+            </p>
+          </div>
+          @for (batch of batches(); track batch.id) {
+            <a class="item batch" [routerLink]="['/requests/batches', batch.id]">
+              <div class="body">
+                <div class="line1">
+                  <span class="mono small muted">{{ batch.batchNumber }}</span>
+                  <strong class="truncate">{{ batch.title }}</strong>
+                </div>
+                <div class="line2">
+                  <span class="chip tone-warn">{{ batch.awaitingDecisionCount }} waiting</span>
+                  @if (batch.approvedCount > 0) {
+                    <span class="chip tone-good">{{ batch.approvedCount }} approved</span>
+                  }
+                  @if (batch.declinedCount > 0) {
+                    <span class="chip tone-muted">{{ batch.declinedCount }} declined</span>
+                  }
+                  <span class="muted small">
+                    {{ batch.requestedByDisplayName }} · {{ batch.requestedAt | date: 'MMM d' }}
+                    @if (batch.clientName) { · {{ batch.clientName }} }
+                  </span>
+                </div>
+              </div>
+              <mat-icon>chevron_right</mat-icon>
+            </a>
+          }
+        </div>
+      }
+
       <div class="card">
         @if (loading()) {
           <app-loading />
@@ -45,8 +88,8 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
                   <strong class="truncate">{{ request.title }}</strong>
                 </div>
                 <div class="line2">
-                  <app-chip [value]="request.requestedUrgency" kind="priority" />
-                  <app-chip [value]="request.status" />
+                  <app-chip [value]="request.requestedUrgency" kind="urgency" />
+                  <app-chip [value]="request.status" kind="requestStatus" />
                   <span class="muted small">
                     {{ request.requestedByDisplayName }} · {{ request.requestedAt | date: 'MMM d' }}
                   </span>
@@ -65,8 +108,12 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
     </div>
   `,
   styles: `
+    .batches { margin-bottom: 16px; }
+    .item.batch { color: inherit; text-decoration: none; border-top: 1px solid var(--border); }
+    .item.batch:hover { background: var(--surface-sunken); }
+    .item.batch:last-child { border-bottom: none; }
     .item {
-      display: flex; align-items: center; gap: 14px;
+      display: flex; align-items: center; flex-wrap: wrap; gap: 14px;
       padding: 14px 18px; border-bottom: 1px solid var(--border);
     }
     .item:last-child { border-bottom: none; }
@@ -83,6 +130,7 @@ export class ReviewQueueComponent implements OnInit {
   private readonly toast = inject(ToastService);
   private readonly realtime = inject(RealtimeService);
 
+  readonly batches = signal<RequestBatchSummaryDto[]>([]);
   readonly loading = signal(true);
   readonly page = signal<PagedResult<RequestSummaryDto>>(
     { items: [], page: 1, pageSize: 50, totalCount: 0, totalPages: 0 });
@@ -97,6 +145,13 @@ export class ReviewQueueComponent implements OnInit {
   }
 
   load(): void {
+    // Its own call rather than a field on the request rows: a batch is a different shape and
+    // a different decision, and folding it into the request query would make both worse.
+    this.api.batchReviewQueue().subscribe({
+      next: (p) => this.batches.set(p.items),
+      error: () => this.batches.set([]),
+    });
+
     this.api.reviewQueue(1, 50).subscribe({
       next: (result) => { this.page.set(result); this.loading.set(false); },
       error: () => this.loading.set(false),
