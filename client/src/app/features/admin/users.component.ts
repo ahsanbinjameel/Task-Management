@@ -35,16 +35,23 @@ import {
 } from '../../shared/ui';
 import { ConfirmDialog, ConfirmData } from '../../shared/dialogs';
 import {
-  ColumnFilterComponent, ColumnFilterSpec, NoMatchesComponent, columnFilters,
+  ColumnFilterComponent, ColumnFilterSpec, FilterSummaryComponent, NoMatchesComponent,
+  columnFilters,
 } from '../../shared/column-filter.component';
 
 /**
- * Correcting who someone is.
+ * Everything about one account, in one place.
  *
- * Separate from the roles dialog on purpose: a misspelled surname and a change of authority are
- * different jobs, done by different people at different times, and merging them would put both
- * behind one Save and one audit row. The username is shown but not editable — it is what the person
- * signs in with and what every audit row was recorded against.
+ * It used to be three: a rename dialog, a "reset password" item in the row menu, and a separate
+ * roles dialog. Two of those have been folded together here, because "change this person" is one
+ * job to the person doing it and three menu items is three chances to pick the wrong one.
+ *
+ * **Roles are still separate**, deliberately: granting authority is a different decision from
+ * fixing a surname, usually made by a different person, and it deserves its own audit row.
+ *
+ * The password field sets a new one; it never shows the current one, because there is nothing to
+ * show. Passwords are stored as one-way PBKDF2 hashes, so no screen and no API can read one back -
+ * only replace it.
  */
 @Component({
   selector: 'app-edit-user-dialog',
@@ -53,7 +60,7 @@ import {
     FormsModule, MatDialogModule, MatButtonModule, MatFormFieldModule, MatInputModule, MatIconModule,
   ],
   template: `
-    <h2 mat-dialog-title>Edit {{ data.user.displayName }}</h2>
+    <h2 mat-dialog-title>{{ data.user.displayName }}</h2>
     <mat-dialog-content>
       @if (form.message(); as m) {
         <div class="form-error" role="alert">
@@ -61,15 +68,17 @@ import {
         </div>
       }
 
-      <p class="muted small who">
-        Signs in as <strong>{{ data.user.userName }}</strong>. That cannot be changed — it is what
-        every audit entry was recorded against.
-      </p>
+      <mat-form-field class="full">
+        <mat-label>Username</mat-label>
+        <input matInput name="userName" [(ngModel)]="userName" cdkFocusInitial maxlength="100"
+               autocomplete="off" />
+        <mat-hint>What they type to sign in.</mat-hint>
+        @if (form.fieldError('userName'); as e) { <mat-error>{{ e }}</mat-error> }
+      </mat-form-field>
 
       <mat-form-field class="full">
         <mat-label>Full name</mat-label>
-        <input matInput name="displayName" [(ngModel)]="displayName" cdkFocusInitial
-               maxlength="200" />
+        <input matInput name="displayName" [(ngModel)]="displayName" maxlength="200" />
         @if (form.fieldError('displayName'); as e) { <mat-error>{{ e }}</mat-error> }
       </mat-form-field>
 
@@ -78,18 +87,67 @@ import {
         <input matInput name="email" type="email" [(ngModel)]="email" maxlength="256" />
         @if (form.fieldError('email'); as e) { <mat-error>{{ e }}</mat-error> }
       </mat-form-field>
+
+      <h3 class="section">Password</h3>
+      <p class="muted small note">
+        Existing passwords cannot be shown - they are stored as one-way hashes, so nobody, including
+        an administrator, can read one back. Leave this blank to keep theirs as it is.
+      </p>
+
+      <mat-form-field class="full">
+        <mat-label>Set a new password</mat-label>
+        <input matInput name="newPassword" [type]="reveal() ? 'text' : 'password'"
+               autocomplete="new-password" [(ngModel)]="newPassword" maxlength="200" />
+        <button matIconButton matSuffix type="button" tabindex="-1"
+                (click)="reveal.set(!reveal())"
+                [attr.aria-label]="reveal() ? 'Hide password' : 'Show password'">
+          <mat-icon>{{ reveal() ? 'visibility_off' : 'visibility' }}</mat-icon>
+        </button>
+        @if (form.fieldError('newPassword'); as e) { <mat-error>{{ e }}</mat-error> }
+      </mat-form-field>
+
+      @if (newPassword) {
+        <mat-form-field class="full">
+          <mat-label>Type it again</mat-label>
+          <input matInput name="confirmPassword" [type]="reveal() ? 'text' : 'password'"
+                 autocomplete="new-password" [(ngModel)]="confirm" maxlength="200" />
+        </mat-form-field>
+
+        <p class="warn-note" role="note">
+          <mat-icon>info_outline</mat-icon>
+          <span>
+            Setting a password signs them out everywhere and clears any lockout. Give them the new
+            one yourself - it is not emailed.
+          </span>
+        </p>
+      }
+
+      @if (mismatch()) {
+        <p class="mismatch" role="alert">The two passwords do not match.</p>
+      }
     </mat-dialog-content>
     <mat-dialog-actions align="end">
       <button matButton mat-dialog-close [disabled]="form.busy()">Cancel</button>
-      <button matButton="filled" [disabled]="!displayName.trim() || form.busy()" (click)="save()">
-        {{ form.busy() ? 'Saving…' : 'Save' }}
+      <button matButton="filled" [disabled]="!ready() || form.busy()" (click)="save()">
+        {{ form.busy() ? 'Saving...' : 'Save' }}
       </button>
     </mat-dialog-actions>
   `,
   styles: `
     .full { width: 100%; }
-    .who { margin: 0 0 14px; }
-    mat-dialog-content { min-width: min(420px, 84vw); padding-top: 8px !important; }
+    .section {
+      margin: 18px 0 4px; font-size: 12px; font-weight: 600; letter-spacing: .04em;
+      text-transform: uppercase; color: var(--text-muted);
+    }
+    .note { margin: 0 0 12px; }
+    .mismatch { margin: 8px 0 0; font-size: 13px; color: var(--tone-danger-fg); }
+    mat-dialog-content { min-width: min(460px, 86vw); padding-top: 8px !important; }
+    .warn-note {
+      display: flex; gap: 8px; align-items: flex-start; margin: 4px 0 0;
+      padding: 9px 11px; border-radius: 8px; font-size: 12.5px; line-height: 1.45;
+      background: var(--tone-warn-bg); color: var(--tone-warn-fg);
+    }
+    .warn-note mat-icon { font-size: 16px; width: 16px; height: 16px; flex: none; margin-top: 1px; }
     .form-error {
       display: flex; align-items: flex-start; gap: 8px; margin: 0 0 12px;
       padding: 10px 12px; border-radius: 8px; font-size: 13.5px; line-height: 1.45;
@@ -104,111 +162,32 @@ export class EditUserDialog {
   private readonly ref = inject(MatDialogRef<EditUserDialog>);
   readonly form = new FormSubmit();
 
+  userName = this.data.user.userName;
   displayName = this.data.user.displayName;
   email = this.data.user.email ?? '';
-
-  save(): void {
-    this.ref.disableClose = true;
-    this.form.run(
-      (ctx) => this.api.updateUser(this.data.user.id, {
-        displayName: this.displayName.trim(),
-        email: this.email.trim() || null,
-      }, ctx),
-      (user) => { this.ref.disableClose = false; this.ref.close(user ?? true); },
-    );
-  }
-}
-
-/**
- * Setting someone else's password.
- *
- * Replaces a reason dialog that collected it in a plain `<textarea>` — the password sat on screen
- * in full view, wrapped across lines, with no way to hide it. This asks for it twice instead, so a
- * masked field cannot hand over a typo that locks the person out of an account they have never
- * signed into.
- */
-@Component({
-  selector: 'app-set-password-dialog',
-  standalone: true,
-  imports: [
-    FormsModule, MatDialogModule, MatButtonModule, MatFormFieldModule, MatInputModule, MatIconModule,
-  ],
-  template: `
-    <h2 mat-dialog-title>Set a new password for {{ data.displayName }}</h2>
-    <mat-dialog-content>
-      <p class="muted small note">
-        Give them the new password yourself — it is not emailed to them. They stay signed in
-        anywhere they already are until their session expires.
-      </p>
-
-      @if (form.message(); as m) {
-        <div class="form-error" role="alert">
-          <mat-icon>error_outline</mat-icon><span>{{ m }}</span>
-        </div>
-      }
-
-      <mat-form-field class="full">
-        <mat-label>New password (at least 10 characters)</mat-label>
-        <input matInput name="newPassword" [type]="reveal() ? 'text' : 'password'"
-               autocomplete="new-password" cdkFocusInitial [(ngModel)]="password" />
-        <button matIconButton matSuffix type="button" tabindex="-1"
-                (click)="reveal.set(!reveal())"
-                [attr.aria-label]="reveal() ? 'Hide password' : 'Show password'">
-          <mat-icon>{{ reveal() ? 'visibility_off' : 'visibility' }}</mat-icon>
-        </button>
-        @if (form.fieldError('newPassword'); as e) { <mat-error>{{ e }}</mat-error> }
-      </mat-form-field>
-
-      <mat-form-field class="full">
-        <mat-label>Type it again</mat-label>
-        <input matInput name="confirmPassword" [type]="reveal() ? 'text' : 'password'"
-               autocomplete="new-password" [(ngModel)]="confirm" />
-      </mat-form-field>
-
-      @if (mismatch()) {
-        <p class="mismatch" role="alert">The two passwords do not match.</p>
-      }
-    </mat-dialog-content>
-    <mat-dialog-actions align="end">
-      <button matButton mat-dialog-close [disabled]="form.busy()">Cancel</button>
-      <button matButton="filled" [disabled]="!ready() || form.busy()" (click)="save()">
-        {{ form.busy() ? 'Saving…' : 'Set password' }}
-      </button>
-    </mat-dialog-actions>
-  `,
-  styles: `
-    .full { width: 100%; }
-    .note { margin: 0 0 12px; }
-    mat-dialog-content { min-width: min(440px, 82vw); padding-top: 8px !important; }
-    .mismatch { margin: 0; font-size: 13px; color: var(--tone-danger-fg); }
-    .form-error {
-      display: flex; align-items: flex-start; gap: 8px; margin: 0 0 12px;
-      padding: 10px 12px; border-radius: 8px; font-size: 13.5px; line-height: 1.45;
-      background: var(--tone-danger-bg); color: var(--tone-danger-fg);
-    }
-    .form-error mat-icon { font-size: 18px; width: 18px; height: 18px; flex: none; margin-top: 1px; }
-  `,
-})
-export class SetPasswordDialog {
-  private readonly api = inject(ApiService);
-  private readonly ref = inject(MatDialogRef<SetPasswordDialog>);
-  readonly data = inject<{ userId: number; displayName: string }>(MAT_DIALOG_DATA);
-  readonly form = new FormSubmit();
-
-  password = '';
+  newPassword = '';
   confirm = '';
   readonly reveal = signal(false);
 
-  mismatch = (): boolean => this.confirm.length > 0 && this.password !== this.confirm;
-  ready = (): boolean => this.password.length > 0 && this.password === this.confirm;
+  mismatch = (): boolean => !!this.newPassword && !!this.confirm && this.newPassword !== this.confirm;
+
+  ready = (): boolean =>
+    this.userName.trim().length > 0
+    && this.displayName.trim().length > 0
+    && (!this.newPassword || this.newPassword === this.confirm);
 
   save(): void {
     if (!this.ready()) return;
 
     this.ref.disableClose = true;
     this.form.run(
-      (ctx) => this.api.resetPassword(this.data.userId, this.password, ctx),
-      () => { this.ref.disableClose = false; this.ref.close(true); },
+      (ctx) => this.api.updateUser(this.data.user.id, {
+        userName: this.userName.trim(),
+        displayName: this.displayName.trim(),
+        email: this.email.trim() || null,
+        newPassword: this.newPassword || null,
+      }, ctx),
+      (user) => { this.ref.disableClose = false; this.ref.close(user ?? true); },
     );
   }
 }
@@ -539,6 +518,7 @@ export class UserDialog {
     LoadingComponent,
     ColumnFilterComponent,
     NoMatchesComponent,
+    FilterSummaryComponent,
   ],
   template: `
     <div class="page">
@@ -547,6 +527,8 @@ export class UserDialog {
           <mat-icon>person_add</mat-icon> New user
         </button>
       </app-page-header>
+
+      <app-filter-summary [count]="filters.activeCount()" (clear)="filters.clear()" />
 
       <div class="card">
         @if (loading()) {
@@ -607,13 +589,10 @@ export class UserDialog {
                   </button>
                   <mat-menu #menu="matMenu">
                     <button mat-menu-item (click)="editUser(u)">
-                      <mat-icon>edit</mat-icon><span>Edit details</span>
+                      <mat-icon>edit</mat-icon><span>Edit account</span>
                     </button>
                     <button mat-menu-item (click)="editRoles(u)">
                       <mat-icon>badge</mat-icon><span>Change roles</span>
-                    </button>
-                    <button mat-menu-item (click)="resetPassword(u)">
-                      <mat-icon>lock_reset</mat-icon><span>Reset password</span>
                     </button>
                   </mat-menu>
                 </td>
@@ -682,9 +661,11 @@ export class UsersComponent implements OnInit {
 
   readonly specs = computed<Record<string, ColumnFilterSpec>>(() => ({
     name: { key: 'name', kind: 'text', placeholder: 'Name or username' },
+    // By id, not name: a role is administrator-named and could contain a comma, which is the one
+    // character the multi-value format cannot carry.
     roles: {
       key: 'roles', kind: 'select', placeholder: 'Any role',
-      options: this.roles().map((r) => ({ value: r.name, label: roleLabel(r.name) })),
+      options: this.roles().map((r) => ({ value: r.id, label: roleLabel(r.name) })),
     },
     state: {
       key: 'state', kind: 'select', placeholder: 'Any',
@@ -763,7 +744,7 @@ export class UsersComponent implements OnInit {
       .afterClosed()
       .subscribe((saved?: unknown) => {
         if (!saved) return;
-        this.toast.success('Saved.');
+        this.toast.success('Account updated.');
         this.load();
       });
   }
@@ -778,18 +759,6 @@ export class UsersComponent implements OnInit {
         if (!saved) return;
         this.toast.success('Roles updated. They take effect on their next sign-in.');
         this.load();
-      });
-  }
-
-  resetPassword(user: UserDto): void {
-    this.dialog
-      .open<SetPasswordDialog, { userId: number; displayName: string }>(SetPasswordDialog, {
-        data: { userId: user.id, displayName: user.displayName },
-      })
-      .afterClosed()
-      .subscribe((done?: unknown) => {
-        if (!done) return;
-        this.toast.success(`New password set for ${user.displayName}.`);
       });
   }
 }

@@ -25,6 +25,8 @@ public interface IUserAdminService
         ColumnFilters? columns = null, CancellationToken ct = default);
     Task<Result<UserDto>> UpdateUserAsync(
         long userId, UpdateUserRequest request, CancellationToken ct = default);
+    Task<Result<UserDto>> UpdateProfileAsync(
+        long userId, UpdateProfileRequest request, CancellationToken ct = default);
     Task<Result> SetActiveAsync(long userId, bool isActive, CancellationToken ct = default);
     Task<Result<UserDto>> AssignRolesAsync(long userId, IReadOnlyList<string> roleNames, CancellationToken ct = default);
     Task<Result> ResetPasswordAsync(long userId, string newPassword, CancellationToken ct = default);
@@ -183,15 +185,18 @@ public sealed class UserAdminService : IUserAdminService
         if (columns.Text("name") is { } name)
             users = users.Where(u => u.DisplayName.Contains(name) || u.UserName.Contains(name));
 
-        if (columns.Text("roles") is { } role)
+        // By role *id*, not name: a role is administrator-named and could contain a comma, which is
+        // the one character the multi-value format cannot carry.
+        var roleIds = columns.Ids("roles");
+        if (roleIds.Count > 0)
         {
             users = users.Where(u => _db.UserRoles
-                .Any(ur => ur.UserId == u.Id
-                    && _db.Roles.Any(r => r.Id == ur.RoleId && r.Name == role)));
+                .Any(ur => ur.UserId == u.Id && roleIds.Contains(ur.RoleId)));
         }
 
-        if (columns.Enum<WorkforceState>("state") is { } state)
-            users = users.Where(u => u.WorkforceState == state);
+        var states = columns.Enums<WorkforceState>("state");
+        if (states.Count > 0)
+            users = users.Where(u => states.Contains(u.WorkforceState));
 
         if (columns.Bool("active") is { } active)
             users = users.Where(u => u.IsActive == active);
@@ -239,9 +244,15 @@ public sealed class UserAdminService : IUserAdminService
     }
 
     /// <summary>
-    /// Corrects a name or an email. Everything about *what they can do* lives elsewhere: roles have
-    /// their own operation, so a typo in a surname and a change of authority are never the same
-    /// action — and never the same audit row.
+    /// Everything about an account except its roles, in one edit: username, name, email, and
+    /// optionally a new password.
+    ///
+    /// Roles stay a separate operation. A change of authority is a different decision from a
+    /// corrected surname, made by different people at different times, and folding them together
+    /// would put both behind one Save and one audit row.
+    ///
+    /// The password is never *read* - it cannot be, it is a one-way hash - only replaced. A blank
+    /// value leaves it untouched, so correcting a typo in a name does not reissue a password.
     /// </summary>
     public async Task<Result<UserDto>> UpdateUserAsync(
         long userId, UpdateUserRequest request, CancellationToken ct = default)
@@ -250,10 +261,22 @@ public sealed class UserAdminService : IUserAdminService
         if (user is null)
             return Result<UserDto>.Failure(Error.NotFound("user.not_found", "User not found."));
 
+        var userName = request.UserName.Trim();
         var email = string.IsNullOrWhiteSpace(request.Email) ? null : request.Email.Trim();
 
-        // Email is optional here but must still be unique when given: it is a recovery address and
-        // a way colleagues find each other, and two accounts sharing one makes both ambiguous.
+        if (userName.Length == 0)
+            return Result<UserDto>.Failure(Error.Validation(
+                "user.username_required", "A username is required - it is what they sign in with."));
+
+        if (await _db.Users.AnyAsync(
+                u => u.Id != userId && u.UserName.ToLower() == userName.ToLower(), ct))
+        {
+            return Result<UserDto>.Failure(Error.Conflict(
+                "user.duplicate_username", $"Another account already signs in as {userName}."));
+        }
+
+        // Email is optional but must still be unique when given: it is a recovery address and a way
+        // colleagues find each other, and two accounts sharing one makes both ambiguous.
         if (email is not null && await _db.Users
                 .AnyAsync(u => u.Id != userId && u.Email != null && u.Email.ToLower() == email.ToLower(), ct))
         {
@@ -261,8 +284,21 @@ public sealed class UserAdminService : IUserAdminService
                 "user.duplicate_email", $"Another account already uses {email}."));
         }
 
-        var before = new { user.DisplayName, user.Email, user.DepartmentId, user.TeamId };
+        var settingPassword = !string.IsNullOrWhiteSpace(request.NewPassword);
 
+        if (settingPassword
+            && PasswordPolicy.Validate(request.NewPassword!, _authOptions.MinimumPasswordLength)
+                is { } policyError)
+        {
+            return Result<UserDto>.Failure(policyError);
+        }
+
+        var before = new
+        {
+            user.UserName, user.DisplayName, user.Email, user.DepartmentId, user.TeamId,
+        };
+
+        user.UserName = userName;
         user.DisplayName = request.DisplayName.Trim();
         user.Email = email;
         user.DepartmentId = request.DepartmentId;
@@ -273,7 +309,75 @@ public sealed class UserAdminService : IUserAdminService
             entityType: nameof(User),
             entityId: userId,
             previousValues: before,
-            newValues: new { user.DisplayName, user.Email, user.DepartmentId, user.TeamId });
+            newValues: new
+            {
+                user.UserName, user.DisplayName, user.Email, user.DepartmentId, user.TeamId,
+            });
+
+        if (settingPassword)
+        {
+            // Same consequences as the standalone reset: the lockout clears and every live session
+            // ends, because a password someone else has just chosen must not leave old sessions
+            // running. Audited separately - "their password was changed" is its own fact.
+            var now = _clock.UtcNow;
+
+            user.PasswordHash = _passwordHasher.Hash(request.NewPassword!);
+            user.FailedLoginCount = 0;
+            user.LockoutEndAt = null;
+
+            var live = await _db.RefreshTokens
+                .Where(t => t.UserId == userId && t.RevokedAt == null)
+                .ToListAsync(ct);
+
+            foreach (var token in live)
+                token.RevokedAt = now;
+
+            _audit.Record(
+                AuditActions.PasswordResetByAdmin,
+                entityType: nameof(User),
+                entityId: userId);
+        }
+
+        await _db.SaveChangesAsync(ct);
+
+        var roles = await _permissions.GetRolesAsync(userId, ct);
+        return Result<UserDto>.Success(UserMapper.ToDto(user, roles, Array.Empty<string>()));
+    }
+
+    /// <summary>
+    /// What a person may change about themselves: their own name and email, and nothing else.
+    ///
+    /// Deliberately not username, roles or active state - those belong to an administrator, and a
+    /// self-service rename would let someone quietly become a different person to their colleagues.
+    /// Their own password already has its own operation, which asks for the current one first.
+    /// </summary>
+    public async Task<Result<UserDto>> UpdateProfileAsync(
+        long userId, UpdateProfileRequest request, CancellationToken ct = default)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (user is null)
+            return Result<UserDto>.Failure(Error.NotFound("user.not_found", "User not found."));
+
+        var email = string.IsNullOrWhiteSpace(request.Email) ? null : request.Email.Trim();
+
+        if (email is not null && await _db.Users
+                .AnyAsync(u => u.Id != userId && u.Email != null && u.Email.ToLower() == email.ToLower(), ct))
+        {
+            return Result<UserDto>.Failure(Error.Conflict(
+                "user.duplicate_email", $"Another account already uses {email}."));
+        }
+
+        var before = new { user.DisplayName, user.Email };
+
+        user.DisplayName = request.DisplayName.Trim();
+        user.Email = email;
+
+        _audit.Record(
+            AuditActions.ProfileUpdated,
+            entityType: nameof(User),
+            entityId: userId,
+            previousValues: before,
+            newValues: new { user.DisplayName, user.Email });
 
         await _db.SaveChangesAsync(ct);
 

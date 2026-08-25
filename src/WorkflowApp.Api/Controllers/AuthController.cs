@@ -12,7 +12,13 @@ public sealed class AuthController : ApiControllerBase
 {
     private readonly IAuthService _auth;
 
-    public AuthController(IAuthService auth) => _auth = auth;
+    private readonly IUserAdminService _users;
+
+    public AuthController(IAuthService auth, IUserAdminService users)
+    {
+        _auth = auth;
+        _users = users;
+    }
 
     /// <summary>Exchanges credentials for an access token and a refresh token.</summary>
     [HttpPost("login")]
@@ -47,6 +53,15 @@ public sealed class AuthController : ApiControllerBase
     [ProducesResponseType(typeof(UserDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> Me(CancellationToken ct)
         => FromResult(await _auth.GetCurrentUserAsync(CurrentUserId, ct));
+
+    /// <summary>
+    /// Changes the caller's own name or email. Not their username, roles or active state — those
+    /// are an administrator's to set; see <c>IUserAdminService.UpdateProfileAsync</c>.
+    /// </summary>
+    [HttpPut("me")]
+    [ProducesResponseType(typeof(UserDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UpdateMe([FromBody] UpdateProfileRequest request, CancellationToken ct)
+        => FromResult(await _users.UpdateProfileAsync(CurrentUserId, request, ct));
 
     /// <summary>Changes the caller's own password. All their refresh tokens are revoked.</summary>
     [HttpPost("change-password")]

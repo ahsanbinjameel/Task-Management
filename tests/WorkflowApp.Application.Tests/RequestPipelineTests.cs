@@ -624,6 +624,89 @@ public class RequestPipelineTests
         Assert.Equal(2, counts.Single(c => c.Key == "submitted").Count);
     }
 
+    /// <summary>
+    /// Several values in one column mean "any of these" — an OR within the column. "Critical and
+    /// High" is the question people actually ask of a priority or urgency column.
+    /// </summary>
+    [Fact]
+    public async Task A_column_filter_accepts_several_values()
+    {
+        var (h, requester, _) = await ReadyAsync();
+        using var _d = h;
+
+        await h.Requests.CreateAsync(requester, NewRequest("Critical one")
+            with { RequestedUrgency = RequestedUrgency.Critical });
+        await h.Requests.CreateAsync(requester, NewRequest("High one")
+            with { RequestedUrgency = RequestedUrgency.High });
+        await h.Requests.CreateAsync(requester, NewRequest("Low one")
+            with { RequestedUrgency = RequestedUrgency.Low });
+
+        var result = await h.Requests.ListAsync(
+            new RequestQuery { Columns = Columns(("urgency", "Critical|High")) }, new PageQuery());
+
+        Assert.Equal(
+            new[] { "Critical one", "High one" },
+            result.Items.Select(i => i.Title).OrderBy(t => t).ToArray());
+    }
+
+    /// <summary>Across columns it stays an AND — narrowing, not widening.</summary>
+    [Fact]
+    public async Task Several_values_in_one_column_still_narrow_against_the_others()
+    {
+        var (h, requester, _) = await ReadyAsync();
+        using var _d = h;
+
+        await h.Requests.CreateAsync(requester, NewRequest("Critical invoice")
+            with { RequestedUrgency = RequestedUrgency.Critical });
+        await h.Requests.CreateAsync(requester, NewRequest("High report")
+            with { RequestedUrgency = RequestedUrgency.High });
+
+        var result = await h.Requests.ListAsync(
+            new RequestQuery { Columns = Columns(("urgency", "Critical|High"), ("title", "invoice")) },
+            new PageQuery());
+
+        Assert.Equal("Critical invoice", Assert.Single(result.Items).Title);
+    }
+
+    /// <summary>
+    /// A value that is not a member of the enum is dropped, not treated as a match-nothing. Half a
+    /// stale bookmark should still narrow by the half that is still valid.
+    /// </summary>
+    [Fact]
+    public async Task An_unparseable_value_in_a_list_is_ignored()
+    {
+        var (h, requester, _) = await ReadyAsync();
+        using var _d = h;
+
+        await h.Requests.CreateAsync(requester, NewRequest("Critical one")
+            with { RequestedUrgency = RequestedUrgency.Critical });
+        await h.Requests.CreateAsync(requester, NewRequest("Low one")
+            with { RequestedUrgency = RequestedUrgency.Low });
+
+        var result = await h.Requests.ListAsync(
+            new RequestQuery { Columns = Columns(("urgency", "Critical|Nonsense")) }, new PageQuery());
+
+        Assert.Equal("Critical one", Assert.Single(result.Items).Title);
+    }
+
+    /// <summary>
+    /// Free text is never split on the separator, so a term may contain one.
+    /// </summary>
+    [Fact]
+    public async Task A_text_filter_is_not_split_on_the_separator()
+    {
+        var (h, requester, _) = await ReadyAsync();
+        using var _d = h;
+
+        await h.Requests.CreateAsync(requester, NewRequest("Smith | John cannot log in"));
+        await h.Requests.CreateAsync(requester, NewRequest("Unrelated"));
+
+        var result = await h.Requests.ListAsync(
+            new RequestQuery { Columns = Columns(("title", "Smith | John")) }, new PageQuery());
+
+        Assert.Equal("Smith | John cannot log in", Assert.Single(result.Items).Title);
+    }
+
     private static ColumnFilters Columns(params (string Key, string Value)[] values) =>
         new(values.ToDictionary(v => v.Key, v => (string?)v.Value));
 

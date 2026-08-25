@@ -21,7 +21,7 @@ import { EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../sha
 import { TaskTableComponent } from '../../shared/task-table.component';
 import { QuickViewComponent, QuickViewTarget } from '../../shared/quick-view.component';
 import {
-  ColumnFilterSpec, NoMatchesComponent, columnFilters,
+  ColumnFilterSpec, FilterSummaryComponent, NoMatchesComponent, columnFilters,
 } from '../../shared/column-filter.component';
 import { priorityLabel } from '../../core/labels';
 
@@ -37,7 +37,7 @@ const STATUSES: WorkTaskStatus[] = [
   imports: [
     MatPaginatorModule,
     PageHeaderComponent, EmptyComponent, LoadingComponent, TaskTableComponent, QuickViewComponent,
-    StatusTilesComponent, NoMatchesComponent,
+    StatusTilesComponent, NoMatchesComponent, FilterSummaryComponent,
   ],
   template: `
     <div class="page">
@@ -49,7 +49,9 @@ const STATUSES: WorkTaskStatus[] = [
         [total]="totalAcross()"
         (pick)="pickView($event)" />
 
-      <div class="card list">
+      <app-filter-summary [count]="filters.activeCount()" (clear)="filters.clear()" />
+
+      <div class="card list" [class.refreshing]="refreshing()">
         @if (loading()) {
           <app-loading />
         } @else if (page().items.length === 0 && !filters.any()) {
@@ -79,6 +81,13 @@ const STATUSES: WorkTaskStatus[] = [
     </div>
   `,
   styles: `
+    /*
+     * A filter reload dims the *rows* rather than replacing the table — see the note on the loaded flag.
+     * Deliberately not the whole card and deliberately no pointer-events block: the filter row is
+     * what triggered the reload, and freezing it would stop the next keystroke landing.
+     */
+    .refreshing tbody { opacity: .45; transition: opacity .12s; }
+
     .filters { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
     .filters mat-form-field { margin-bottom: -1.25em; }
     .filters app-search-select { width: 180px; margin-bottom: -1.25em; }
@@ -109,16 +118,29 @@ export class TaskListComponent implements OnInit {
    */
   readonly filters = columnFilters(() => { this.pageIndex = 0; this.reload(); });
 
+  /**
+   * Which values each column can still be narrowed by, from the server. Empty until the first
+   * answer arrives, and `available` is left undefined until then so nothing is hidden prematurely.
+   */
+  readonly options = signal<Record<string, string[]> | null>(null);
+
+  private availableFor(key: string): ReadonlySet<string> | undefined {
+    const all = this.options();
+    return all?.[key] ? new Set(all[key]) : undefined;
+  }
+
   readonly specs = computed<Record<string, ColumnFilterSpec>>(() => ({
     number: { key: 'number', kind: 'text', placeholder: 'TSK-…' },
-    title: { key: 'title', kind: 'text', placeholder: 'Title' },
+    title: { key: 'title', kind: 'text', placeholder: 'Title', minWidth: 260 },
     client: {
       key: 'client', kind: 'select', placeholder: 'Any client',
       options: this.clients().map((c) => ({ value: c.id, label: c.name })),
+      available: this.availableFor('client'),
     },
     priority: {
       key: 'priority', kind: 'select', placeholder: 'Any',
       options: this.priorities.map((p) => ({ value: p, label: p })),
+      available: this.availableFor('priority'),
     },
     // "-" means nobody: unassigned work is what a coordinator scans this column for, and it has no
     // name to type.
@@ -132,7 +154,16 @@ export class TaskListComponent implements OnInit {
   peek(task: { id: number }): void {
     this.peeking.set({ kind: 'task', id: task.id });
   }
+  /**
+   * True only until the first load lands.
+   *
+   * A reload triggered by the filter row must **not** swap the table out for a spinner: doing so
+   * destroys the filter row along with it, which closed the open multi-select panel after the first
+   * tick and made choosing two values impossible. Subsequent loads dim the table in place instead.
+   */
   readonly loading = signal(true);
+  readonly refreshing = signal(false);
+  private loaded = false;
   readonly page = signal<PagedResult<TaskSummaryDto>>(
     { items: [], page: 1, pageSize: 25, totalCount: 0, totalPages: 0 });
 
@@ -210,14 +241,39 @@ export class TaskListComponent implements OnInit {
     });
   }
 
+  /**
+   * What each dropdown should still offer. Asked for on every reload because the answer depends on
+   * the other columns — that is the whole point of it.
+   */
+  private loadFilterOptions(): void {
+    this.api.taskFilterOptions({
+      view: this.view() ?? undefined,
+      openOnly: true,
+      ...this.filters.asObject(),
+    }).subscribe({
+      next: (o) => this.options.set(o.columns),
+      // Failing to narrow the choices is not worth breaking the grid over: leave them all offered.
+      error: () => this.options.set(null),
+    });
+  }
+
   /** Counts ignore the filter row — see the request grid for why a tile must not move as you type. */
   private loadCounts(): void {
     this.api.taskStatusCounts({ openOnly: true }).subscribe((c) => this.counts.set(c));
   }
 
+
+  /** One place to leave a load, whether it succeeded or not. */
+  private settle(): void {
+    this.loaded = true;
+    this.loading.set(false);
+    this.refreshing.set(false);
+  }
+
   reload(): void {
     this.loadCounts();
-    this.loading.set(true);
+    this.loadFilterOptions();
+    if (this.loaded) this.refreshing.set(true); else this.loading.set(true);
     this.api.tasks({
       view: this.view() ?? undefined,
       openOnly: true,
@@ -227,8 +283,8 @@ export class TaskListComponent implements OnInit {
       pageSize: this.pageSize,
       ...this.filters.asObject(),
     }).subscribe({
-      next: (result) => { this.page.set(result); this.loading.set(false); },
-      error: () => this.loading.set(false),
+      next: (result) => { this.page.set(result); this.settle(); },
+      error: () => this.settle(),
     });
   }
 

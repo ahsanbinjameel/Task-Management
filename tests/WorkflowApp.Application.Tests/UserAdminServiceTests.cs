@@ -251,6 +251,7 @@ public class UserAdminServiceTests
 
         var result = await h.UserAdmin.UpdateUserAsync(created.Value!.Id, new UpdateUserRequest
         {
+            UserName = "alice",
             DisplayName = "Alice Okonkwo",
             Email = "alice.okonkwo@workflowapp.local",
         });
@@ -260,15 +261,132 @@ public class UserAdminServiceTests
         Assert.Equal("alice.okonkwo@workflowapp.local", result.Value!.Email);
     }
 
-    /// <summary>The username is what they sign in with and what the audit trail names.</summary>
+    /// <summary>
+    /// The username is editable. Every back-reference is the numeric id, so the audit trail follows
+    /// the rename rather than being orphaned by it.
+    /// </summary>
     [Fact]
-    public async Task Updating_a_user_never_changes_the_username()
+    public async Task The_username_can_be_changed()
+    {
+        using var h = await ReadyAsync();
+        var created = await h.UserAdmin.CreateUserAsync(NewUser("alice"));
+
+        var result = await h.UserAdmin.UpdateUserAsync(created.Value!.Id,
+            new UpdateUserRequest { UserName = "alice.o", DisplayName = "Alice" });
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("alice.o", result.Value!.UserName);
+    }
+
+    [Fact]
+    public async Task A_username_already_taken_is_refused()
+    {
+        using var h = await ReadyAsync();
+        await h.UserAdmin.CreateUserAsync(NewUser("alice"));
+        var bob = await h.UserAdmin.CreateUserAsync(NewUser("bob"));
+
+        var result = await h.UserAdmin.UpdateUserAsync(bob.Value!.Id,
+            new UpdateUserRequest { UserName = "ALICE", DisplayName = "Bob" });
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("user.duplicate_username", result.Error!.Code);
+    }
+
+    /// <summary>
+    /// A blank password leaves the existing one working. An administrator fixing a surname must not
+    /// have to reissue credentials to do it.
+    /// </summary>
+    [Fact]
+    public async Task Leaving_the_password_blank_keeps_the_current_one()
     {
         using var h = await ReadyAsync();
         var created = await h.UserAdmin.CreateUserAsync(NewUser("alice"));
 
         await h.UserAdmin.UpdateUserAsync(created.Value!.Id,
-            new UpdateUserRequest { DisplayName = "Someone Else" });
+            new UpdateUserRequest { UserName = "alice", DisplayName = "Alice Renamed" });
+
+        var signIn = await h.Auth.LoginAsync(new LoginRequest
+        {
+            UserName = "alice",
+            Password = "InitialPass1",
+        });
+
+        Assert.True(signIn.IsSuccess);
+    }
+
+    [Fact]
+    public async Task Setting_a_password_replaces_it_and_ends_live_sessions()
+    {
+        using var h = await ReadyAsync();
+        var created = await h.UserAdmin.CreateUserAsync(NewUser("alice"));
+        var first = await h.Auth.LoginAsync(
+            new LoginRequest { UserName = "alice", Password = "InitialPass1" });
+        Assert.True(first.IsSuccess);
+
+        var result = await h.UserAdmin.UpdateUserAsync(created.Value!.Id, new UpdateUserRequest
+        {
+            UserName = "alice",
+            DisplayName = "Alice",
+            NewPassword = "BrandNewPass9",
+        });
+
+        Assert.True(result.IsSuccess);
+
+        var oldPassword = await h.Auth.LoginAsync(
+            new LoginRequest { UserName = "alice", Password = "InitialPass1" });
+        Assert.True(oldPassword.IsFailure);
+
+        var newPassword = await h.Auth.LoginAsync(
+            new LoginRequest { UserName = "alice", Password = "BrandNewPass9" });
+        Assert.True(newPassword.IsSuccess);
+    }
+
+    [Fact]
+    public async Task A_weak_new_password_is_refused_and_nothing_else_is_saved()
+    {
+        using var h = await ReadyAsync();
+        var created = await h.UserAdmin.CreateUserAsync(NewUser("alice"));
+
+        var result = await h.UserAdmin.UpdateUserAsync(created.Value!.Id, new UpdateUserRequest
+        {
+            UserName = "alice",
+            DisplayName = "Should Not Stick",
+            NewPassword = "short",
+        });
+
+        Assert.True(result.IsFailure);
+
+        var after = await h.UserAdmin.GetUserAsync(created.Value!.Id);
+        Assert.NotEqual("Should Not Stick", after.Value!.DisplayName);
+    }
+
+    // --- self service ------------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_person_can_change_their_own_name_and_email()
+    {
+        using var h = await ReadyAsync();
+        var created = await h.UserAdmin.CreateUserAsync(NewUser("alice"));
+
+        var result = await h.UserAdmin.UpdateProfileAsync(created.Value!.Id, new UpdateProfileRequest
+        {
+            DisplayName = "Alice O.",
+            Email = "alice.o@workflowapp.local",
+        });
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("Alice O.", result.Value!.DisplayName);
+    }
+
+    /// <summary>Self-service cannot reach the username: that stays an administrator's to set.</summary>
+    [Fact]
+    public async Task Changing_your_own_profile_leaves_the_username_alone()
+    {
+        using var h = await ReadyAsync();
+        var created = await h.UserAdmin.CreateUserAsync(NewUser("alice"));
+
+        await h.UserAdmin.UpdateProfileAsync(created.Value!.Id,
+            new UpdateProfileRequest { DisplayName = "Alice O." });
 
         var after = await h.UserAdmin.GetUserAsync(created.Value!.Id);
         Assert.Equal("alice", after.Value!.UserName);
@@ -283,6 +401,7 @@ public class UserAdminServiceTests
 
         var result = await h.UserAdmin.UpdateUserAsync(bob.Value!.Id, new UpdateUserRequest
         {
+            UserName = "bob",
             DisplayName = "Bob",
             Email = "alice@workflowapp.local",
         });
@@ -298,7 +417,7 @@ public class UserAdminServiceTests
         var created = await h.UserAdmin.CreateUserAsync(NewUser("alice"));
 
         var result = await h.UserAdmin.UpdateUserAsync(created.Value!.Id,
-            new UpdateUserRequest { DisplayName = "Alice", Email = "   " });
+            new UpdateUserRequest { UserName = "alice", DisplayName = "Alice", Email = "   " });
 
         Assert.True(result.IsSuccess);
         Assert.Null(result.Value!.Email);

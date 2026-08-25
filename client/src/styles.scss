@@ -151,7 +151,7 @@ body {
 /* The last field in a dialog or card should not push the actions down. */
 mat-dialog-content .mat-mdc-form-field:last-of-type,
 form .mat-mdc-form-field:last-of-type {
-  margin-bottom: 4px;
+  margin-bottom: 20px;
 }
 
 /*

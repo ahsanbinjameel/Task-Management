@@ -227,7 +227,9 @@ script for SSMS.
 | GET | `/api/auth/me` | authenticated |
 | POST | `/api/auth/change-password` | authenticated |
 | GET/POST | `/api/users`, `GET /api/users/{id}` | `Admin.ManageUsers` |
-| PUT | `/api/users/{id}` | `Admin.ManageUsers` — name and email only; the username never changes |
+| PUT | `/api/users/{id}` | `Admin.ManageUsers` — username, name, email, and optionally a new password |
+| PUT | `/api/auth/me` | authenticated — your own name and email only |
+| GET | `/api/tasks/filter-options`, `/api/requests/filter-options` | as the list they belong to |
 | PUT | `/api/users/{id}/active` | `Admin.ManageUsers` |
 | PUT | `/api/users/{id}/roles` | `Admin.ManageRoles` |
 | POST | `/api/users/{id}/reset-password` | `Admin.ManageUsers` |
@@ -334,8 +336,8 @@ script for SSMS.
 | `src/app/shared/list-views.ts` | Columns + primary action per status view. The server says which statuses a view covers; this says what is worth showing once you are in it |
 | `src/app/shared/attachments.component.ts` | `app-attachments` (thumbnails, file rows) and the image viewer dialog — zoom, pan, next/previous. Download is secondary |
 | `src/app/shared/pdf-viewer.component.ts` | `PdfViewerDialog` + `openPdf(dialog, …)` — the one way a PDF is opened. Fetches with the bearer token, frames the blob, keeps Download as a button |
-| `src/app/shared/column-filter.component.ts` | `app-column-filter` (one filter cell), `ColumnFilterSpec`, and `ColumnFilterState`/`columnFilters()` — the grid filter row. Debounces typing, not selects; `asObject()` produces the `col[key]` query bag |
-| | Also `app-no-matches` — the strip shown *under* a still-visible table when filters match nothing |
+| `src/app/shared/column-filter.component.ts` | `app-column-filter` (one filter cell — text, date, or a **multi-value** dropdown), `ColumnFilterSpec`, `ColumnFilterState`/`columnFilters()`. Debounces typing, not choices; `asObject()` produces the `col[key]` query bag |
+| | Also `app-no-matches` (the strip shown *under* a still-visible table when filters match nothing) and `app-filter-summary` (the "N filters applied · Clear all" bar above the grid) |
 | `src/app/shared/file-drop.component.ts` | `app-file-drop` — choose / drag / **paste** (Win+Shift+S → Ctrl+V), with previews before anything is submitted |
 | `src/app/shared/attachment-upload.component.ts` | `app-attachment-upload` — the same three ways in, but straight onto a record that already exists. Carries the `kind` |
 | `src/app/layout/` | Shell, permission-filtered nav, notification bell, shift widget, quick-work widget (live clock) |
@@ -559,6 +561,35 @@ script for SSMS.
   structurally — `ApplyColumnFilters` is called in `ListAsync` only, not inside the shared
   `ApplyFilters` that `StatusCountsAsync` also uses. A comment was not enough: the first attempt
   put it in the shared method and the tiles moved.
+- **A column filter holds several values, and they travel separated by a `|`.**
+  "Critical and High" is the question people actually ask of a priority column, so a select is
+  multi-value; within a column the values are OR'd, across columns they are AND'd. **The separator
+  cannot be a comma.** ASP.NET's query value provider treats a comma-separated value as several
+  values for one key and the dictionary binder then keeps exactly one — so `Critical,High` arrived
+  as `High` and the grid filtered by the wrong thing *without erroring*. A repeated key
+  (`col[x]=a&col[x]=b`) fails the same way, keeping the first. A pipe passes through untouched.
+  Free text is never split, so a term may contain one.
+- **The dropdown stays open while you pick, and the grid does not unmount while it reloads.**
+  Picking two values is one action; a panel that closed after the first would make the second a
+  fresh trip. That only works because a filter reload no longer swaps the table for a spinner —
+  doing so destroyed the filter row, which closed the overlay after the first tick and made
+  multi-select impossible in practice. The first load shows the spinner; later loads dim the rows
+  (`loaded` / `refreshing`), and deliberately do **not** block pointer events, because the control
+  that triggered the reload is the one the user is still typing into.
+- **The trigger stays one line however many values are chosen** — `Critical +2`, not a growing list
+  of chips. A header cell that grows with the selection pushes the whole grid down.
+- **A column's dropdown offers only what the other columns still allow — computed with its own
+  filter removed.** That last part is what makes it work: having ticked Critical, the priority list
+  must still offer High, or picking a first value would erase the choices needed for a second.
+  `ColumnFilters.Without(key)` and `FilterOptionsAsync` on the task and request services; the server
+  returns raw tokens and the client hides options its own labelled list no longer needs. A value
+  already ticked stays visible even once it becomes unreachable, or narrowing another column would
+  strand a filter with no way to untick it.
+- **Grid date filters use the business calendar, never UTC midnight.** Filtering
+  `[00:00Z, 24:00Z)` matched a task due 30 Aug 00:00+05:00 — 29 Aug 19:00Z — when the user asked for
+  the 29th, while the column printed "Aug 30" beside it: the filter and the column disagreed about
+  what day it was. `IBusinessCalendar.DayRange` is what the reports already use, and the rule
+  "timestamps are UTC; days are business-local" applies here too.
 - **Filter columns are a dictionary, not a property per column.** `col[title]=invoice` on the wire,
   `ColumnFilters` server-side, and the owning service decides what each key means. Adding a column
   to a grid must not mean editing a query record, a controller signature and a client interface.
@@ -681,12 +712,26 @@ script for SSMS.
   it and clips the right-hand fields behind a sideways scrollbar. That is what was wrong with the
   request edit dialog — the only one in the app over the cap. Sizing from the content alone works
   only below 560px.
-- **Editing an account and changing what it can do are separate operations.** A misspelled surname
-  and a change of authority are different jobs done at different times, so they have their own
-  dialogs, endpoints and audit actions (`Admin.UserUpdated` vs `Admin.UserRolesChanged`). The
-  **username is not editable at all**: it is what the person signs in with and what every audit row
-  and login attempt was recorded against. Someone who genuinely needs a different one gets a new
-  account.
+- **One dialog holds the whole account; roles stay separate.** Username, name, email and *setting*
+  a password are one edit (`Admin.UserUpdated`, plus `Auth.PasswordResetByAdmin` when a password is
+  actually set). Granting authority is a different decision, usually by a different person, so
+  `Admin.UserRolesChanged` keeps its own dialog and its own audit row.
+  **The username is editable** — an earlier version refused on the grounds that history was recorded
+  against it, which was wrong: `AuditLog.ActorUserId` and every other back-reference is the numeric
+  id, so a rename carries the trail with it. `LoginAttempt.UserNameTried` deliberately keeps the old
+  value, being a record of what was actually typed.
+  A blank password means "leave it alone"; setting one clears the lockout and ends every live
+  session, exactly as the standalone reset did.
+- **A password is never displayed, and cannot be.** It is stored as a one-way PBKDF2-HMAC-SHA256
+  hash, so no screen, endpoint or query can read one back — only replace it. The edit dialog says so
+  where an administrator would otherwise go looking. Making them readable would mean storing them
+  reversibly, which turns one database breach into every account.
+- **People maintain their own name and email; everything else about them is administered.**
+  `PUT /api/auth/me` (`Auth.ProfileUpdated`) reaches display name and email only — not username,
+  roles or active state, because a self-service rename would let someone quietly become a different
+  person on every screen. Note `AuthService.applyProfile` rather than `setUser` on the client: list
+  projections return an **empty** permission array, and putting one through `setUser` would clear
+  the session's permissions and blank the nav.
 - **Passwords an administrator types are masked, with a deliberate reveal — and the masking is
   what stops the browser keeping them.** The create-user field was `<input name="password">` with
   no `type` and no `autocomplete`, so the browser treated it as ordinary text: every temporary
@@ -809,7 +854,7 @@ separates the picture describing a problem from the picture proving it was fixed
 checker looked at, with the proof gated on being the person responsible for the work and the
 evidence kept with the numbered attempt it justified.
 
-**Tests:** 346 passing (`dotnet test`) — 29 domain state machines, 317 application services.
+**Tests:** 356 passing (`dotnet test`) — 29 domain state machines, 327 application services.
 All on EF Core InMemory or pure functions, so the suite runs with no SQL Server.
 
 ## 9. SQL Server: done and still outstanding

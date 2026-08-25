@@ -145,10 +145,10 @@ public sealed class TestHarness : IDisposable
         AuditQueries = new AuditQueryService(Db);
         Numbers = new NumberGenerator(Db);
         Lookups = new LookupService(Db);
-        Requests = new RequestService(Db, Numbers, Notifications, Lookups, Clock);
+        Requests = new RequestService(Db, Numbers, Notifications, Lookups, Clock, Calendar);
         TaskCreation = new TaskCreationService(Db, Numbers, Clock);
         Dependencies = new TaskDependencyService(Db, Clock);
-        TaskQueries = new TaskQueryService(Db, CurrentUser, Dependencies);
+        TaskQueries = new TaskQueryService(Db, CurrentUser, Dependencies, Calendar);
 
         Triage = new RequestTriageService(
             Db, Requests, TaskCreation, Audit, Notifications, Lookups, Clock,

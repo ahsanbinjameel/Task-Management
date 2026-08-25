@@ -161,7 +161,7 @@ public static class StatusViews
         {
             WorkTaskStatus.QCPassed, WorkTaskStatus.ReadyForClosure, WorkTaskStatus.Closed,
         }),
-        new TaskStatusView("declined", "Not Approved", new[]
+        new TaskStatusView("declined", "Rejected", new[]
         {
             WorkTaskStatus.Cancelled, WorkTaskStatus.Duplicate,
         }),
@@ -226,7 +226,7 @@ public static class StatusViews
             {
                 WorkTaskStatus.QCPassed, WorkTaskStatus.ReadyForClosure, WorkTaskStatus.Closed,
             }),
-        new RequestStatusView("declined", "Not Approved",
+        new RequestStatusView("declined", "Rejected",
             new[] { RequestStatus.Rejected, RequestStatus.Duplicate },
             new[] { WorkTaskStatus.Cancelled, WorkTaskStatus.Duplicate }),
     };
@@ -247,7 +247,7 @@ public static class StatusViews
             new[] { RequestStatus.Approved }, Array.Empty<WorkTaskStatus>()),
         new RequestStatusView("escalated", "Escalated",
             new[] { RequestStatus.Escalated }, Array.Empty<WorkTaskStatus>()),
-        new RequestStatusView("declined", "Not approved",
+        new RequestStatusView("declined", "Rejected",
             new[] { RequestStatus.Rejected, RequestStatus.Duplicate }, Array.Empty<WorkTaskStatus>()),
         new RequestStatusView("waiting", "Postponed",
             new[] { RequestStatus.Deferred }, Array.Empty<WorkTaskStatus>()),

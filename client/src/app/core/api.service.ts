@@ -14,6 +14,7 @@ import {
   TaskSummaryDto, TriageOutcome, UserDto, WorkSessionDto, WorkTaskStatus, WorkforceState,
   WorkforceStatusDto, WorkloadDto,
   SetupClientDto, SetupDepartmentDto, SetupTeamDto, SetupPauseReasonDto, RoleDetailDto,
+  FilterOptionsDto,
   PauseCategory,
 } from './models';
 
@@ -74,10 +75,23 @@ export class ApiService {
 
   updateUser(
     id: number,
-    body: { displayName: string; email?: string | null; departmentId?: number | null; teamId?: number | null },
+    body: {
+      userName: string; displayName: string; email?: string | null;
+      /** Blank leaves it unchanged. Setting one signs the person out everywhere. */
+      newPassword?: string | null;
+      departmentId?: number | null; teamId?: number | null;
+    },
     context?: HttpContext,
   ): Observable<UserDto> {
     return this.http.put<UserDto>(`/api/users/${id}`, body, { context });
+  }
+
+  /** The caller's own name and email. Username, roles and access are an administrator's. */
+  updateMyProfile(
+    body: { displayName: string; email?: string | null },
+    context?: HttpContext,
+  ): Observable<UserDto> {
+    return this.http.put<UserDto>('/api/auth/me', body, { context });
   }
 
   setUserActive(id: number, isActive: boolean, context?: HttpContext): Observable<UserDto> {
@@ -108,6 +122,12 @@ export class ApiService {
   }
 
   // --- requests ------------------------------------------------------------------------------
+
+  requestFilterOptions(filter: {
+    view?: string; mine?: boolean;
+  } & ColumnFilterParams): Observable<FilterOptionsDto> {
+    return this.http.get<FilterOptionsDto>('/api/requests/filter-options', { params: params(filter) });
+  }
 
   requests(filter: {
     status?: RequestStatus; view?: string; mine?: boolean; search?: string; clientId?: number;
@@ -183,6 +203,12 @@ export class ApiService {
   }
 
   // --- tasks ---------------------------------------------------------------------------------
+
+  taskFilterOptions(filter: {
+    view?: string; openOnly?: boolean;
+  } & ColumnFilterParams): Observable<FilterOptionsDto> {
+    return this.http.get<FilterOptionsDto>('/api/tasks/filter-options', { params: params(filter) });
+  }
 
   tasks(filter: {
     status?: WorkTaskStatus; view?: string; priority?: Priority; assigneeUserId?: number;

@@ -107,6 +107,36 @@ public sealed class TasksController : ApiControllerBase
     }
 
     /// <summary>Counts for the status tiles above the list, under the caller's own visibility.</summary>
+    /// <summary>
+    /// What each column's filter can still be narrowed by, given the others — the "like Excel"
+    /// behaviour. Same scoping as the list, so it can never offer a value the caller cannot see.
+    /// </summary>
+    [HttpGet("filter-options")]
+    [ProducesResponseType(typeof(FilterOptionsDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> FilterOptions(
+        [FromQuery] string? view,
+        [FromQuery] bool openOnly = true,
+        [FromQuery(Name = "col")] Dictionary<string, string?>? col = null,
+        CancellationToken ct = default)
+    {
+        var seesEverything =
+            HasPermission(Permissions.TaskAssign)
+            || HasPermission(Permissions.TaskReview)
+            || HasPermission(Permissions.TaskQCReview)
+            || HasPermission(Permissions.WorkforceViewAll)
+            || HasPermission(Permissions.RequestViewAll)
+            || HasPermission(Permissions.DashboardManagement);
+
+        return Ok(await _queries.FilterOptionsAsync(new TaskQuery
+        {
+            VisibleToUserId = seesEverything ? null : CurrentUserId,
+            View = view,
+            Audience = Audience,
+            OpenOnly = openOnly,
+            Columns = new ColumnFilters(col),
+        }, ct));
+    }
+
     [HttpGet("status-counts")]
     [ProducesResponseType(typeof(IReadOnlyList<StatusCountDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> StatusCounts(

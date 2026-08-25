@@ -79,6 +79,28 @@ public sealed class RequestsController : ApiControllerBase
         return Ok(await _requests.ListAsync(query, new PageQuery { Page = page, PageSize = pageSize }, ct));
     }
 
+    /// <summary>
+    /// What each column's filter can still be narrowed by, given the others. Scoped like the list.
+    /// </summary>
+    [HttpGet("filter-options")]
+    [ProducesResponseType(typeof(FilterOptionsDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> FilterOptions(
+        [FromQuery] string? view,
+        [FromQuery] bool mine = false,
+        [FromQuery(Name = "col")] Dictionary<string, string?>? col = null,
+        CancellationToken ct = default)
+    {
+        var canViewAll = HasPermission(Permissions.RequestViewAll);
+
+        return Ok(await _requests.FilterOptionsAsync(new RequestQuery
+        {
+            View = view,
+            Audience = Audience,
+            RequestedByUserId = (!canViewAll || mine) ? CurrentUserId : null,
+            Columns = new ColumnFilters(col),
+        }, ct));
+    }
+
     /// <summary>Counts for the status tiles, scoped exactly like the list below them.</summary>
     [HttpGet("status-counts")]
     [ProducesResponseType(typeof(IReadOnlyList<StatusCountDto>), StatusCodes.Status200OK)]

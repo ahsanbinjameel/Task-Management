@@ -44,20 +44,33 @@ const matching = (group: AbstractControl): ValidationErrors | null =>
 
       <!-- --- who you are ------------------------------------------------------------------ -->
       <section class="card card-pad">
-        <h2 class="card-title">Account</h2>
+        <h2 class="card-title">Your details</h2>
 
-        <div class="facts">
-          <div>
-            <span class="muted small">Name</span>
-            <strong>{{ auth.displayName() }}</strong>
+        <form [formGroup]="profile" (ngSubmit)="saveProfile()">
+          <mat-form-field class="full">
+            <mat-label>Full name</mat-label>
+            <input matInput formControlName="displayName" maxlength="200" />
+            <mat-hint>How colleagues see you on requests, tasks and reports.</mat-hint>
+          </mat-form-field>
+
+          <mat-form-field class="full">
+            <mat-label>Email (optional)</mat-label>
+            <input matInput type="email" formControlName="email" maxlength="256" />
+          </mat-form-field>
+
+          <div class="row">
+            <span class="spacer"></span>
+            <button matButton="filled" type="submit"
+                    [disabled]="profile.invalid || profile.pristine || savingProfile()">
+              {{ savingProfile() ? 'Saving...' : 'Save details' }}
+            </button>
           </div>
+        </form>
+
+        <div class="facts locked">
           <div>
             <span class="muted small">Username</span>
             <strong>{{ auth.user()?.userName }}</strong>
-          </div>
-          <div>
-            <span class="muted small">Email</span>
-            <strong>{{ auth.user()?.email || '—' }}</strong>
           </div>
           <div>
             <span class="muted small">What you can do</span>
@@ -66,8 +79,8 @@ const matching = (group: AbstractControl): ValidationErrors | null =>
         </div>
 
         <p class="muted small note">
-          Your name, email and roles are set by an administrator — ask one of them if something
-          here is wrong.
+          Your username and what you can do are set by an administrator - ask one of them if either
+          is wrong. Your own name and email are yours to change.
         </p>
       </section>
 
@@ -183,6 +196,7 @@ const matching = (group: AbstractControl): ValidationErrors | null =>
     section { margin-bottom: 16px; }
     .note { margin: 4px 0 0; }
     .facts { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+    .facts.locked { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
     .facts > div { display: flex; flex-direction: column; gap: 1px; }
     .browser { display: flex; align-items: flex-start; gap: 6px; margin: 12px 0 0; }
     .browser mat-icon { font-size: 16px; width: 16px; height: 16px; flex: none; margin-top: 2px; }
@@ -204,7 +218,40 @@ export class SettingsComponent {
   private readonly toast = inject(ToastService);
 
   readonly busy = signal(false);
+  readonly savingProfile = signal(false);
   readonly rail = signal(readRailPreference());
+
+  /**
+   * Your own name and email.
+   *
+   * Username is not here on purpose: it is what you sign in with and what colleagues know you by,
+   * and letting someone change it unannounced would let them quietly become a different person on
+   * every screen. An administrator can, from the people list.
+   */
+  readonly profile = inject(FormBuilder).nonNullable.group({
+    displayName: ['', [Validators.required, Validators.maxLength(200)]],
+    email: ['', [Validators.email, Validators.maxLength(256)]],
+  });
+
+  saveProfile(): void {
+    if (this.profile.invalid) return;
+    this.savingProfile.set(true);
+
+    const { displayName, email } = this.profile.getRawValue();
+
+    this.api.updateMyProfile({ displayName: displayName.trim(), email: email.trim() || null })
+      .subscribe({
+        next: (user) => {
+          this.savingProfile.set(false);
+          // The shell shows the name in the corner; refresh the session copy so it updates now
+          // rather than at the next sign-in.
+          this.auth.applyProfile(user);
+          this.profile.markAsPristine();
+          this.toast.success('Your details have been saved.');
+        },
+        error: () => this.savingProfile.set(false),
+      });
+  }
 
   readonly roles = () =>
     (this.auth.user()?.roles ?? []).map(roleLabel).join(', ') || 'No roles yet';
@@ -219,6 +266,11 @@ export class SettingsComponent {
   setRail(collapsed: boolean): void {
     this.rail.set(collapsed);
     writeRailPreference(collapsed);
+  }
+
+  constructor() {
+    const me = this.auth.user();
+    this.profile.setValue({ displayName: me?.displayName ?? '', email: me?.email ?? '' });
   }
 
   readonly form = inject(FormBuilder).nonNullable.group({

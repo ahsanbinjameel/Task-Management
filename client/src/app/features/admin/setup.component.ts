@@ -84,7 +84,7 @@ interface SimpleEditData {
     </mat-dialog-actions>
   `,
   styles: `
-    .full { width: 100%; }
+    .full { width: 100%;}
     mat-dialog-content { min-width: min(440px, 84vw); padding-top: 8px !important; }
     .form-error {
       display: flex; align-items: flex-start; gap: 8px; margin: 0 0 12px;
@@ -157,25 +157,16 @@ export class SimpleEditDialog {
       <div class="switches">
         <mat-checkbox [(ngModel)]="isBlocker" name="blocker">
           The task is stuck
-          <span class="muted small hint">
-            — nobody can carry on with it, as opposed to the worker simply stepping away.
-          </span>
         </mat-checkbox>
 
         <mat-checkbox [(ngModel)]="requiresComment" name="comment">
           Make them explain
-          <span class="muted small hint">— a note is required before they can pause.</span>
         </mat-checkbox>
       </div>
 
       <app-search-select class="full" label="Where the person goes" name="away"
                          nullLabel="Nowhere — they stay on shift and free for other work"
                          [options]="awayOptions" [(ngModel)]="awayState" />
-      <p class="muted small note">
-        Set this only for reasons that take the person away from their desk. It is what puts Break
-        or Lunch on their timeline, so choosing one for a reason like "waiting for the client" would
-        record them as absent while they carry on working.
-      </p>
     </mat-dialog-content>
     <mat-dialog-actions align="end">
       <button matButton mat-dialog-close [disabled]="form.busy()">Cancel</button>
@@ -185,7 +176,7 @@ export class SimpleEditDialog {
     </mat-dialog-actions>
   `,
   styles: `
-    .full { width: 100%; }
+    .full { width: 100%;}
     mat-dialog-content { min-width: min(520px, 86vw); padding-top: 8px !important; }
     .switches { display: grid; gap: 10px; margin: 4px 0 16px; }
     .hint { display: block; margin-left: 0; }

@@ -26,7 +26,8 @@ import { SearchSelectComponent } from '../../shared/search-select.component';
 import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../shared/ui';
 import { QuickViewComponent, QuickViewTarget } from '../../shared/quick-view.component';
 import {
-  ColumnFilterComponent, ColumnFilterSpec, NoMatchesComponent, columnFilters,
+  ColumnFilterComponent, ColumnFilterSpec, FilterSummaryComponent, NoMatchesComponent,
+  columnFilters,
 } from '../../shared/column-filter.component';
 
 const URGENCIES: RequestedUrgency[] = ['Critical', 'High', 'Normal', 'Low'];
@@ -44,6 +45,7 @@ const STATUSES: RequestStatus[] = [
     MatTableModule, MatPaginatorModule,
     MatTooltipModule, QuickViewComponent, PageHeaderComponent, ChipComponent, EmptyComponent, LoadingComponent,
     StatusTilesComponent, SortHeaderComponent, ColumnFilterComponent, NoMatchesComponent,
+    FilterSummaryComponent,
   ],
   template: `
     <div class="page">
@@ -80,7 +82,9 @@ const STATUSES: RequestStatus[] = [
         </div>
       }
 
-      <div class="card">
+      <app-filter-summary [count]="filters.activeCount()" (clear)="filters.clear()" />
+
+      <div class="card" [class.refreshing]="refreshing()">
         @if (loading()) {
           <app-loading />
         } @else if (page().items.length === 0 && !filters.any()) {
@@ -251,6 +255,13 @@ const STATUSES: RequestStatus[] = [
     </div>
   `,
   styles: `
+    /*
+     * A filter reload dims the *rows* rather than replacing the table — see the note on the loaded flag.
+     * Deliberately not the whole card and deliberately no pointer-events block: the filter row is
+     * what triggered the reload, and freezing it would stop the next keystroke landing.
+     */
+    .refreshing tbody { opacity: .45; transition: opacity .12s; }
+
     .batch-strip {
       display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 14px 0 -2px;
     }
@@ -323,16 +334,26 @@ export class RequestListComponent implements OnInit {
    * What each column can be filtered by. Built as a signal because two of them are populated from
    * the server (clients, people) and one depends on who is looking.
    */
+  /** Which values each column can still be narrowed by, from the server. See the tasks grid. */
+  readonly options = signal<Record<string, string[]> | null>(null);
+
+  private availableFor(key: string): ReadonlySet<string> | undefined {
+    const all = this.options();
+    return all?.[key] ? new Set(all[key]) : undefined;
+  }
+
   readonly specs = computed<Record<string, ColumnFilterSpec>>(() => ({
     number: { key: 'number', kind: 'text', placeholder: 'REQ-…' },
-    title: { key: 'title', kind: 'text', placeholder: 'Title' },
+    title: { key: 'title', kind: 'text', placeholder: 'Title', minWidth: 260 },
     client: {
       key: 'client', kind: 'select', placeholder: 'Any client',
       options: this.clients().map((c) => ({ value: c.id, label: c.name })),
+      available: this.availableFor('client'),
     },
     urgency: {
       key: 'urgency', kind: 'select', placeholder: 'Any',
       options: URGENCIES.map((u) => ({ value: u, label: urgencyLabel(u) })),
+      available: this.availableFor('urgency'),
     },
     // Text, not a dropdown: the list of people is behind Task.Assign, which a reviewer need not
     // hold, and a filter that 403s for half its users is worse than one that matches on the name
@@ -354,7 +375,16 @@ export class RequestListComponent implements OnInit {
   peek(request: { id: number }): void {
     this.peeking.set({ kind: 'request', id: request.id });
   }
+  /**
+   * True only until the first load lands.
+   *
+   * A reload triggered by the filter row must **not** swap the table out for a spinner: doing so
+   * destroys the filter row along with it, which closed the open multi-select panel after the first
+   * tick and made choosing two values impossible. Subsequent loads dim the table in place instead.
+   */
   readonly loading = signal(true);
+  readonly refreshing = signal(false);
+  private loaded = false;
   readonly page = signal<PagedResult<RequestSummaryDto>>(
     { items: [], page: 1, pageSize: 25, totalCount: 0, totalPages: 0 });
 
@@ -433,6 +463,17 @@ export class RequestListComponent implements OnInit {
     }
   }
 
+  /** What each dropdown should still offer, given the other columns. See the tasks grid. */
+  private loadFilterOptions(): void {
+    this.api.requestFilterOptions({
+      view: this.view() ?? undefined,
+      ...this.filters.asObject(),
+    }).subscribe({
+      next: (o) => this.options.set(o.columns),
+      error: () => this.options.set(null),
+    });
+  }
+
   /**
    * The tiles deliberately ignore the filter row.
    *
@@ -445,6 +486,14 @@ export class RequestListComponent implements OnInit {
     this.api.requestStatusCounts({}).subscribe((c) => this.counts.set(c));
   }
 
+
+  /** One place to leave a load, whether it succeeded or not. */
+  private settle(): void {
+    this.loaded = true;
+    this.loading.set(false);
+    this.refreshing.set(false);
+  }
+
   reload(): void {
     // The caller's own, always — a batch is a way back to a submission they made, not a
     // browsing view. Reviewers reach other people's through the review queue.
@@ -454,7 +503,8 @@ export class RequestListComponent implements OnInit {
     });
 
     this.loadCounts();
-    this.loading.set(true);
+    this.loadFilterOptions();
+    if (this.loaded) this.refreshing.set(true); else this.loading.set(true);
     this.api.requests({
       view: this.view() ?? undefined,
       sortBy: this.sort().by ?? undefined,
@@ -463,8 +513,8 @@ export class RequestListComponent implements OnInit {
       pageSize: this.pageSize,
       ...this.filters.asObject(),
     }).subscribe({
-      next: (result) => { this.page.set(result); this.loading.set(false); },
-      error: () => this.loading.set(false),
+      next: (result) => { this.page.set(result); this.settle(); },
+      error: () => this.settle(),
     });
   }
 

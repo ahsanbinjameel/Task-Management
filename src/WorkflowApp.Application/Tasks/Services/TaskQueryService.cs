@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using WorkflowApp.Application.Common;
 using WorkflowApp.Application.Common.Interfaces;
+using WorkflowApp.Application.Common.Services;
 using WorkflowApp.Application.Common.Models;
 using WorkflowApp.Application.Requests.Dtos;
 using WorkflowApp.Application.Tasks.Dtos;
@@ -72,6 +73,9 @@ public interface ITaskQueryService
     /// <summary>How many tasks sit in each status, under the same filters minus status.</summary>
     Task<IReadOnlyList<StatusCountDto>> StatusCountsAsync(TaskQuery query, CancellationToken ct = default);
 
+    /// <summary>What each filterable column can still be narrowed by. See <see cref="FilterOptionsDto"/>.</summary>
+    Task<FilterOptionsDto> FilterOptionsAsync(TaskQuery query, CancellationToken ct = default);
+
     /// <summary>Approved work with nobody on it yet — the assignment coordinator's queue.</summary>
     Task<PagedResult<TaskSummaryDto>> AssignmentQueueAsync(PageQuery page, CancellationToken ct = default);
 
@@ -102,13 +106,16 @@ public sealed class TaskQueryService : ITaskQueryService
     private readonly IWorkflowDbContext _db;
     private readonly ICurrentUser _currentUser;
     private readonly ITaskDependencyService _dependencies;
+    private readonly IBusinessCalendar _calendar;
 
     public TaskQueryService(
-        IWorkflowDbContext db, ICurrentUser currentUser, ITaskDependencyService dependencies)
+        IWorkflowDbContext db, ICurrentUser currentUser, ITaskDependencyService dependencies,
+        IBusinessCalendar calendar)
     {
         _db = db;
         _currentUser = currentUser;
         _dependencies = dependencies;
+        _calendar = calendar;
     }
 
     public async Task<Result<TaskDetailDto>> GetAsync(long taskId, CancellationToken ct = default)
@@ -524,11 +531,13 @@ public sealed class TaskQueryService : ITaskQueryService
         if (columns.Text("title") is { } title)
             tasks = tasks.Where(t => t.Title.Contains(title));
 
-        if (columns.Id("client") is { } clientId)
-            tasks = tasks.Where(t => t.ClientId == clientId);
+        var clientIds = columns.Ids("client");
+        if (clientIds.Count > 0)
+            tasks = tasks.Where(t => t.ClientId != null && clientIds.Contains(t.ClientId.Value));
 
-        if (columns.Enum<Priority>("priority") is { } priority)
-            tasks = tasks.Where(t => t.Priority == priority);
+        var priorities = columns.Enums<Priority>("priority");
+        if (priorities.Count > 0)
+            tasks = tasks.Where(t => priorities.Contains(t.Priority));
 
         // By name, for the same reason as the request grid: the person list is behind Task.Assign.
         // "-" is the exception and the one a coordinator looks for most — unassigned work — which
@@ -542,17 +551,66 @@ public sealed class TaskQueryService : ITaskQueryService
                         || t.PrimaryAssigneeUser.UserName.Contains(assignee)));
         }
 
-        if (columns.Enum<WorkTaskStatus>("status") is { } status)
-            tasks = tasks.Where(t => t.Status == status);
+        var statuses = columns.Enums<WorkTaskStatus>("status");
+        if (statuses.Count > 0)
+            tasks = tasks.Where(t => statuses.Contains(t.Status));
 
+        // The day boundary comes from the business calendar, not from UTC midnight.
+        //
+        // Filtering [00:00Z, 24:00Z) matched a task due 25 Aug at 00:00+05:00 — which is 24 Aug
+        // 19:00Z — when the user asked for the 24th, while the grid printed "Aug 25" beside it. The
+        // filter and the column disagreed about what day it was. `Timestamps are UTC; days are
+        // business-local` is the rule the reports already follow; this now follows it too.
         if (columns.Date("due") is { } due)
         {
-            var from = due.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
-            var to = from.AddDays(1);
+            var (from, to) = _calendar.DayRange(due);
             tasks = tasks.Where(t => t.DueDate != null && t.DueDate >= from && t.DueDate < to);
         }
 
         return tasks;
+    }
+
+    /// <summary>
+    /// What each column's dropdown should still offer, given the other columns.
+    ///
+    /// One small query per column rather than one big projection: each has to see a *different*
+    /// filtered set (its own filter removed), so they cannot share a pass. They are cheap — a
+    /// DISTINCT over an already-narrow set — and they run only when the grid reloads.
+    /// </summary>
+    public async Task<FilterOptionsDto> FilterOptionsAsync(
+        TaskQuery query, CancellationToken ct = default)
+    {
+        var columns = new Dictionary<string, IReadOnlyList<string>>();
+
+        // Everything except the filter row: the row's own columns are removed one at a time below.
+        var basis = ApplyFilters(_db.Tasks.AsNoTracking(), query, includeStatus: true);
+
+        IQueryable<WorkTask> Excluding(string key) =>
+            ApplyColumnFilters(basis, query.Columns.Without(key));
+
+        columns["client"] = (await Excluding("client")
+                .Where(t => t.ClientId != null)
+                .Select(t => t.ClientId!.Value)
+                .Distinct()
+                .ToListAsync(ct))
+            .Select(id => id.ToString())
+            .ToList();
+
+        columns["priority"] = (await Excluding("priority")
+                .Select(t => t.Priority)
+                .Distinct()
+                .ToListAsync(ct))
+            .Select(p => p.ToString())
+            .ToList();
+
+        columns["status"] = (await Excluding("status")
+                .Select(t => t.Status)
+                .Distinct()
+                .ToListAsync(ct))
+            .Select(st => st.ToString())
+            .ToList();
+
+        return new FilterOptionsDto(columns);
     }
 
     /// <summary>

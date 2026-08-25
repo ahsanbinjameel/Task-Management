@@ -114,6 +114,23 @@ export class AuthService {
     this._permissions.set(new Set());
   }
 
+  /**
+   * Updates only the fields someone can change about themselves, keeping everything else.
+   *
+   * Deliberately not `setUser`: the profile endpoint returns a `UserDto` with an **empty**
+   * permission list (list projections omit permissions — they are only meaningful for one user and
+   * would multiply the query cost). Passing that through `setUser` would clear every permission in
+   * the session and blank the entire nav until the next sign-in.
+   */
+  applyProfile(user: Pick<UserDto, 'displayName' | 'email'>): void {
+    const current = this._user();
+    if (!current) return;
+
+    const merged: UserDto = { ...current, displayName: user.displayName, email: user.email };
+    localStorage.setItem(USER, JSON.stringify(merged));
+    this._user.set(merged);
+  }
+
   private setUser(user: UserDto): void {
     localStorage.setItem(USER, JSON.stringify(user));
     this._user.set(user);

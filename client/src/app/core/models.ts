@@ -1009,3 +1009,12 @@ export interface RoleDetailDto {
   userCount: number;
   permissions: string[];
 }
+
+/**
+ * Which values each column's filter can still offer, given what the other columns are filtered by
+ * — the "like Excel" behaviour. Raw tokens (enum names, ids as strings); the client keeps its own
+ * labelled option list and hides whatever this does not mention.
+ */
+export interface FilterOptionsDto {
+  columns: Record<string, string[]>;
+}

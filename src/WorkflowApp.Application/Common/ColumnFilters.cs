@@ -31,6 +31,17 @@ public sealed class ColumnFilters
 
     public bool Any => _values.Values.Any(v => !string.IsNullOrWhiteSpace(v));
 
+    /// <summary>
+    /// The same filters with one column dropped.
+    ///
+    /// Used to work out what a column's dropdown should still offer: a column is always computed
+    /// against every filter *except* its own, or ticking one value would erase the rest of that
+    /// column's choices and multi-select could never get past its first pick.
+    /// </summary>
+    public ColumnFilters Without(string key) =>
+        new(_values.Where(kv => !kv.Key.Equals(key, StringComparison.OrdinalIgnoreCase))
+                   .ToDictionary(kv => kv.Key, kv => kv.Value));
+
     /// <summary>Trimmed text, or null when nothing usable was sent.</summary>
     public string? Text(string key) =>
         _values.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value)
@@ -52,6 +63,42 @@ public sealed class ColumnFilters
     /// </summary>
     public T? Enum<T>(string key) where T : struct, Enum =>
         System.Enum.TryParse<T>(Text(key), ignoreCase: true, out var value) ? value : null;
+
+    /// <summary>
+    /// Several values for one column: <c>col[priority]=Critical|High</c>.
+    ///
+    /// **The separator is a pipe, and it has to be.** A comma is the obvious choice and does not
+    /// survive: ASP.NET's query value provider treats a comma-separated value as several values for
+    /// the same key, and the dictionary binder then keeps exactly one of them — so
+    /// <c>Critical,High</c> silently arrived as <c>High</c> and the grid filtered by the wrong
+    /// thing without erroring. A repeated key (<c>col[x]=a&amp;col[x]=b</c>) fails the same way,
+    /// keeping only the first. A pipe passes through untouched.
+    ///
+    /// Only ever used for tokens that cannot contain the separator — enum names and numeric ids.
+    /// Free text is deliberately never split: a filter is one term, and guessing which side of a
+    /// separator the user meant is worse than not guessing.
+    /// </summary>
+    public IReadOnlyList<string> Many(string key) =>
+        Text(key)?.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        ?? Array.Empty<string>();
+
+    /// <summary>The ids that parsed. A malformed one narrows nothing rather than emptying the grid.</summary>
+    public IReadOnlyList<long> Ids(string key) =>
+        Many(key)
+            .Select(v => long.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)
+                ? id
+                : (long?)null)
+            .Where(id => id.HasValue)
+            .Select(id => id!.Value)
+            .ToList();
+
+    /// <summary>The enum members that parsed, by name. See <see cref="Enum{T}"/> for why names.</summary>
+    public IReadOnlyList<T> Enums<T>(string key) where T : struct, Enum =>
+        Many(key)
+            .Select(v => System.Enum.TryParse<T>(v, ignoreCase: true, out var value) ? value : (T?)null)
+            .Where(v => v.HasValue)
+            .Select(v => v!.Value)
+            .ToList();
 
     /// <summary>A whole day, as the local calendar date the user picked.</summary>
     public DateOnly? Date(string key) =>

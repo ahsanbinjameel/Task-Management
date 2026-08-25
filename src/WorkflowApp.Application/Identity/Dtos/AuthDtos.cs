@@ -55,22 +55,44 @@ public sealed record AssignRolesRequest
 }
 
 /// <summary>
-/// Changing who someone is, not what they can do.
+/// Everything about an account except its roles, in one edit.
 ///
-/// The username is deliberately absent: it is what the person signs in with, what every audit row
-/// and login attempt was recorded against, and what a colleague knows them by. Changing it silently
-/// invalidates all three. A person who genuinely needs a different one gets a new account.
+/// The username is editable. An earlier version refused, on the grounds that history was recorded
+/// against it — that was wrong: <c>AuditLog.ActorUserId</c> and every other back-reference is the
+/// numeric id, so a rename carries the whole trail with it. The one thing that does not follow is
+/// <c>LoginAttempt.UserNameTried</c>, which is a record of what was actually typed at the time and
+/// is supposed to keep the old value.
+///
+/// <see cref="NewPassword"/> is optional and means "leave it alone" when blank — an administrator
+/// correcting a surname must not have to reissue a password to do it.
 /// </summary>
 public sealed record UpdateUserRequest
 {
+    [Required, MaxLength(100)]
+    public string UserName { get; init; } = default!;
+
     [Required, MaxLength(200)]
     public string DisplayName { get; init; } = default!;
 
     [EmailAddress, MaxLength(256)]
     public string? Email { get; init; }
 
+    /// <summary>Blank leaves the password unchanged. Setting one signs the person out everywhere.</summary>
+    [MaxLength(200)]
+    public string? NewPassword { get; init; }
+
     public long? DepartmentId { get; init; }
     public long? TeamId { get; init; }
+}
+
+/// <summary>What a person may change about their own account, without an administrator.</summary>
+public sealed record UpdateProfileRequest
+{
+    [Required, MaxLength(200)]
+    public string DisplayName { get; init; } = default!;
+
+    [EmailAddress, MaxLength(256)]
+    public string? Email { get; init; }
 }
 
 public sealed record ResetPasswordRequest

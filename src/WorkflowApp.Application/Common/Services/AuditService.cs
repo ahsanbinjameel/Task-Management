@@ -38,6 +38,9 @@ public static class AuditActions
     public const string UserActivated = "Admin.UserActivated";
     public const string UserDeactivated = "Admin.UserDeactivated";
     public const string UserUpdated = "Admin.UserUpdated";
+
+    /// <summary>Someone changed their own name or email. Not an administrative act.</summary>
+    public const string ProfileUpdated = "Auth.ProfileUpdated";
     public const string UserRolesChanged = "Admin.UserRolesChanged";
 
     /// <summary>Reference data an administrator maintains: clients, teams, pause reasons.</summary>

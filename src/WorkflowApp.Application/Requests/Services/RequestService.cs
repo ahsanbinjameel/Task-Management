@@ -21,6 +21,9 @@ public interface IRequestService
     /// <summary>How many requests sit in each status, under the same filters minus status.</summary>
     Task<IReadOnlyList<StatusCountDto>> StatusCountsAsync(RequestQuery query, CancellationToken ct = default);
 
+    /// <summary>What each filterable column can still be narrowed by. See <see cref="FilterOptionsDto"/>.</summary>
+    Task<FilterOptionsDto> FilterOptionsAsync(RequestQuery query, CancellationToken ct = default);
+
     Task<PagedResult<RequestSummaryDto>> ListAsync(
         RequestQuery query, PageQuery page, CancellationToken ct = default);
 
@@ -76,15 +79,18 @@ public sealed class RequestService : IRequestService
     private readonly INotificationService _notifications;
     private readonly ILookupService _lookups;
     private readonly IDateTimeProvider _clock;
+    private readonly IBusinessCalendar _calendar;
 
     public RequestService(IWorkflowDbContext db, INumberGenerator numbers,
-        INotificationService notifications, ILookupService lookups, IDateTimeProvider clock)
+        INotificationService notifications, ILookupService lookups, IDateTimeProvider clock,
+        IBusinessCalendar calendar)
     {
         _db = db;
         _numbers = numbers;
         _notifications = notifications;
         _lookups = lookups;
         _clock = clock;
+        _calendar = calendar;
     }
 
     public async Task<Result<RequestDetailDto>> CreateAsync(
@@ -393,14 +399,19 @@ public sealed class RequestService : IRequestService
         if (columns.Text("title") is { } title)
             requests = requests.Where(r => r.Title.Contains(title));
 
-        if (columns.Id("client") is { } clientId)
-            requests = requests.Where(r => r.ClientId == clientId);
+        // Several values per column read as "any of these" — the question a filter row is asked
+        // ("show me Critical *and* High") is an OR within the column and an AND across columns.
+        var clientIds = columns.Ids("client");
+        if (clientIds.Count > 0)
+            requests = requests.Where(r => r.ClientId != null && clientIds.Contains(r.ClientId.Value));
 
-        if (columns.Enum<RequestType>("type") is { } type)
-            requests = requests.Where(r => r.Type == type);
+        var types = columns.Enums<RequestType>("type");
+        if (types.Count > 0)
+            requests = requests.Where(r => types.Contains(r.Type));
 
-        if (columns.Enum<RequestedUrgency>("urgency") is { } urgency)
-            requests = requests.Where(r => r.RequestedUrgency == urgency);
+        var urgencies = columns.Enums<RequestedUrgency>("urgency");
+        if (urgencies.Count > 0)
+            requests = requests.Where(r => urgencies.Contains(r.RequestedUrgency));
 
         // By name rather than by id: the person list needed for a dropdown is behind Task.Assign,
         // which a reviewer need not have, and a filter that 403s for half its users is worse than
@@ -412,12 +423,11 @@ public sealed class RequestService : IRequestService
                     && (u.DisplayName.Contains(requester) || u.UserName.Contains(requester))));
         }
 
-        // Everything raised on that calendar day, in UTC. The business-local boundary belongs to
-        // reporting; a grid filter is a coarse "find the ones from Tuesday".
+        // Everything raised on that business day — see the note on the task grid's due-date filter
+        // for why this must not be UTC midnight.
         if (columns.Date("raised") is { } raised)
         {
-            var from = raised.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
-            var to = from.AddDays(1);
+            var (from, to) = _calendar.DayRange(raised);
             requests = requests.Where(r => r.RequestedAt >= from && r.RequestedAt < to);
         }
 
@@ -432,6 +442,50 @@ public sealed class RequestService : IRequestService
         }
 
         return requests;
+    }
+
+    /// <summary>
+    /// What each column's dropdown should still offer, given the other columns. Each is computed
+    /// with its own filter removed — see <see cref="FilterOptionsDto"/>.
+    /// </summary>
+    public async Task<FilterOptionsDto> FilterOptionsAsync(
+        RequestQuery query, CancellationToken ct = default)
+    {
+        var columns = new Dictionary<string, IReadOnlyList<string>>();
+
+        var requests = _db.Requests.AsNoTracking();
+
+        if (query.RequestedByUserId is { } requesterId)
+            requests = requests.Where(r => r.RequestedByUserId == requesterId);
+
+        var basis = ApplyFilters(requests, query, includeStatus: true);
+
+        IQueryable<Request> Excluding(string key) =>
+            ApplyColumnFilters(basis, query.Columns.Without(key));
+
+        columns["client"] = (await Excluding("client")
+                .Where(r => r.ClientId != null)
+                .Select(r => r.ClientId!.Value)
+                .Distinct()
+                .ToListAsync(ct))
+            .Select(id => id.ToString())
+            .ToList();
+
+        columns["urgency"] = (await Excluding("urgency")
+                .Select(r => r.RequestedUrgency)
+                .Distinct()
+                .ToListAsync(ct))
+            .Select(u => u.ToString())
+            .ToList();
+
+        columns["type"] = (await Excluding("type")
+                .Select(r => r.Type)
+                .Distinct()
+                .ToListAsync(ct))
+            .Select(t => t.ToString())
+            .ToList();
+
+        return new FilterOptionsDto(columns);
     }
 
     public async Task<IReadOnlyList<StatusCountDto>> StatusCountsAsync(
