@@ -8,6 +8,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { ApiService } from '../core/api.service';
 import { AttachmentDto } from '../core/models';
 import { saveBlob } from '../core/format';
+import { openPdf } from './pdf-viewer.component';
 
 /** Anything the browser will render as a picture. Everything else gets an icon and a name. */
 export function isImage(contentType: string | null | undefined): boolean {
@@ -187,6 +188,11 @@ export class ImageViewerDialog {
                 <span class="name">{{ a.fileName }}</span>
                 <span class="muted small">{{ size(a.sizeBytes) }}</span>
               </div>
+              @if (pdf(a)) {
+                <button matIconButton (click)="viewPdf(a)" matTooltip="Open">
+                  <mat-icon>visibility</mat-icon>
+                </button>
+              }
               <button matIconButton (click)="download(a)" matTooltip="Download">
                 <mat-icon>download</mat-icon>
               </button>
@@ -254,6 +260,14 @@ export class AttachmentsComponent {
   }
 
   image = (a: AttachmentDto) => isImage(a.contentType);
+
+  /**
+   * A PDF is the one non-image people routinely want to *read* rather than keep — a signed-off
+   * spec, a scanned form. It gets a viewer for the same reason screenshots did. Everything else
+   * (spreadsheets, archives) needs its own application, so download stays the only sensible answer
+   * there.
+   */
+  pdf = (a: AttachmentDto) => (a.contentType ?? '').includes('pdf');
   size = readableSize;
   url = (id: number) => this.urls()[id];
 
@@ -276,6 +290,14 @@ export class AttachmentsComponent {
       panelClass: 'viewer-panel',
       maxWidth: '96vw',
       autoFocus: false,
+    });
+  }
+
+  viewPdf(a: AttachmentDto): void {
+    openPdf(this.dialog, {
+      title: a.fileName,
+      fileName: a.fileName,
+      load: () => this.api.downloadAttachment(a.id),
     });
   }
 

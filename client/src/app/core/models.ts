@@ -959,3 +959,53 @@ export interface AuditLogDto {
   ipAddress?: string | null;
   deviceInfo?: string | null;
 }
+
+// --- administrator setup data ------------------------------------------------------------------
+//
+// The reference lists an administrator maintains. Each one carries a usage count, because the only
+// question worth asking before changing a lookup is "what already points at this?" — and each is
+// deactivated rather than deleted, so the count keeps answering for the history.
+
+export interface SetupClientDto {
+  id: number;
+  name: string;
+  code?: string | null;
+  isActive: boolean;
+  requestCount: number;
+}
+
+export interface SetupDepartmentDto {
+  id: number;
+  name: string;
+  isActive: boolean;
+  teamCount: number;
+}
+
+export interface SetupTeamDto {
+  id: number;
+  name: string;
+  departmentId?: number | null;
+  departmentName?: string | null;
+  isActive: boolean;
+}
+
+/** The editable form of PauseReasonDto — same row, plus what it costs to change it. */
+export interface SetupPauseReasonDto {
+  id: number;
+  name: string;
+  requiresComment: boolean;
+  isBlocker: boolean;
+  category: PauseCategory;
+  awayState?: WorkforceState | null;
+  isActive: boolean;
+  timesUsed: number;
+}
+
+export interface RoleDetailDto {
+  id: number;
+  name: string;
+  description?: string | null;
+  isSystemRole: boolean;
+  userCount: number;
+  permissions: string[];
+}

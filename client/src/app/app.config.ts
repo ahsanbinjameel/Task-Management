@@ -20,6 +20,13 @@ export const appConfig: ApplicationConfig = {
       // error interceptor sits outside it so a silently-refreshed 401 never raises a toast.
       withInterceptors([errorInterceptor, authInterceptor]),
     ),
-    { provide: MAT_FORM_FIELD_DEFAULT_OPTIONS, useValue: { appearance: 'outline' } },
+    {
+      provide: MAT_FORM_FIELD_DEFAULT_OPTIONS,
+      // `dynamic` is what removes most of the empty space in this app's forms. By default every
+      // Material field reserves a line underneath itself for an error that is usually not there —
+      // about 22px per field, so a six-field dialog carried 130px of nothing. Dynamic collapses it
+      // and lets the field grow only when there is something to say.
+      useValue: { appearance: 'outline', subscriptSizing: 'dynamic' },
+    },
   ],
 };

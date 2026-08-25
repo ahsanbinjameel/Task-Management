@@ -1,7 +1,9 @@
 import { Component, OnInit, inject, input, output, signal } from '@angular/core';
 import { DatePipe } from '@angular/common';
+import { HttpContext } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
+import { MatDialog } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
@@ -11,6 +13,7 @@ import { ToastService } from '../../../core/toast.service';
 import { Perm } from '../../../core/permissions';
 import { ScopeChangeDto } from '../../../core/models';
 import { EmptyComponent } from '../../../shared/ui';
+import { ConfirmDialog, ConfirmData } from '../../../shared/dialogs';
 
 /**
  * Scope changes are recorded when asked for and only applied when approved. That gap is the point:
@@ -101,6 +104,7 @@ export class TaskScopeComponent implements OnInit {
   private readonly api = inject(ApiService);
   private readonly auth = inject(AuthService);
   private readonly toast = inject(ToastService);
+  private readonly dialog = inject(MatDialog);
 
   readonly changes = signal<ScopeChangeDto[]>([]);
   readonly busy = signal(false);
@@ -136,10 +140,33 @@ export class TaskScopeComponent implements OnInit {
   }
 
   approve(change: ScopeChangeDto): void {
-    this.api.approveScopeChange(change.id).subscribe(() => {
-      this.toast.success('Scope change approved — the estimate has been updated.');
-      this.load();
-      this.changed.emit();
-    });
+    // Approving is the moment the estimate actually moves, and there is no matching un-approve:
+    // the whole point of recording a change separately is that the original estimate survives, so
+    // an accidental approval cannot be undone by re-approving the old number. One click sat
+    // between a pending row and that, which is too few for the only irreversible button on this
+    // panel — the impact is spelled out here so the answer is given to the number, not the button.
+    const impact = change.estimatedImpactHours != null
+      ? `The estimate moves by ${change.estimatedImpactHours}h. `
+      : 'The estimate and due date move to match. ';
+
+    this.dialog
+      .open<ConfirmDialog, ConfirmData>(ConfirmDialog, {
+        data: {
+          title: 'Approve this scope change?',
+          message:
+            impact
+            + 'The original estimate is kept in the history either way, but approving cannot be '
+            + 'undone — a mistake has to be corrected with another scope change.',
+          confirmText: 'Approve it',
+          submit: (ctx: HttpContext) => this.api.approveScopeChange(change.id, ctx),
+        },
+      })
+      .afterClosed()
+      .subscribe((approved?: unknown) => {
+        if (!approved) return;
+        this.toast.success('Scope change approved — the estimate has been updated.');
+        this.load();
+        this.changed.emit();
+      });
   }
 }

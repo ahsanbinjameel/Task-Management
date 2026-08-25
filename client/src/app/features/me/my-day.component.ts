@@ -10,7 +10,9 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { ApiService } from '../../core/api.service';
 import { DailyTimelineDto, DailyUserReportDto } from '../../core/models';
-import { DurationPipe, isoDate, saveBlob } from '../../core/format';
+import { DurationPipe, isoDate } from '../../core/format';
+import { MatDialog } from '@angular/material/dialog';
+import { openPdf } from '../../shared/pdf-viewer.component';
 import {
   EmptyComponent, LoadingComponent, PageHeaderComponent, StatComponent,
 } from '../../shared/ui';
@@ -35,8 +37,8 @@ import {
           <input matInput type="date" [(ngModel)]="date" (change)="load()" />
         </mat-form-field>
         <button matButton (click)="load()"><mat-icon>refresh</mat-icon></button>
-        <button matButton="filled" (click)="exportPdf()">
-          <mat-icon>picture_as_pdf</mat-icon> PDF
+        <button matButton="filled" (click)="viewPdf()">
+          <mat-icon>picture_as_pdf</mat-icon> View PDF
         </button>
       </app-page-header>
 
@@ -189,6 +191,7 @@ export class MyDayComponent implements OnInit {
   private readonly realtime = inject(RealtimeService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(ApiService);
+  private readonly dialog = inject(MatDialog);
 
   readonly timeline = signal<DailyTimelineDto | null>(null);
   readonly report = signal<DailyUserReportDto | null>(null);
@@ -206,9 +209,13 @@ export class MyDayComponent implements OnInit {
   }
 
   /** The day as something to file or hand over — the same figures the page is showing. */
-  exportPdf(): void {
-    this.api.myDailyPdf(this.date)
-      .subscribe((blob) => saveBlob(blob, `my-day-${this.date}.pdf`));
+  /** Opens it to be read. Keeping a copy is a button inside the viewer. */
+  viewPdf(): void {
+    openPdf(this.dialog, {
+      title: `My day — ${this.date}`,
+      fileName: `my-day-${this.date}.pdf`,
+      load: () => this.api.myDailyPdf(this.date),
+    });
   }
 
   load(): void {

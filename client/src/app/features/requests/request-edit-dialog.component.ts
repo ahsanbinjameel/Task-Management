@@ -96,7 +96,9 @@ import { enumOptions, SearchSelectComponent } from '../../shared/search-select.c
     .full { width: 100%; }
     .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
     .note { margin: 0 0 12px; }
-    mat-dialog-content { min-width: min(620px, 88vw); padding-top: 8px !important; }
+    /* The panel is given its width at open(); the content follows it. A min-width larger
+       than Material's 560px surface cap is what made this dialog scroll sideways. */
+    mat-dialog-content { padding-top: 8px !important; }
     .form-error {
       display: flex; align-items: flex-start; gap: 8px; margin: 0 0 12px;
       padding: 10px 12px; border-radius: 8px; font-size: 13.5px; line-height: 1.45;

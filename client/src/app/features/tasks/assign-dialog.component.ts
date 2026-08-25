@@ -46,7 +46,8 @@ export type AssignDialogResult = TaskDetailDto;
                          (ngModelChange)="assigneeUserId.set($event)" />
 
       <p class="muted small who">
-        The person responsible owns this task. It appears in their queue and counts as their work.
+        The person responsible owns this task. It appears in their queue and counts as their work,
+        and they are notified as soon as you confirm.
       </p>
 
       <app-search-select label="Support people (optional)" multiple [options]="supportOptions()"

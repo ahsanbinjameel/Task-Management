@@ -7,11 +7,14 @@ import { MatBadgeModule } from '@angular/material/badge';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSidenavModule } from '@angular/material/sidenav';
 import { MatDividerModule } from '@angular/material/divider';
+import { MatDialog } from '@angular/material/dialog';
 import { AuthService } from '../core/auth.service';
 import { Perm } from '../core/permissions';
 import { NotificationBellComponent } from './notification-bell.component';
 import { ShiftWidgetComponent } from './shift-widget.component';
 import { QuickWorkWidgetComponent } from './quick-work-widget.component';
+import { ConfirmDialog, ConfirmData } from '../shared/dialogs';
+import { readRailPreference, writeRailPreference } from './nav-preference';
 
 interface NavItem {
   label: string;
@@ -84,14 +87,16 @@ interface NavItem {
               <span class="muted small">{{ roles() }}</span>
             </div>
             <mat-divider />
-            <a mat-menu-item routerLink="/me/day">
-              <mat-icon>schedule</mat-icon><span>My day</span>
-            </a>
-            <a mat-menu-item routerLink="/me/password">
-              <mat-icon>lock_reset</mat-icon><span>Change password</span>
+            <!--
+              "My day" is not here: it is a work screen and already sits in the nav under Work,
+              and an item in two places is one the reader has to think about twice. Everything
+              about the account or this browser now lives behind Settings.
+            -->
+            <a mat-menu-item routerLink="/me/settings">
+              <mat-icon>settings</mat-icon><span>Settings</span>
             </a>
             <mat-divider />
-            <button mat-menu-item (click)="auth.logout()">
+            <button mat-menu-item (click)="signOut()">
               <mat-icon>logout</mat-icon><span>Sign out</span>
             </button>
           </mat-menu>
@@ -108,24 +113,39 @@ interface NavItem {
 })
 export class ShellComponent {
   readonly auth = inject(AuthService);
+  private readonly dialog = inject(MatDialog);
   readonly navOpen = signal(false);
 
   /**
-   * Collapsed to an icon rail, remembered across visits.
-   *
-   * Wrapped in try/catch because storage throws outright in some privacy modes rather than merely
-   * returning nothing — a menu preference is not worth a blank page.
+   * Sign out sits one item below "Change password" in a small menu, and hitting it by accident
+   * costs whatever was half-typed on the screen behind it. The shift is the part worth spelling
+   * out: signing out does **not** end it, so someone who signs out thinking they have clocked off
+   * stays on the clock until the stale-shift sweep closes it at their last sign of life.
    */
-  readonly collapsed = signal(this.readRail());
+  signOut(): void {
+    this.dialog
+      .open<ConfirmDialog, ConfirmData>(ConfirmDialog, {
+        data: {
+          title: 'Sign out?',
+          message:
+            'Anything you have typed and not saved is lost. Signing out does not end your shift — '
+            + 'use "End my shift" first if you have finished for the day.',
+          confirmText: 'Sign out',
+        },
+      })
+      .afterClosed()
+      .subscribe((confirmed?: boolean) => {
+        if (confirmed) this.auth.logout();
+      });
+  }
+
+  /** Collapsed to an icon rail, remembered across visits. Shared with the Settings page. */
+  readonly collapsed = signal(readRailPreference());
 
   toggleRail(): void {
     const next = !this.collapsed();
     this.collapsed.set(next);
-    try { localStorage.setItem('nav.rail', next ? '1' : '0'); } catch { /* not important */ }
-  }
-
-  private readRail(): boolean {
-    try { return localStorage.getItem('nav.rail') === '1'; } catch { return false; }
+    writeRailPreference(next);
   }
 
   readonly initials = computed(() => {
@@ -175,6 +195,8 @@ export class ShellComponent {
 
     { section: 'Admin', label: 'Users', icon: 'manage_accounts', route: '/admin/users',
       permissions: [Perm.adminManageUsers] },
+    { section: 'Admin', label: 'Setup data', icon: 'tune', route: '/admin/setup',
+      permissions: [Perm.adminManageConfig] },
     { section: 'Admin', label: 'Roles', icon: 'admin_panel_settings', route: '/admin/roles',
       permissions: [Perm.adminManageRoles] },
   ];

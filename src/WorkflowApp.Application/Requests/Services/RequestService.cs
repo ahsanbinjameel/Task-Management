@@ -56,6 +56,13 @@ public sealed record RequestQuery
     public string? SortBy { get; init; }
 
     public bool SortDescending { get; init; } = true;
+
+    /// <summary>
+    /// Per-column filters from the grid's filter row. Applied on top of everything above, and — as
+    /// with <see cref="Search"/> — deliberately *not* applied when counting the tiles, so a tile
+    /// keeps showing how many there would be if you cleared the column you are narrowing by.
+    /// </summary>
+    public ColumnFilters Columns { get; init; } = ColumnFilters.None;
 }
 
 /// <summary>
@@ -273,7 +280,11 @@ public sealed class RequestService : IRequestService
         if (query.RequestedByUserId is { } requesterId)
             requests = requests.Where(r => r.RequestedByUserId == requesterId);
 
-        requests = ApplyFilters(requests, query, includeStatus: true);
+        // The filter row is applied *here and only here*, never in StatusCountsAsync. The tiles are
+        // the navigation: a count that fell towards zero while someone typed into a column would be
+        // a number nobody could aim at. Structural rather than a comment on the counting method,
+        // because the two have already drifted apart once.
+        requests = ApplyColumnFilters(ApplyFilters(requests, query, includeStatus: true), query.Columns);
 
         return await ProjectPageAsync(Sort(requests, query), page, ct, query.Audience);
     }
@@ -325,16 +336,28 @@ public sealed class RequestService : IRequestService
 
         if (includeStatus && StatusViews.FindRequestView(query.Audience, query.View) is { } view)
         {
-            // Two halves of one question: a request with no task yet answers for itself, and one
-            // that has a task answers with the task's status.
             var requestStatuses = view.RequestStatuses.ToList();
-            var taskStatuses = view.TaskStatuses.ToList();
 
-            requests = requests.Where(r =>
-                (r.GeneratedTaskId == null && requestStatuses.Contains(r.Status))
-                || (r.GeneratedTaskId != null && _db.Tasks
-                        .Where(t => t.Id == r.GeneratedTaskId)
-                        .Any(t => taskStatuses.Contains(t.Status))));
+            // Fold for an audience whose views carry no task statuses and the screen empties
+            // itself: an approved request always has a generated task, so it would be judged
+            // against an empty list and match nothing. The tile counted it and the list did not.
+            // One rule, asked in one place — see StatusViews.RequestStatusFollowsTask.
+            if (StatusViews.RequestStatusFollowsTask(query.Audience))
+            {
+                // Two halves of one question: a request with no task yet answers for itself, and
+                // one that has a task answers with the task's status.
+                var taskStatuses = view.TaskStatuses.ToList();
+
+                requests = requests.Where(r =>
+                    (r.GeneratedTaskId == null && requestStatuses.Contains(r.Status))
+                    || (r.GeneratedTaskId != null && _db.Tasks
+                            .Where(t => t.Id == r.GeneratedTaskId)
+                            .Any(t => taskStatuses.Contains(t.Status))));
+            }
+            else
+            {
+                requests = requests.Where(r => requestStatuses.Contains(r.Status));
+            }
         }
 
         if (query.Type is { } type)
@@ -352,6 +375,65 @@ public sealed class RequestService : IRequestService
         return requests;
     }
 
+    /// <summary>
+    /// The grid's filter row. Keys match the column names the client renders, so the row is
+    /// generated from the columns rather than hand-listed on both sides.
+    ///
+    /// "Requester" is the one that replaced a toggle: filtering the column by a person is what
+    /// "only mine" used to do, and one control that answers "whose?" beats a switch that answers it
+    /// only for you.
+    /// </summary>
+    private IQueryable<Request> ApplyColumnFilters(IQueryable<Request> requests, ColumnFilters columns)
+    {
+        if (!columns.Any) return requests;
+
+        if (columns.Text("number") is { } number)
+            requests = requests.Where(r => r.RequestNumber.Contains(number));
+
+        if (columns.Text("title") is { } title)
+            requests = requests.Where(r => r.Title.Contains(title));
+
+        if (columns.Id("client") is { } clientId)
+            requests = requests.Where(r => r.ClientId == clientId);
+
+        if (columns.Enum<RequestType>("type") is { } type)
+            requests = requests.Where(r => r.Type == type);
+
+        if (columns.Enum<RequestedUrgency>("urgency") is { } urgency)
+            requests = requests.Where(r => r.RequestedUrgency == urgency);
+
+        // By name rather than by id: the person list needed for a dropdown is behind Task.Assign,
+        // which a reviewer need not have, and a filter that 403s for half its users is worse than
+        // one that matches on what the column already shows.
+        if (columns.Text("requester") is { } requester)
+        {
+            requests = requests.Where(r => _db.Users
+                .Any(u => u.Id == r.RequestedByUserId
+                    && (u.DisplayName.Contains(requester) || u.UserName.Contains(requester))));
+        }
+
+        // Everything raised on that calendar day, in UTC. The business-local boundary belongs to
+        // reporting; a grid filter is a coarse "find the ones from Tuesday".
+        if (columns.Date("raised") is { } raised)
+        {
+            var from = raised.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+            var to = from.AddDays(1);
+            requests = requests.Where(r => r.RequestedAt >= from && r.RequestedAt < to);
+        }
+
+        // The person the generated task sits with — the column a requester actually scans.
+        if (columns.Text("responsible") is { } responsible)
+        {
+            requests = requests.Where(r => r.GeneratedTaskId != null && _db.Tasks
+                .Any(t => t.Id == r.GeneratedTaskId
+                    && t.PrimaryAssigneeUser != null
+                    && (t.PrimaryAssigneeUser.DisplayName.Contains(responsible)
+                        || t.PrimaryAssigneeUser.UserName.Contains(responsible))));
+        }
+
+        return requests;
+    }
+
     public async Task<IReadOnlyList<StatusCountDto>> StatusCountsAsync(
         RequestQuery query, CancellationToken ct = default)
     {
@@ -364,14 +446,14 @@ public sealed class RequestService : IRequestService
 
         // Requests nobody has approved yet answer for themselves...
         var byRequestStatus = await filtered
-            .Where(r => query.Audience != StatusAudience.Requester || r.GeneratedTaskId == null)
+            .Where(r => !StatusViews.RequestStatusFollowsTask(query.Audience) || r.GeneratedTaskId == null)
             .GroupBy(r => r.Status)
             .Select(g => new { Status = g.Key, Count = g.Count() })
             .ToListAsync(ct);
 
-        // ...and the approved ones answer with their task, but only for the requester, whose
-        // tiles follow the work. A reviewer's tiles are about intake, which stops at approval.
-        var byTaskStatus = query.Audience == StatusAudience.Requester
+        // ...and the approved ones answer with their task, for anyone whose status follows it. A
+        // coordinator's tiles are about intake, which stops at approval.
+        var byTaskStatus = StatusViews.RequestStatusFollowsTask(query.Audience)
             ? await (from r in filtered
                      where r.GeneratedTaskId != null
                      join t in _db.Tasks on r.GeneratedTaskId equals t.Id

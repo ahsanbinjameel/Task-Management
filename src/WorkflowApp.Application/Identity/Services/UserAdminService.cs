@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using WorkflowApp.Application.Common;
 using WorkflowApp.Application.Common.Interfaces;
 using WorkflowApp.Application.Common.Models;
 using WorkflowApp.Application.Common.Options;
@@ -19,7 +20,11 @@ public interface IUserAdminService
 {
     Task<Result<UserDto>> CreateUserAsync(CreateUserRequest request, CancellationToken ct = default);
     Task<Result<UserDto>> GetUserAsync(long userId, CancellationToken ct = default);
-    Task<PagedResult<UserDto>> ListUsersAsync(PageQuery page, string? search = null, bool? isActive = null, CancellationToken ct = default);
+    Task<PagedResult<UserDto>> ListUsersAsync(
+        PageQuery page, string? search = null, bool? isActive = null,
+        ColumnFilters? columns = null, CancellationToken ct = default);
+    Task<Result<UserDto>> UpdateUserAsync(
+        long userId, UpdateUserRequest request, CancellationToken ct = default);
     Task<Result> SetActiveAsync(long userId, bool isActive, CancellationToken ct = default);
     Task<Result<UserDto>> AssignRolesAsync(long userId, IReadOnlyList<string> roleNames, CancellationToken ct = default);
     Task<Result> ResetPasswordAsync(long userId, string newPassword, CancellationToken ct = default);
@@ -115,7 +120,8 @@ public sealed class UserAdminService : IUserAdminService
     }
 
     public async Task<PagedResult<UserDto>> ListUsersAsync(
-        PageQuery page, string? search = null, bool? isActive = null, CancellationToken ct = default)
+        PageQuery page, string? search = null, bool? isActive = null,
+        ColumnFilters? columns = null, CancellationToken ct = default)
     {
         var query = _db.Users.AsNoTracking();
 
@@ -130,6 +136,8 @@ public sealed class UserAdminService : IUserAdminService
 
         if (isActive.HasValue)
             query = query.Where(u => u.IsActive == isActive.Value);
+
+        query = ApplyColumnFilters(query, columns ?? ColumnFilters.None);
 
         var total = await query.CountAsync(ct);
 
@@ -162,6 +170,33 @@ public sealed class UserAdminService : IUserAdminService
             .ToList();
 
         return new PagedResult<UserDto>(items, page.NormalizedPage, page.NormalizedPageSize, total);
+    }
+
+    /// <summary>
+    /// The people grid's filter row. Roles are filtered by name against the join rather than by id,
+    /// because the column shows names and a role list is short enough to match exactly.
+    /// </summary>
+    private IQueryable<User> ApplyColumnFilters(IQueryable<User> users, ColumnFilters columns)
+    {
+        if (!columns.Any) return users;
+
+        if (columns.Text("name") is { } name)
+            users = users.Where(u => u.DisplayName.Contains(name) || u.UserName.Contains(name));
+
+        if (columns.Text("roles") is { } role)
+        {
+            users = users.Where(u => _db.UserRoles
+                .Any(ur => ur.UserId == u.Id
+                    && _db.Roles.Any(r => r.Id == ur.RoleId && r.Name == role)));
+        }
+
+        if (columns.Enum<WorkforceState>("state") is { } state)
+            users = users.Where(u => u.WorkforceState == state);
+
+        if (columns.Bool("active") is { } active)
+            users = users.Where(u => u.IsActive == active);
+
+        return users;
     }
 
     public async Task<Result> SetActiveAsync(long userId, bool isActive, CancellationToken ct = default)
@@ -201,6 +236,49 @@ public sealed class UserAdminService : IUserAdminService
 
         await _db.SaveChangesAsync(ct);
         return Result.Success();
+    }
+
+    /// <summary>
+    /// Corrects a name or an email. Everything about *what they can do* lives elsewhere: roles have
+    /// their own operation, so a typo in a surname and a change of authority are never the same
+    /// action — and never the same audit row.
+    /// </summary>
+    public async Task<Result<UserDto>> UpdateUserAsync(
+        long userId, UpdateUserRequest request, CancellationToken ct = default)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (user is null)
+            return Result<UserDto>.Failure(Error.NotFound("user.not_found", "User not found."));
+
+        var email = string.IsNullOrWhiteSpace(request.Email) ? null : request.Email.Trim();
+
+        // Email is optional here but must still be unique when given: it is a recovery address and
+        // a way colleagues find each other, and two accounts sharing one makes both ambiguous.
+        if (email is not null && await _db.Users
+                .AnyAsync(u => u.Id != userId && u.Email != null && u.Email.ToLower() == email.ToLower(), ct))
+        {
+            return Result<UserDto>.Failure(Error.Conflict(
+                "user.duplicate_email", $"Another account already uses {email}."));
+        }
+
+        var before = new { user.DisplayName, user.Email, user.DepartmentId, user.TeamId };
+
+        user.DisplayName = request.DisplayName.Trim();
+        user.Email = email;
+        user.DepartmentId = request.DepartmentId;
+        user.TeamId = request.TeamId;
+
+        _audit.Record(
+            AuditActions.UserUpdated,
+            entityType: nameof(User),
+            entityId: userId,
+            previousValues: before,
+            newValues: new { user.DisplayName, user.Email, user.DepartmentId, user.TeamId });
+
+        await _db.SaveChangesAsync(ct);
+
+        var roles = await _permissions.GetRolesAsync(userId, ct);
+        return Result<UserDto>.Success(UserMapper.ToDto(user, roles, Array.Empty<string>()));
     }
 
     public async Task<Result<UserDto>> AssignRolesAsync(

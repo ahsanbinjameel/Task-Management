@@ -33,7 +33,8 @@ import {
   LoadingComponent,
   PageHeaderComponent,
 } from '../../shared/ui';
-import { ConfirmDialog, ReasonDialog, ReasonData } from '../../shared/dialogs';
+import { HttpContext } from '@angular/common/http';
+import { ConfirmDialog, ConfirmData, ReasonDialog, ReasonData } from '../../shared/dialogs';
 
 /** Smaller tasks that no longer need doing — what "2 of 3 done" counts. */
 const DONE_STATUSES: WorkTaskStatus[] = [
@@ -792,7 +793,27 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
   // --- the timer ------------------------------------------------------------------------------
 
   start(): void {
-    this.run(this.api.startWork(this.taskId), 'Timer started.');
+    // Starting is not just a button: it opens a work session that counts towards this task, and
+    // the one-active-session rule means whatever else was running is closed in the same commit.
+    // Reachable in one click from a queue row (?start=1), which is exactly the path where someone
+    // meant to open the task and read it — so the timer must not start unannounced.
+    this.dialog
+      .open<ConfirmDialog, ConfirmData>(ConfirmDialog, {
+        data: {
+          title: 'Start work on this task?',
+          message:
+            'The timer starts now and the time counts against this task. Anything else you had '
+            + 'running is paused — only one task can be active at a time.',
+          confirmText: 'Start the timer',
+          submit: (ctx: HttpContext) => this.api.startWork(this.taskId, ctx),
+        },
+      })
+      .afterClosed()
+      .subscribe((task?: unknown) => {
+        if (!task) return;
+        this.task.set(task as TaskDetailDto);
+        this.toast.success('Timer started.');
+      });
   }
 
   pause(): void {

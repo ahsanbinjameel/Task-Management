@@ -9,6 +9,9 @@ import { MatButtonModule } from '@angular/material/button';
 import { TaskSummaryDto } from '../core/models';
 import { DurationPipe, sinceLabel } from '../core/format';
 import { ChipComponent } from './ui';
+import {
+  ColumnFilterComponent, ColumnFilterSpec, ColumnFilterState,
+} from './column-filter.component';
 
 /**
  * The task list, shared by every queue screen. Columns are opt-in so the assignment queue can drop
@@ -20,6 +23,7 @@ import { ChipComponent } from './ui';
   standalone: true,
   imports: [
     RouterLink, DatePipe, MatTableModule, MatIconModule, MatTooltipModule, MatButtonModule,
+    ColumnFilterComponent,
     ChipComponent,
     SortHeaderComponent,
     DurationPipe,
@@ -273,7 +277,26 @@ import { ChipComponent } from './ui';
           </td>
         </ng-container>
 
+        <!--
+          The filter row, generated from whatever columns this view asked for. Present only when a
+          parent supplies filter state — the QC queue and the assignment queue are short, already
+          scoped lists where a filter row would be chrome over four rows.
+        -->
+        @if (filters(); as state) {
+          @for (column of renderedColumns(); track column) {
+            <ng-container [matColumnDef]="column + '_filter'">
+              <th mat-header-cell *matHeaderCellDef class="filter-cell">
+                <app-column-filter [spec]="specs()[column]" [value]="state.value(column)"
+                                   (changed)="state.set(specs()[column], column, $event)" />
+              </th>
+            </ng-container>
+          }
+        }
+
         <tr mat-header-row *matHeaderRowDef="renderedColumns()"></tr>
+        @if (filters()) {
+          <tr mat-header-row *matHeaderRowDef="filterRow()" class="filter-row"></tr>
+        }
         <tr mat-row *matRowDef="let row; columns: renderedColumns()"
             class="clickable" tabindex="0"
             (click)="open(row)" (keydown.enter)="open(row)"></tr>
@@ -332,9 +355,19 @@ export class TaskTableComponent {
   readonly showPreview = input(false);
   readonly preview = output<TaskSummaryDto>();
 
+  /**
+   * The filter row's state, owned by the parent because it is the parent that reloads.
+   * Left null and the row is not rendered at all.
+   */
+  readonly filters = input<ColumnFilterState | null>(null);
+  readonly specs = input<Record<string, ColumnFilterSpec>>({});
+
   /** Whatever the view asked for, plus the quick-look column when it is switched on. */
   readonly renderedColumns = computed(() =>
     this.showPreview() ? [...this.columns(), 'preview'] : this.columns());
+
+  /** One filter cell per rendered column, so the two header rows always line up. */
+  readonly filterRow = computed(() => this.renderedColumns().map((c) => c + '_filter'));
 
   /**
    * Clicking the row opens the task. Aiming at a five-character reference number is a needless

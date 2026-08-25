@@ -49,6 +49,25 @@ import { ChipComponent, EmptyComponent, FieldComponent, LoadingComponent, PageHe
         </p>
       }
 
+      <!--
+        This dialog *is* the confirmation step — it names the items, says what happens and labels
+        its own button — so it does not open a second one on top of itself. What it was missing is
+        the part that cannot be taken back, which belongs next to the button rather than behind
+        another click.
+      -->
+      <div class="caution" role="note">
+        <mat-icon>info_outline</mat-icon>
+        <span>
+          Approving cannot be undone.
+          @if (data.items.length > 1) {
+            The {{ data.items.length }} items are folded into one task and cannot be separated
+            afterwards — an item that turns out to be different work has to be raised again.
+          } @else {
+            The task is created and the request cannot be returned to review.
+          }
+        </span>
+      </div>
+
       <mat-form-field appearance="outline" class="full">
         <mat-label>Title for the work</mat-label>
         <input matInput name="taskTitle" [(ngModel)]="taskTitle" maxlength="300" />
@@ -87,6 +106,12 @@ import { ChipComponent, EmptyComponent, FieldComponent, LoadingComponent, PageHe
     .chosen li { margin-bottom: 3px; }
     .form-error { display: flex; gap: 7px; align-items: flex-start; color: var(--tone-danger-fg); }
     .form-error mat-icon { font-size: 18px; width: 18px; height: 18px; flex: none; margin-top: 1px; }
+    .caution {
+      display: flex; gap: 8px; align-items: flex-start; margin: 4px 0 0;
+      padding: 10px 12px; border-radius: 8px; font-size: 13px; line-height: 1.45;
+      background: var(--tone-warn-bg); color: var(--tone-warn-fg);
+    }
+    .caution mat-icon { font-size: 18px; width: 18px; height: 18px; flex: none; margin-top: 1px; }
   `,
 })
 export class FoldDialog {

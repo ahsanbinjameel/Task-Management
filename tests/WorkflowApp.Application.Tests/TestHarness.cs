@@ -9,6 +9,7 @@ using WorkflowApp.Application.Common.Services;
 using WorkflowApp.Application.Identity.Services;
 using WorkflowApp.Application.Notifications;
 using WorkflowApp.Application.Reporting;
+using WorkflowApp.Application.Admin.Services;
 using WorkflowApp.Application.Requests.Services;
 using WorkflowApp.Application.Tasks.Services;
 using WorkflowApp.Application.Workforce.Services;
@@ -127,6 +128,8 @@ public sealed class TestHarness : IDisposable
         UserAdmin = new UserAdminService(
             Db, PasswordHasher, PermissionService, Audit, Clock, Options.Create(AuthOptions));
 
+        Setup = new SetupService(Db, Audit);
+
         Shifts = new ShiftService(
             Db, PermissionService, Activity, Audit, CurrentUser, Clock, NullLogger<ShiftService>.Instance);
 
@@ -206,6 +209,7 @@ public sealed class TestHarness : IDisposable
     public WorkforceOptions WorkforceOptions { get; }
     public IAuthService Auth { get; }
     public IUserAdminService UserAdmin { get; }
+    public ISetupService Setup { get; }
     public IShiftService Shifts { get; }
     public IWorkforceQueryService WorkforceQueries { get; }
     public IShiftMaintenanceService ShiftMaintenance { get; }

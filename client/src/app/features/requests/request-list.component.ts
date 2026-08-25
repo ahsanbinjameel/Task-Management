@@ -25,6 +25,11 @@ import { urgencyLabel } from '../../core/labels';
 import { SearchSelectComponent } from '../../shared/search-select.component';
 import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../shared/ui';
 import { QuickViewComponent, QuickViewTarget } from '../../shared/quick-view.component';
+import {
+  ColumnFilterComponent, ColumnFilterSpec, NoMatchesComponent, columnFilters,
+} from '../../shared/column-filter.component';
+
+const URGENCIES: RequestedUrgency[] = ['Critical', 'High', 'Normal', 'Low'];
 
 const STATUSES: RequestStatus[] = [
   'Submitted', 'InReview', 'ClarificationRequired', 'Approved', 'Rejected', 'Duplicate',
@@ -35,10 +40,10 @@ const STATUSES: RequestStatus[] = [
   selector: 'app-request-list',
   standalone: true,
   imports: [
-    DatePipe, FormsModule, RouterLink, MatButtonModule, MatFormFieldModule, MatIconModule,
-    MatInputModule, MatSlideToggleModule, MatTableModule, MatPaginatorModule,
+    DatePipe, RouterLink, MatButtonModule, MatIconModule,
+    MatTableModule, MatPaginatorModule,
     MatTooltipModule, QuickViewComponent, PageHeaderComponent, ChipComponent, EmptyComponent, LoadingComponent,
-    StatusTilesComponent, SortHeaderComponent, SearchSelectComponent,
+    StatusTilesComponent, SortHeaderComponent, ColumnFilterComponent, NoMatchesComponent,
   ],
   template: `
     <div class="page">
@@ -75,29 +80,12 @@ const STATUSES: RequestStatus[] = [
         </div>
       }
 
-      <div class="card card-pad filters">
-        <mat-form-field class="search">
-          <mat-label>Search</mat-label>
-          <input matInput [(ngModel)]="search" (keyup.enter)="reload()" />
-          <mat-icon matSuffix>search</mat-icon>
-        </mat-form-field>
-
-        <app-search-select label="Client" nullLabel="Any" [options]="clientOptions()"
-                           [(ngModel)]="clientId" (valueChange)="reload()" />
-
-        @if (auth.has(Perm.requestViewAll)) {
-          <mat-slide-toggle [(ngModel)]="mine" (change)="reload()">Only mine</mat-slide-toggle>
-        }
-        <span class="spacer"></span>
-        <button matButton (click)="reload()"><mat-icon>refresh</mat-icon> Refresh</button>
-      </div>
-
       <div class="card">
         @if (loading()) {
           <app-loading />
-        } @else if (page().items.length === 0) {
+        } @else if (page().items.length === 0 && !filters.any()) {
           <app-empty message="No requests match" icon="inbox"
-                     hint="Clear the search box, the client filter or the status card above."
+                     hint="Pick a different status card above."
                      actionLabel="Raise a request" actionRoute="/requests/new" />
         } @else {
           <div class="table-scroll">
@@ -227,15 +215,35 @@ const STATUSES: RequestStatus[] = [
                 </td>
               </ng-container>
 
+              <!--
+                The filter row. One cell per column in columns(), so it cannot fall out of step
+                with the header above it — a column added to the grid gets a filter if a spec names
+                it and an empty cell if not, rather than shifting everything one place left.
+              -->
+              @for (column of columns(); track column) {
+                <ng-container [matColumnDef]="column + '_filter'">
+                  <th mat-header-cell *matHeaderCellDef class="filter-cell">
+                    <app-column-filter [spec]="spec(column)" [value]="filters.value(column)"
+                                       (changed)="filters.set(spec(column), column, $event)" />
+                  </th>
+                </ng-container>
+              }
+
               <tr mat-header-row *matHeaderRowDef="columns()"></tr>
+              <tr mat-header-row *matHeaderRowDef="filterRow()" class="filter-row"></tr>
               <tr mat-row *matRowDef="let row; columns: columns()"
                   class="clickable" tabindex="0"
                   (click)="open(row)" (keydown.enter)="open(row)"></tr>
             </table>
           </div>
-          <mat-paginator [length]="page().totalCount" [pageSize]="page().pageSize"
-                         [pageIndex]="page().page - 1" [pageSizeOptions]="[25, 50]"
-                         (page)="onPage($event)" />
+          @if (page().items.length === 0) {
+            <app-no-matches message="No requests match those filters."
+                            (clear)="filters.clear()" />
+          } @else {
+            <mat-paginator [length]="page().totalCount" [pageSize]="page().pageSize"
+                           [pageIndex]="page().page - 1" [pageSizeOptions]="[25, 50]"
+                           (page)="onPage($event)" />
+          }
         }
       </div>
 
@@ -301,10 +309,43 @@ export class RequestListComponent implements OnInit {
     ? ['number', 'title', 'client', 'status', 'urgency', 'requester', 'raised', 'action']
     : ['number', 'title', 'client', 'status', 'responsible', 'updated', 'action']);
 
-  search = '';
   readonly view = signal<string | null>(null);
-  clientId: number | null = null;
-  mine = false;
+
+  /**
+   * The filter row. It replaced a card holding a search box, a client dropdown and an "only mine"
+   * toggle — three controls above the grid that each described one column below it. Requester is
+   * where "only mine" went: filtering that column by a person answers the same question and every
+   * other one like it.
+   */
+  readonly filters = columnFilters(() => { this.pageIndex = 0; this.reload(); });
+
+  /**
+   * What each column can be filtered by. Built as a signal because two of them are populated from
+   * the server (clients, people) and one depends on who is looking.
+   */
+  readonly specs = computed<Record<string, ColumnFilterSpec>>(() => ({
+    number: { key: 'number', kind: 'text', placeholder: 'REQ-…' },
+    title: { key: 'title', kind: 'text', placeholder: 'Title' },
+    client: {
+      key: 'client', kind: 'select', placeholder: 'Any client',
+      options: this.clients().map((c) => ({ value: c.id, label: c.name })),
+    },
+    urgency: {
+      key: 'urgency', kind: 'select', placeholder: 'Any',
+      options: URGENCIES.map((u) => ({ value: u, label: urgencyLabel(u) })),
+    },
+    // Text, not a dropdown: the list of people is behind Task.Assign, which a reviewer need not
+    // hold, and a filter that 403s for half its users is worse than one that matches on the name
+    // already printed in the column.
+    requester: { key: 'requester', kind: 'text', placeholder: 'Name' },
+    responsible: { key: 'responsible', kind: 'text', placeholder: 'Name' },
+    raised: { key: 'raised', kind: 'date' },
+  }));
+
+  spec = (column: string): ColumnFilterSpec | undefined => this.specs()[column];
+
+  /** One filter cell per column, named so Material can pair the two header rows up. */
+  readonly filterRow = computed(() => this.columns().map((c) => `${c}_filter`));
 
   readonly batches = signal<RequestBatchSummaryDto[]>([]);
   /** The row the drawer is showing, or null when it is closed. */
@@ -324,10 +365,18 @@ export class RequestListComponent implements OnInit {
 
   ngOnInit(): void {
     const view = this.route.snapshot.queryParamMap.get('view');
-    if (view) this.view.set(view);
 
-    // Someone without ViewAll only ever sees their own; no point offering the toggle.
-    this.mine = !this.auth.has(Perm.requestViewAll);
+    // A reviewer opens this page to answer "what is waiting for me?", so that is what it opens on
+    // — the All list buries one actionable row under everything ever raised. Only for people who
+    // actually triage: a requester opening on "Submitted" would be shown the one part of their
+    // work that has *not* started yet and hidden everything in progress, which is the opposite of
+    // what they came for. A `view` in the URL always wins, so a link still lands where it points.
+    if (view) {
+      this.view.set(view);
+    } else if (this.auth.has(Perm.taskReview)) {
+      this.view.set('submitted');
+    }
+
     this.api.clients().subscribe((c) => this.clients.set(c));
     this.reload();
   
@@ -348,8 +397,7 @@ export class RequestListComponent implements OnInit {
 
   readonly counts = signal<StatusCountDto[]>([]);
   readonly clients = signal<ClientOptionDto[]>([]);
-  readonly clientOptions = computed(() =>
-    this.clients().map((c) => ({ value: c.id, label: c.name })));
+
 
   readonly totalAcross = computed(() => this.counts().reduce((sum, c) => sum + c.count, 0));
 
@@ -385,12 +433,16 @@ export class RequestListComponent implements OnInit {
     }
   }
 
+  /**
+   * The tiles deliberately ignore the filter row.
+   *
+   * A tile says how many there are in that status; narrowing it by the column you are currently
+   * typing into would make every tile drop towards zero as you type, and the number you were
+   * navigating by would move under you. They still respect who you are, because that is not a
+   * filter — it is the limit of what you may see.
+   */
   private loadCounts(): void {
-    this.api.requestStatusCounts({
-      clientId: this.clientId ?? undefined,
-      search: this.search || undefined,
-      mine: this.mine || undefined,
-    }).subscribe((c) => this.counts.set(c));
+    this.api.requestStatusCounts({}).subscribe((c) => this.counts.set(c));
   }
 
   reload(): void {
@@ -404,14 +456,12 @@ export class RequestListComponent implements OnInit {
     this.loadCounts();
     this.loading.set(true);
     this.api.requests({
-      search: this.search || undefined,
       view: this.view() ?? undefined,
-      clientId: this.clientId ?? undefined,
       sortBy: this.sort().by ?? undefined,
       sortDescending: this.sort().descending,
-      mine: this.mine || undefined,
       page: this.pageIndex + 1,
       pageSize: this.pageSize,
+      ...this.filters.asObject(),
     }).subscribe({
       next: (result) => { this.page.set(result); this.loading.set(false); },
       error: () => this.loading.set(false),

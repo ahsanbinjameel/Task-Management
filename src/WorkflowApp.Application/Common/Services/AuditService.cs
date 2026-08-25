@@ -37,7 +37,14 @@ public static class AuditActions
     public const string UserCreated = "Admin.UserCreated";
     public const string UserActivated = "Admin.UserActivated";
     public const string UserDeactivated = "Admin.UserDeactivated";
+    public const string UserUpdated = "Admin.UserUpdated";
     public const string UserRolesChanged = "Admin.UserRolesChanged";
+
+    /// <summary>Reference data an administrator maintains: clients, teams, pause reasons.</summary>
+    public const string SetupChanged = "Admin.SetupChanged";
+
+    /// <summary>A role itself, or what it grants. Separate from assigning one to a person.</summary>
+    public const string RoleChanged = "Admin.RoleChanged";
 
     /// <summary>A supervisor closed someone else's shift. Always carries a reason.</summary>
     public const string ShiftForceEnded = "Workforce.ShiftForceEnded";

@@ -20,6 +20,9 @@ import { taskView } from '../../shared/list-views';
 import { EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../shared/ui';
 import { TaskTableComponent } from '../../shared/task-table.component';
 import { QuickViewComponent, QuickViewTarget } from '../../shared/quick-view.component';
+import {
+  ColumnFilterSpec, NoMatchesComponent, columnFilters,
+} from '../../shared/column-filter.component';
 import { priorityLabel } from '../../core/labels';
 
 const STATUSES: WorkTaskStatus[] = [
@@ -32,10 +35,9 @@ const STATUSES: WorkTaskStatus[] = [
   selector: 'app-task-list',
   standalone: true,
   imports: [
-    FormsModule, MatFormFieldModule, MatInputModule, MatButtonModule,
-    MatIconModule, MatPaginatorModule, MatSlideToggleModule,
+    MatPaginatorModule,
     PageHeaderComponent, EmptyComponent, LoadingComponent, TaskTableComponent, QuickViewComponent,
-    StatusTilesComponent, SearchSelectComponent,
+    StatusTilesComponent, NoMatchesComponent,
   ],
   template: `
     <div class="page">
@@ -47,41 +49,29 @@ const STATUSES: WorkTaskStatus[] = [
         [total]="totalAcross()"
         (pick)="pickView($event)" />
 
-      <div class="card card-pad filters">
-        <mat-form-field class="search">
-          <mat-label>Search</mat-label>
-          <input matInput [(ngModel)]="search" (keyup.enter)="reload()"
-                 placeholder="Title or task number" />
-          <mat-icon matSuffix>search</mat-icon>
-        </mat-form-field>
-
-        <app-search-select label="Priority" nullLabel="Any" [options]="priorityOptions"
-                           [(ngModel)]="priority" (valueChange)="reload()" />
-
-        <app-search-select label="Client" nullLabel="Any" [options]="clientOptions()"
-                           [(ngModel)]="clientId" (valueChange)="reload()" />
-
-        <mat-slide-toggle [(ngModel)]="openOnly" (change)="reload()">Open only</mat-slide-toggle>
-        <span class="spacer"></span>
-        <button matButton (click)="reload()"><mat-icon>refresh</mat-icon> Refresh</button>
-      </div>
-
       <div class="card list">
         @if (loading()) {
           <app-loading />
-        } @else if (page().items.length === 0) {
+        } @else if (page().items.length === 0 && !filters.any()) {
+          <!-- Genuinely nothing here. Only reachable with no filter set — otherwise the grid stays
+               up so the filter that emptied it is still reachable. -->
           <app-empty message="No work matches" icon="search_off"
-                     hint="Clear the search box, the client filter or the status card above." />
+                     hint="Pick a different status card above." />
         } @else {
           <app-task-table [tasks]="page().items" (action)="act($event)"
                           [columns]="grid().columns.concat(grid().action ? ['action'] : [])"
                           [actionLabel]="grid().action?.label ?? 'Open'"
                           [actionWhen]="grid().action?.when ?? null"
-                          [sortable]="true" [sort]="sort()" (sortChange)="applySort($event)" 
+                          [sortable]="true" [sort]="sort()" (sortChange)="applySort($event)"
+                          [filters]="filters" [specs]="specs()"
                           [showPreview]="true" (preview)="peek($event)"/>
-          <mat-paginator [length]="page().totalCount" [pageSize]="page().pageSize"
-                         [pageIndex]="page().page - 1" [pageSizeOptions]="[25, 50, 100]"
-                         (page)="onPage($event)" />
+          @if (page().items.length === 0) {
+            <app-no-matches (clear)="filters.clear()" />
+          } @else {
+            <mat-paginator [length]="page().totalCount" [pageSize]="page().pageSize"
+                           [pageIndex]="page().page - 1" [pageSizeOptions]="[25, 50, 100]"
+                           (page)="onPage($event)" />
+          }
         }
       </div>
 
@@ -107,12 +97,34 @@ export class TaskListComponent implements OnInit {
   readonly priorities: Priority[] = ['Critical', 'High', 'Normal', 'Low'];
   readonly priorityOptions = enumOptions(this.priorities);
 
-  search = '';
   /** The status group being looked at. A signal because the grid's shape is derived from it. */
   readonly view = signal<string | null>(null);
-  clientId: number | null = null;
-  priority: Priority | null = null;
-  openOnly = true;
+
+  /**
+   * The filter row, replacing a card that held a search box, a priority dropdown, a client dropdown
+   * and an "open only" toggle. Every one of them described a column in the grid below.
+   *
+   * "Open only" is the exception and is simply gone: the status tiles already answer it, and a view
+   * like "To Do" cannot contain closed work anyway.
+   */
+  readonly filters = columnFilters(() => { this.pageIndex = 0; this.reload(); });
+
+  readonly specs = computed<Record<string, ColumnFilterSpec>>(() => ({
+    number: { key: 'number', kind: 'text', placeholder: 'TSK-…' },
+    title: { key: 'title', kind: 'text', placeholder: 'Title' },
+    client: {
+      key: 'client', kind: 'select', placeholder: 'Any client',
+      options: this.clients().map((c) => ({ value: c.id, label: c.name })),
+    },
+    priority: {
+      key: 'priority', kind: 'select', placeholder: 'Any',
+      options: this.priorities.map((p) => ({ value: p, label: p })),
+    },
+    // "-" means nobody: unassigned work is what a coordinator scans this column for, and it has no
+    // name to type.
+    assignee: { key: 'assignee', kind: 'text', placeholder: 'Name, or -' },
+    due: { key: 'due', kind: 'date' },
+  }));
 
   /** The row the drawer is showing, or null when it is closed. */
   readonly peeking = signal<QuickViewTarget | null>(null);
@@ -198,27 +210,22 @@ export class TaskListComponent implements OnInit {
     });
   }
 
+  /** Counts ignore the filter row — see the request grid for why a tile must not move as you type. */
   private loadCounts(): void {
-    this.api.taskStatusCounts({
-      clientId: this.clientId ?? undefined,
-      search: this.search || undefined,
-      openOnly: this.openOnly,
-    }).subscribe((c) => this.counts.set(c));
+    this.api.taskStatusCounts({ openOnly: true }).subscribe((c) => this.counts.set(c));
   }
 
   reload(): void {
     this.loadCounts();
     this.loading.set(true);
     this.api.tasks({
-      search: this.search || undefined,
       view: this.view() ?? undefined,
-      priority: this.priority ?? undefined,
-      clientId: this.clientId ?? undefined,
-      openOnly: this.openOnly,
+      openOnly: true,
       sortBy: this.sort().by ?? undefined,
       sortDescending: this.sort().descending,
       page: this.pageIndex + 1,
       pageSize: this.pageSize,
+      ...this.filters.asObject(),
     }).subscribe({
       next: (result) => { this.page.set(result); this.loading.set(false); },
       error: () => this.loading.set(false),

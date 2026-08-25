@@ -240,4 +240,67 @@ public class UserAdminServiceTests
             Assert.DoesNotContain(Permissions.WorkforceTrackShift, role.Permissions);
         }
     }
+
+    // --- editing an account ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Updating_a_user_changes_the_name_and_email()
+    {
+        using var h = await ReadyAsync();
+        var created = await h.UserAdmin.CreateUserAsync(NewUser("alice"));
+
+        var result = await h.UserAdmin.UpdateUserAsync(created.Value!.Id, new UpdateUserRequest
+        {
+            DisplayName = "Alice Okonkwo",
+            Email = "alice.okonkwo@workflowapp.local",
+        });
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("Alice Okonkwo", result.Value!.DisplayName);
+        Assert.Equal("alice.okonkwo@workflowapp.local", result.Value!.Email);
+    }
+
+    /// <summary>The username is what they sign in with and what the audit trail names.</summary>
+    [Fact]
+    public async Task Updating_a_user_never_changes_the_username()
+    {
+        using var h = await ReadyAsync();
+        var created = await h.UserAdmin.CreateUserAsync(NewUser("alice"));
+
+        await h.UserAdmin.UpdateUserAsync(created.Value!.Id,
+            new UpdateUserRequest { DisplayName = "Someone Else" });
+
+        var after = await h.UserAdmin.GetUserAsync(created.Value!.Id);
+        Assert.Equal("alice", after.Value!.UserName);
+    }
+
+    [Fact]
+    public async Task An_email_already_used_by_another_account_is_refused()
+    {
+        using var h = await ReadyAsync();
+        await h.UserAdmin.CreateUserAsync(NewUser("alice"));
+        var bob = await h.UserAdmin.CreateUserAsync(NewUser("bob"));
+
+        var result = await h.UserAdmin.UpdateUserAsync(bob.Value!.Id, new UpdateUserRequest
+        {
+            DisplayName = "Bob",
+            Email = "alice@workflowapp.local",
+        });
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("user.duplicate_email", result.Error!.Code);
+    }
+
+    [Fact]
+    public async Task Clearing_the_email_is_allowed()
+    {
+        using var h = await ReadyAsync();
+        var created = await h.UserAdmin.CreateUserAsync(NewUser("alice"));
+
+        var result = await h.UserAdmin.UpdateUserAsync(created.Value!.Id,
+            new UpdateUserRequest { DisplayName = "Alice", Email = "   " });
+
+        Assert.True(result.IsSuccess);
+        Assert.Null(result.Value!.Email);
+    }
 }

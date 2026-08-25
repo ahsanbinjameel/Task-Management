@@ -157,11 +157,22 @@ export const routes: Routes = [
           import('./features/me/my-day.component').then((m) => m.MyDayComponent),
       },
       {
-        path: 'me/password',
-        title: 'Change password',
+        path: 'admin/setup',
+        title: 'Setup data',
+        canActivate: [requirePermission(Perm.adminManageConfig)],
         loadComponent: () =>
-          import('./features/me/change-password.component').then((m) => m.ChangePasswordComponent),
+          import('./features/admin/setup.component').then((m) => m.SetupComponent),
       },
+      {
+        path: 'me/settings',
+        title: 'Settings',
+        loadComponent: () =>
+          import('./features/me/settings.component').then((m) => m.SettingsComponent),
+      },
+      // The change-password screen was folded into Settings. Kept as a redirect rather than
+      // deleted: it was a menu item for long enough to be bookmarked, and a dead link inside your
+      // own app is a worse answer than sending someone to where the thing actually went.
+      { path: 'me/password', redirectTo: 'me/settings', pathMatch: 'full' },
     ],
   },
   { path: '**', redirectTo: '' },

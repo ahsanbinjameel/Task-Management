@@ -1,4 +1,4 @@
-import { DestroyRef, Component, OnInit, inject, signal } from '@angular/core';
+import { DestroyRef, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { RealtimeService } from '../../core/realtime.service';
 import { syncOn } from '../../core/realtime-sync';
 import { RouterLink } from '@angular/router';
@@ -6,8 +6,18 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTableModule } from '@angular/material/table';
 import { ApiService } from '../../core/api.service';
-import { WorkloadDto } from '../../core/models';
+import { WorkforceState, WorkloadDto } from '../../core/models';
+import { workforceStateLabel } from '../../core/labels';
+
+/** The states someone can be in, for the grid's filter. */
+const WORKFORCE_STATES: WorkforceState[] = [
+  'LoggedInShiftNotStarted', 'Available', 'Working', 'Break', 'Lunch', 'Meeting',
+  'TemporarilyAway', 'ShiftEnded',
+];
 import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../shared/ui';
+import {
+  ColumnFilterComponent, ColumnFilterSpec, NoMatchesComponent, columnFilters,
+} from '../../shared/column-filter.component';
 
 @Component({
   selector: 'app-workload',
@@ -15,6 +25,8 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
   imports: [
     RouterLink, MatButtonModule, MatIconModule, MatTableModule,
     PageHeaderComponent, ChipComponent, EmptyComponent, LoadingComponent,
+      ColumnFilterComponent,
+      NoMatchesComponent,
   ],
   template: `
     <div class="page">
@@ -31,7 +43,7 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
                      actionLabel="Assignment queue" actionRoute="/assignment" />
         } @else {
           <div class="table-scroll">
-            <table mat-table [dataSource]="rows()">
+            <table mat-table [dataSource]="visible()">
               <ng-container matColumnDef="name">
                 <th mat-header-cell *matHeaderCellDef>Person</th>
                 <td mat-cell *matCellDef="let r"><strong>{{ r.displayName }}</strong></td>
@@ -76,10 +88,26 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
                 </td>
               </ng-container>
 
+              <!-- Unpaged: every row is already here, so filtering locally cannot mislead. -->
+              @for (column of columns; track column) {
+                <ng-container [matColumnDef]="column + '_filter'">
+                  <th mat-header-cell *matHeaderCellDef class="filter-cell">
+                    <app-column-filter [spec]="specs[column]" [value]="filters.value(column)"
+                                       (changed)="filters.set(specs[column], column, $event)" />
+                  </th>
+                </ng-container>
+              }
+
               <tr mat-header-row *matHeaderRowDef="columns"></tr>
+              <tr mat-header-row *matHeaderRowDef="filterRow" class="filter-row"></tr>
               <tr mat-row *matRowDef="let row; columns: columns"></tr>
             </table>
           </div>
+
+          @if (visible().length === 0) {
+            <app-no-matches message="Nobody matches those filters."
+                            (clear)="filters.clear()" />
+          }
         }
       </div>
     </div>
@@ -93,6 +121,26 @@ export class WorkloadComponent implements OnInit {
   readonly rows = signal<WorkloadDto[]>([]);
   readonly loading = signal(true);
   readonly columns = ['name', 'state', 'open', 'running', 'blocked', 'hours', 'now'];
+  readonly filterRow = this.columns.map((c) => c + '_filter');
+
+  readonly filters = columnFilters(() => undefined);
+
+  readonly specs: Record<string, ColumnFilterSpec> = {
+    name: { key: 'name', kind: 'text', placeholder: 'Name' },
+    state: {
+      key: 'state', kind: 'select', placeholder: 'Any',
+      options: WORKFORCE_STATES.map((v) => ({ value: v, label: workforceStateLabel(v) })),
+    },
+  };
+
+  readonly visible = computed(() => {
+    const name = this.filters.value('name').trim().toLowerCase();
+    const state = this.filters.value('state');
+
+    return this.rows().filter((r) =>
+      (!name || r.displayName.toLowerCase().includes(name))
+      && (!state || r.workforceState === state));
+  });
 
   ngOnInit(): void {
    this.load();

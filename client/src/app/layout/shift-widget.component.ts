@@ -32,11 +32,11 @@ import { workforceStateLabel } from '../core/labels';
     @if (status(); as s) {
       @if (s.isShiftTracked) {
         @if (!s.isOnShift) {
-          <button matButton="filled" (click)="startShift()" [disabled]="busy()">
+          <button matButton="filled" (click)="startShift()">
             <mat-icon>play_circle</mat-icon> Start shift
           </button>
         } @else {
-          <button matButton [matMenuTriggerFor]="shiftMenu" [disabled]="busy()" class="state-button">
+          <button matButton [matMenuTriggerFor]="shiftMenu" class="state-button">
             <span class="chip dot" [class]="'tone-' + tone()">{{ s.stateLabel }}</span>
             <mat-icon iconPositionEnd>expand_more</mat-icon>
           </button>
@@ -79,7 +79,6 @@ export class ShiftWidgetComponent implements OnInit {
   private readonly toast = inject(ToastService);
 
   readonly status = signal<WorkforceStatusDto | null>(null);
-  readonly busy = signal(false);
 
   readonly tone = computed(() => {
     const state = this.status()?.state;
@@ -109,7 +108,26 @@ export class ShiftWidgetComponent implements OnInit {
   }
 
   startShift(): void {
-    this.run(this.api.startShift(), 'Shift started.');
+    // Starting the shift is the moment attendance begins being recorded, and the clock does not
+    // rewind: a shift opened by accident at 08:00 and noticed at 09:00 shows an hour that was
+    // never worked, and only a supervisor can close it early. Cheap to ask, awkward to correct.
+    this.dialog
+      .open<ConfirmDialog, ConfirmData>(ConfirmDialog, {
+        data: {
+          title: 'Start your shift?',
+          message:
+            'Your hours are recorded from now until you end it. You will show as available to '
+            + 'coordinators looking for someone to take work.',
+          confirmText: 'Start my shift',
+          submit: (ctx: HttpContext) => this.api.startShift(ctx),
+        },
+      })
+      .afterClosed()
+      .subscribe((started?: unknown) => {
+        if (!started) return;
+        this.toast.success('Shift started.');
+        this.load();
+      });
   }
 
   endShift(): void {
@@ -138,7 +156,29 @@ export class ShiftWidgetComponent implements OnInit {
   }
 
   setState(state: WorkforceState): void {
-    this.run(this.api.setWorkforceState(state), `You are now ${workforceStateLabel(state).toLowerCase()}.`);
+    const label = workforceStateLabel(state).toLowerCase();
+
+    // Availability is what the timeline is built from and what "who's working" shows, so a
+    // mis-click writes a stretch of break into someone's day that they then have to explain. It is
+    // undoable — switch back — but the interval that was recorded stays in the timeline either way.
+    this.dialog
+      .open<ConfirmDialog, ConfirmData>(ConfirmDialog, {
+        data: {
+          title: `Change your status to ${label}?`,
+          message: state === 'Available'
+            ? 'You will show as free to take work, and the time from now counts as available.'
+            : `The time from now is recorded as ${label} on your timeline and in your daily `
+              + 'report, until you set your status back.',
+          confirmText: `Set ${label}`,
+          submit: (ctx: HttpContext) => this.api.setWorkforceState(state, undefined, ctx),
+        },
+      })
+      .afterClosed()
+      .subscribe((changed?: unknown) => {
+        if (!changed) return;
+        this.toast.success(`You are now ${label}.`);
+        this.load();
+      });
   }
 
   label = (state: WorkforceState) => workforceStateLabel(state);
@@ -153,17 +193,5 @@ export class ShiftWidgetComponent implements OnInit {
       case 'Working': return 'bolt';
       default: return 'radio_button_unchecked';
     }
-  }
-
-  private run(call: import('rxjs').Observable<WorkforceStatusDto>, message: string): void {
-    this.busy.set(true);
-    call.subscribe({
-      next: (s) => {
-        this.status.set(s);
-        this.busy.set(false);
-        this.toast.success(message);
-      },
-      error: () => this.busy.set(false),
-    });
   }
 }

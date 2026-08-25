@@ -253,8 +253,29 @@ public static class StatusViews
             new[] { RequestStatus.Deferred }, Array.Empty<WorkTaskStatus>()),
     };
 
+    /// <summary>
+    /// Whether this audience's request status follows the generated task.
+    ///
+    /// **The single answer to that question.** It was decided independently in four places — the
+    /// view table, the label, the list filter and the tile counts — and any two of them disagreeing
+    /// produces a silently empty screen, which is exactly what happened twice.
+    ///
+    /// The test is "does this person triage work?", not "do they do work?". Only a coordinator
+    /// stops at intake, because approving is where their involvement ends. Everyone else reading a
+    /// request is reading their own, and for them the request is the record of the work: once it is
+    /// approved the request itself stops moving and only the task has anything left to say.
+    ///
+    /// A **worker** counts as a requester here, which is the whole reason this exists. The Worker
+    /// role holds <c>Request.Create</c> deliberately — someone who fields a call and finds real
+    /// work behind it has to be able to raise it — but <see cref="AudienceFor"/> classifies from
+    /// *task* permissions, so their own request was being read with the reviewer's table and froze
+    /// on "Approved" forever.
+    /// </summary>
+    public static bool RequestStatusFollowsTask(StatusAudience audience) =>
+        audience != StatusAudience.Coordinator;
+
     public static IReadOnlyList<RequestStatusView> ForRequests(StatusAudience audience) =>
-        audience == StatusAudience.Requester ? RequesterViews : ReviewerViews;
+        RequestStatusFollowsTask(audience) ? RequesterViews : ReviewerViews;
 
     public static RequestStatusView? FindRequestView(StatusAudience audience, string? key) =>
         string.IsNullOrWhiteSpace(key) || key.Equals(AllKey, StringComparison.OrdinalIgnoreCase)
@@ -270,7 +291,7 @@ public static class StatusViews
     {
         var views = ForRequests(audience);
 
-        if (taskStatus is { } live && audience == StatusAudience.Requester)
+        if (taskStatus is { } live && RequestStatusFollowsTask(audience))
         {
             var byTask = views.FirstOrDefault(v => v.TaskStatuses.Contains(live));
             if (byTask is not null) return byTask;

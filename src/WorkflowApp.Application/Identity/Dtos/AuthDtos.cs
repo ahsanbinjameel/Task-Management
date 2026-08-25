@@ -54,6 +54,25 @@ public sealed record AssignRolesRequest
     public IReadOnlyList<string> Roles { get; init; } = Array.Empty<string>();
 }
 
+/// <summary>
+/// Changing who someone is, not what they can do.
+///
+/// The username is deliberately absent: it is what the person signs in with, what every audit row
+/// and login attempt was recorded against, and what a colleague knows them by. Changing it silently
+/// invalidates all three. A person who genuinely needs a different one gets a new account.
+/// </summary>
+public sealed record UpdateUserRequest
+{
+    [Required, MaxLength(200)]
+    public string DisplayName { get; init; } = default!;
+
+    [EmailAddress, MaxLength(256)]
+    public string? Email { get; init; }
+
+    public long? DepartmentId { get; init; }
+    public long? TeamId { get; init; }
+}
+
 public sealed record ResetPasswordRequest
 {
     [Required, MaxLength(200)]

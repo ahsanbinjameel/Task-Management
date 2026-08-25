@@ -59,6 +59,9 @@ public sealed record TaskQuery
     public string? SortBy { get; init; }
 
     public bool SortDescending { get; init; } = true;
+
+    /// <summary>Per-column filters from the grid's filter row. See <see cref="ColumnFilters"/>.</summary>
+    public ColumnFilters Columns { get; init; } = ColumnFilters.None;
 }
 
 public interface ITaskQueryService
@@ -411,7 +414,10 @@ public sealed class TaskQueryService : ITaskQueryService
     public async Task<PagedResult<TaskSummaryDto>> ListAsync(
         TaskQuery query, PageQuery page, CancellationToken ct = default)
     {
-        var tasks = ApplyFilters(_db.Tasks.AsNoTracking(), query, includeStatus: true);
+        // The filter row is applied here and nowhere else — never in StatusCountsAsync, so the
+        // tiles do not move as someone types into a column. Same rule as the request grid.
+        var tasks = ApplyColumnFilters(
+            ApplyFilters(_db.Tasks.AsNoTracking(), query, includeStatus: true), query.Columns);
 
         // Newest first by default. This is the browsing view — filters and tiles are how you narrow
         // it, so recency is the useful default. The working queues (my queue, assignment, QC) keep
@@ -499,6 +505,51 @@ public sealed class TaskQueryService : ITaskQueryService
         {
             var term = query.Search.Trim();
             tasks = tasks.Where(t => t.Title.Contains(term) || t.TaskNumber.Contains(term));
+        }
+
+        return tasks;
+    }
+
+    /// <summary>
+    /// The grid's filter row. Keys are the column names the client renders — see
+    /// <see cref="ColumnFilters"/> for why this is a dictionary and not a property per column.
+    /// </summary>
+    private IQueryable<WorkTask> ApplyColumnFilters(IQueryable<WorkTask> tasks, ColumnFilters columns)
+    {
+        if (!columns.Any) return tasks;
+
+        if (columns.Text("number") is { } number)
+            tasks = tasks.Where(t => t.TaskNumber.Contains(number));
+
+        if (columns.Text("title") is { } title)
+            tasks = tasks.Where(t => t.Title.Contains(title));
+
+        if (columns.Id("client") is { } clientId)
+            tasks = tasks.Where(t => t.ClientId == clientId);
+
+        if (columns.Enum<Priority>("priority") is { } priority)
+            tasks = tasks.Where(t => t.Priority == priority);
+
+        // By name, for the same reason as the request grid: the person list is behind Task.Assign.
+        // "-" is the exception and the one a coordinator looks for most — unassigned work — which
+        // is why it is a value here rather than a separate switch above the grid.
+        if (columns.Text("assignee") is { } assignee)
+        {
+            tasks = assignee == "-"
+                ? tasks.Where(t => t.PrimaryAssigneeUserId == null)
+                : tasks.Where(t => t.PrimaryAssigneeUser != null
+                    && (t.PrimaryAssigneeUser.DisplayName.Contains(assignee)
+                        || t.PrimaryAssigneeUser.UserName.Contains(assignee)));
+        }
+
+        if (columns.Enum<WorkTaskStatus>("status") is { } status)
+            tasks = tasks.Where(t => t.Status == status);
+
+        if (columns.Date("due") is { } due)
+        {
+            var from = due.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+            var to = from.AddDays(1);
+            tasks = tasks.Where(t => t.DueDate != null && t.DueDate >= from && t.DueDate < to);
         }
 
         return tasks;

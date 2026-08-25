@@ -72,6 +72,8 @@ public sealed class TasksController : ApiControllerBase
         [FromQuery] bool sortDescending = true,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 25,
+        // The grid's filter row — see ColumnFilters.
+        [FromQuery(Name = "col")] Dictionary<string, string?>? col = null,
         CancellationToken ct = default)
     {
         // Anyone who coordinates, reviews, checks or reports on work needs the whole picture.
@@ -97,7 +99,8 @@ public sealed class TasksController : ApiControllerBase
             OpenOnly = openOnly,
             Search = search,
             SortBy = sortBy,
-            SortDescending = sortDescending
+            SortDescending = sortDescending,
+            Columns = new ColumnFilters(col)
         };
 
         return Ok(await _queries.ListAsync(query, new PageQuery { Page = page, PageSize = pageSize }, ct));

@@ -55,6 +55,9 @@ public sealed class RequestsController : ApiControllerBase
         [FromQuery] bool sortDescending = true,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 25,
+        // The grid's filter row, as col[number]=REQ-1&col[title]=invoice. A dictionary because the
+        // row is generated from the columns — see ColumnFilters.
+        [FromQuery(Name = "col")] Dictionary<string, string?>? col = null,
         CancellationToken ct = default)
     {
         var canViewAll = HasPermission(Permissions.RequestViewAll);
@@ -69,7 +72,8 @@ public sealed class RequestsController : ApiControllerBase
             ClientId = clientId,
             SortBy = sortBy,
             SortDescending = sortDescending,
-            RequestedByUserId = (!canViewAll || mine) ? CurrentUserId : null
+            RequestedByUserId = (!canViewAll || mine) ? CurrentUserId : null,
+            Columns = new ColumnFilters(col)
         };
 
         return Ok(await _requests.ListAsync(query, new PageQuery { Page = page, PageSize = pageSize }, ct));

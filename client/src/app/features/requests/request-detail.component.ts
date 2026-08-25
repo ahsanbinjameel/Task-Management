@@ -1,4 +1,5 @@
 import { DestroyRef, Component, OnInit, computed, inject, input, signal } from '@angular/core';
+import { HttpContext } from '@angular/common/http';
 import { RealtimeService, RequestChangedEvent } from '../../core/realtime.service';
 import { syncOn } from '../../core/realtime-sync';
 import { DatePipe } from '@angular/common';
@@ -14,12 +15,13 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { ApiService } from '../../core/api.service';
 import { BreadcrumbsComponent, Crumb } from '../../shared/breadcrumbs.component';
 import { RequestEditDialog } from './request-edit-dialog.component';
+import { ConfirmDialog, ConfirmData } from '../../shared/dialogs';
 import { AuthService } from '../../core/auth.service';
 import { ToastService } from '../../core/toast.service';
 import { Perm } from '../../core/permissions';
 import { saveBlob } from '../../core/format';
 import { requestTypeLabel } from '../../core/labels';
-import { Priority, RequestDetailDto, RequestType, TriageOutcome } from '../../core/models';
+import { Priority, RequestDetailDto, RequestType, TriageOutcome, TriageResultDto } from '../../core/models';
 import { enumOptions, SearchSelectComponent } from '../../shared/search-select.component';
 import { AttachmentsComponent } from '../../shared/attachments.component';
 import {
@@ -435,7 +437,10 @@ export class RequestDetailComponent implements OnInit {
 
   edit(request: RequestDetailDto): void {
     this.dialog
-      .open(RequestEditDialog, { data: { request } })
+      // Material caps the dialog surface at 560px unless it is given a width, and this form is
+      // deliberately wider than that. Without it the content overflows the panel and the fields
+      // are clipped behind a sideways scrollbar.
+      .open(RequestEditDialog, { data: { request }, width: 'min(680px, 92vw)', maxWidth: '92vw' })
       .afterClosed()
       .subscribe((updated?: RequestDetailDto) => {
         // Already saved by the dialog, which stayed open if it had failed.
@@ -509,34 +514,98 @@ export class RequestDetailComponent implements OnInit {
     return this.reason.trim().length > 0;
   }
 
-  triage(): void {
-    this.busy.set(true);
+  /**
+   * The wording for the three decisions that cannot be taken back — null for the ones that can.
+   *
+   * Approve is the gate the whole system is built around: it creates the task, and there is no
+   * un-approve. Reject and Duplicate end the request in a state triage will not offer again. The
+   * other three (clarification, defer, escalate) leave the request live and re-decidable, so they
+   * submit straight away — asking every time would train the reviewer to click through the one
+   * question that matters.
+   */
+  private triageConfirmation(): { title: string; message: string; confirmText: string; danger?: boolean } | null {
+    switch (this.outcome) {
+      case 'Approve':
+        return {
+          title: 'Approve and create the task?',
+          message:
+            'This creates the task and puts the work into the queue. A request is never approved '
+            + 'twice, so this cannot be undone — an unwanted task has to be closed or cancelled '
+            + 'on its own page.',
+          confirmText: 'Approve and create task',
+        };
+      case 'Reject':
+        return {
+          title: 'Reject this request?',
+          message:
+            'The requester is told, with your reason. The request is finished and cannot be put '
+            + 'back into review — they would have to raise it again.',
+          confirmText: 'Reject it',
+          danger: true,
+        };
+      case 'MarkDuplicate':
+        return {
+          title: 'Close this as a duplicate?',
+          message:
+            'The request is finished and points at the other one instead. It cannot be put back '
+            + 'into review.',
+          confirmText: 'Mark duplicate',
+          danger: true,
+        };
+      default:
+        return null;
+    }
+  }
 
-    this.api.triage(this.requestId, {
+  triage(): void {
+    const confirmation = this.triageConfirmation();
+
+    if (!confirmation) {
+      this.busy.set(true);
+      this.submitTriage().subscribe({
+        next: (result) => { this.busy.set(false); this.afterTriage(result); },
+        error: () => this.busy.set(false),
+      });
+      return;
+    }
+
+    // The dialog performs the call itself, so a server refusal leaves the decision — and the
+    // reason typed against it — exactly where the reviewer left it instead of clearing the panel.
+    this.dialog
+      .open<ConfirmDialog, ConfirmData>(ConfirmDialog, {
+        data: { ...confirmation, submit: (ctx: HttpContext) => this.submitTriage(ctx) },
+      })
+      .afterClosed()
+      .subscribe((result?: unknown) => {
+        if (!result) return;
+        this.afterTriage(result as TriageResultDto);
+      });
+  }
+
+  private submitTriage(context?: HttpContext) {
+    return this.api.triage(this.requestId, {
       outcome: this.outcome,
       reason: this.reason.trim() || undefined,
       approvedPriority: this.outcome === 'Approve' ? this.priority : undefined,
       estimatedEffortHours: this.outcome === 'Approve' ? (this.estimate ?? undefined) : undefined,
       acceptanceCriteria: this.outcome === 'Approve' ? (this.criteria.trim() || undefined) : undefined,
       duplicateOfRequestId: this.duplicateOf ?? undefined,
-    }).subscribe({
-      next: (result) => {
-        this.busy.set(false);
-        this.reason = '';
+    }, context);
+  }
 
-        if (result.createdTaskId) {
-          this.toast.success('Approved — the task has been created.');
-          void this.router.navigate(['/tasks', result.createdTaskId]);
-          return;
-        }
+  private afterTriage(result: TriageResultDto): void {
+    this.reason = '';
 
-        // The decision is not the request: re-fetch it rather than assigning the response over
-        // the top, which is what left the page rendering undefined.
-        this.load();
-        this.toast.success('Decision saved.');
-      },
-      error: () => this.busy.set(false),
-    });
+    if (result.createdTaskId) {
+      this.toast.success('Approved — the task has been created.');
+      void this.router.navigate(['/tasks', result.createdTaskId]);
+      return;
+    }
+
+    // The decision is not the request: re-fetch it rather than assigning the response over
+    // the top, which is what left the page rendering undefined.
+    this.load();
+    this.toast.success('Decision saved.');
   }
 
   answer(clarificationId: number): void {

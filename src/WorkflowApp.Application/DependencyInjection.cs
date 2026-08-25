@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using WorkflowApp.Application.Admin.Services;
 using WorkflowApp.Application.Common.Events;
 using WorkflowApp.Application.Common.Services;
 using WorkflowApp.Application.Identity.Services;
@@ -36,6 +37,7 @@ public static class DependencyInjection
         services.AddScoped<IPermissionService, PermissionService>();
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IUserAdminService, UserAdminService>();
+        services.AddScoped<ISetupService, SetupService>();
 
         // Workforce
         services.AddScoped<IShiftService, ShiftService>();

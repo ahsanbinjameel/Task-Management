@@ -47,12 +47,19 @@ public sealed class SecurityHeadersMiddleware
             ? "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
             : "script-src 'self'; style-src 'self'";
 
-        // blob: is on img-src for the attachment thumbnails and the image viewer. An attachment is
-        // fetched with the caller's bearer token — an <img src> cannot carry one — so the bytes are
-        // turned into a blob URL by our own script. Those URLs are same-origin, unguessable and
+        // blob: is on img-src for the attachment thumbnails and the image viewer, and on frame-src
+        // for the PDF viewer. Both exist for the same reason: the bytes are fetched with the
+        // caller's bearer token — an <img src> or an <iframe src> cannot carry one — so our own
+        // script turns the response into a blob URL. Those URLs are same-origin, unguessable and
         // last only as long as the page: they cannot pull in anything from anywhere else.
+        //
+        // frame-src has to be named explicitly. Without it the browser falls back to default-src,
+        // which is 'self' only, and the PDF viewer renders an empty frame with a console error.
+        // Note this is unrelated to frame-ancestors/X-Frame-Options below: those govern who may
+        // frame *us*, and stay closed.
         headers["Content-Security-Policy"] =
             $"default-src 'self'; {scriptSrc}; img-src 'self' data: blob:; " +
+            "frame-src 'self' blob:; object-src 'self' blob:; " +
             // The SignalR WebSocket connects back to this origin and nowhere else.
             "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
 

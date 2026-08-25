@@ -26,10 +26,13 @@ public sealed class UsersController : ApiControllerBase
         [FromQuery] int pageSize = 25,
         [FromQuery] string? search = null,
         [FromQuery] bool? isActive = null,
+        // The grid's filter row — see ColumnFilters.
+        [FromQuery(Name = "col")] Dictionary<string, string?>? col = null,
         CancellationToken ct = default)
     {
         var result = await _users.ListUsersAsync(
-            new PageQuery { Page = page, PageSize = pageSize }, search, isActive, ct);
+            new PageQuery { Page = page, PageSize = pageSize }, search, isActive,
+            new ColumnFilters(col), ct);
 
         return Ok(result);
     }
@@ -53,6 +56,12 @@ public sealed class UsersController : ApiControllerBase
     }
 
     /// <summary>Activates or deactivates an account. Deactivation revokes live refresh tokens.</summary>
+    /// <summary>Corrects a name or an email. Roles and passwords have their own endpoints.</summary>
+    [HttpPut("{id:long}")]
+    [ProducesResponseType(typeof(UserDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Update(long id, [FromBody] UpdateUserRequest request, CancellationToken ct)
+        => FromResult(await _users.UpdateUserAsync(id, request, ct));
+
     [HttpPut("{id:long}/active")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]

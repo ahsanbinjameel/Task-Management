@@ -1,7 +1,9 @@
 import { Component, OnInit, computed, inject, input, output, signal } from '@angular/core';
 import { DatePipe } from '@angular/common';
+import { HttpContext } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
+import { MatDialog } from '@angular/material/dialog';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
@@ -14,6 +16,7 @@ import {
   AcceptanceCriterionDto, AttachmentDto, QCResult, QCReviewDto, TaskDetailDto,
 } from '../../../core/models';
 import { EmptyComponent } from '../../../shared/ui';
+import { ConfirmDialog, ConfirmData } from '../../../shared/dialogs';
 import { AttachmentsComponent } from '../../../shared/attachments.component';
 import { AttachmentUploadComponent } from '../../../shared/attachment-upload.component';
 
@@ -262,6 +265,7 @@ export class TaskQcComponent implements OnInit {
   private readonly api = inject(ApiService);
   readonly auth = inject(AuthService);
   private readonly toast = inject(ToastService);
+  private readonly dialog = inject(MatDialog);
 
   readonly history = signal<QCReviewDto[]>([]);
   readonly verdicts = signal<Verdict[]>([]);
@@ -385,12 +389,69 @@ export class TaskQcComponent implements OnInit {
   tone = (result: QCResult) =>
     result === 'Passed' ? 'good' : result === 'Failed' ? 'danger' : 'warn';
 
+  /**
+   * A verdict is a numbered attempt, and attempts are append-only — there is no edit and no
+   * withdraw, and the next look is attempt N+1 sitting underneath this one in the history. Both
+   * verdicts that move the task get a question first.
+   *
+   * "Need information" does not: it deliberately leaves the task in QC (a query is not a lifecycle
+   * state), so the checker can simply ask again.
+   */
+  private verdictConfirmation(): { title: string; message: string; confirmText: string; danger?: boolean } | null {
+    if (this.result() === 'Passed') {
+      return {
+        title: 'Record a pass?',
+        message:
+          'This clears the task for closure and cannot be withdrawn — a pass you change your mind '
+          + 'about has to be followed by reopening the task, which needs a fresh check afterwards.',
+        confirmText: 'Record the pass',
+      };
+    }
+
+    if (this.result() === 'Failed') {
+      return {
+        title: 'Send this back to be fixed?',
+        message:
+          'The task goes back to the person who did the work, with your notes and screenshots '
+          + 'attached to this attempt. The attempt is kept whatever happens next, so it cannot be '
+          + 'taken back.',
+        confirmText: 'Send it back',
+        danger: true,
+      };
+    }
+
+    return null;
+  }
+
   submit(): void {
     if (this.blockedReason()) return;
 
-    this.busy.set(true);
+    const confirmation = this.verdictConfirmation();
 
-    this.api.submitQC(this.task().id, {
+    if (!confirmation) {
+      this.busy.set(true);
+      this.submitVerdict().subscribe({
+        next: (task) => { this.busy.set(false); this.afterVerdict(task); },
+        error: () => this.busy.set(false),
+      });
+      return;
+    }
+
+    // Submitting from inside the dialog is what keeps a refused verdict from throwing away the
+    // notes and the per-criterion answers the checker just worked through.
+    this.dialog
+      .open<ConfirmDialog, ConfirmData>(ConfirmDialog, {
+        data: { ...confirmation, submit: (ctx: HttpContext) => this.submitVerdict(ctx) },
+      })
+      .afterClosed()
+      .subscribe((task?: unknown) => {
+        if (!task) return;
+        this.afterVerdict(task as TaskDetailDto);
+      });
+  }
+
+  private submitVerdict(context?: HttpContext) {
+    return this.api.submitQC(this.task().id, {
       result: this.result(),
       comments: this.comments().trim() || undefined,
       environment: this.environment().trim() || undefined,
@@ -404,20 +465,18 @@ export class TaskQcComponent implements OnInit {
           met: toMet(v.answer),
           note: v.note.trim() || undefined,
         })),
-    }).subscribe({
-      next: (task) => {
-        this.busy.set(false);
-        this.history.set(task.qcReviews);
-        this.comments.set('');
-        // The attempt has adopted them; they are now part of its record above.
-        this.evidence.set([]);
-        this.toast.success(
-          this.result() === 'Passed' ? 'Quality check passed.'
-          : this.result() === 'Failed' ? 'Sent back to be fixed.'
-          : 'Your question has been recorded.');
-        this.changed.emit();
-      },
-      error: () => this.busy.set(false),
-    });
+    }, context);
+  }
+
+  private afterVerdict(task: TaskDetailDto): void {
+    this.history.set(task.qcReviews);
+    this.comments.set('');
+    // The attempt has adopted them; they are now part of its record above.
+    this.evidence.set([]);
+    this.toast.success(
+      this.result() === 'Passed' ? 'Quality check passed.'
+      : this.result() === 'Failed' ? 'Sent back to be fixed.'
+      : 'Your question has been recorded.');
+    this.changed.emit();
   }
 }

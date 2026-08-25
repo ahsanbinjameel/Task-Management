@@ -111,6 +111,7 @@ script for SSMS.
 | `Common/Permissions.cs` | ✅ | `Permissions.*` key catalog + `DefaultRoles.Map` (role → permission bundles) |
 | `Common/TaskTransitionService.cs` | ✅ | Pure transition validation (workflow map + permission + reason + override) |
 | `Common/StatusLabels.cs` | ✅ | **The words users see for internal status names.** Mirrored on the client by `core/labels.ts` — change both together |
+| `Common/ColumnFilters.cs` | ✅ | The grid filter row server-side: `col[key] → value`, read as text/id/bool/enum/date. Unknown keys ignored, blank values narrow nothing |
 | `Common/StatusViews.cs` | ✅ | **Who is shown which statuses.** Groups internal states into per-audience views (requester / worker / coordinator), resolves the audience from permissions, and folds a request's status onto its task |
 | `Common/Interfaces/IWorkflowDbContext.cs` | ✅ | The persistence surface the Application layer sees (all DbSets + `Database` + `SaveChangesAsync`) |
 | `Common/Interfaces/IIdentityAbstractions.cs` | ✅ | `ICurrentUser`, `IDateTimeProvider`, `IPasswordHasher`, `ITokenService`, `AccessToken`, `IssuedRefreshToken` |
@@ -125,6 +126,8 @@ script for SSMS.
 | `Identity/Services/AuthService.cs` | ✅ | Login, refresh rotation, logout, change password, `me`. Also `PasswordPolicy`, `UserMapper` |
 | `Identity/Services/UserAdminService.cs` | ✅ | Create/list/get user, activate, assign roles, admin reset, list roles |
 | `Identity/Services/PermissionService.cs` | ✅ | Effective permissions = union across the user's roles |
+| `Admin/Services/SetupService.cs` | ✅ | **The administrator's reference data**: clients, departments, teams, pause reasons, and roles themselves. Retire rather than delete; names unique case-insensitively; refuses to orphan the last route to `Admin.ManageRoles` |
+| `Admin/Dtos/SetupDtos.cs` | ✅ | The editable shapes for all of the above |
 | `Workforce/Dtos/WorkforceDtos.cs` | ✅ | Shift/state requests, `WorkforceStatusDto`, `TimelineEntryDto`, `DailyTimelineDto`, `ActiveWorkforceDto` |
 | `Workforce/Services/ShiftService.cs` | ✅ | Start/end shift, change availability, status, supervisor force-end |
 | `Workforce/Services/DailyTimelineBuilder.cs` | ✅ | **Pure**: events → intervals + totals. Handles carry-over, open entries, clock skew |
@@ -196,6 +199,7 @@ script for SSMS.
 | `Services/CurrentUserService.cs` | ✅ | `ICurrentUser` from the JWT principal + request metadata |
 | `Controllers/AuthController.cs` | ✅ | login, refresh, logout, me, change-password |
 | `Controllers/UsersController.cs` | ✅ | Users CRUD-ish + `RolesController` (roles, permission catalog) |
+| `Controllers/SetupController.cs` | ✅ | `api/setup/*` — the reference data. Gated on `Admin.ManageConfig`; the role endpoints additionally on `Admin.ManageRoles` |
 | `Controllers/ShiftsController.cs` | ✅ | Self-service shift/availability — always acts on the token's user |
 | `Controllers/WorkforceController.cs` | ✅ | Supervisory views + force-end |
 | `Services/StaleShiftSweepService.cs` | ✅ | `BackgroundService` driving `IShiftMaintenanceService`; fails soft |
@@ -223,11 +227,14 @@ script for SSMS.
 | GET | `/api/auth/me` | authenticated |
 | POST | `/api/auth/change-password` | authenticated |
 | GET/POST | `/api/users`, `GET /api/users/{id}` | `Admin.ManageUsers` |
+| PUT | `/api/users/{id}` | `Admin.ManageUsers` — name and email only; the username never changes |
 | PUT | `/api/users/{id}/active` | `Admin.ManageUsers` |
 | PUT | `/api/users/{id}/roles` | `Admin.ManageRoles` |
 | POST | `/api/users/{id}/reset-password` | `Admin.ManageUsers` |
 | GET | `/api/roles`, `/api/roles/permissions` | `Admin.ManageRoles` |
 | GET | `/health` | anonymous, no DB call |
+| GET/POST/PUT | `/api/setup/clients`, `/departments`, `/teams`, `/pause-reasons` (+ `/{id}`, `/{id}/active`) | `Admin.ManageConfig` |
+| GET/POST/PUT/DELETE | `/api/setup/roles`, `/{id}`, `/{id}/permissions` | `Admin.ManageConfig` **and** `Admin.ManageRoles` |
 
 ### Endpoints (Phase 2)
 
@@ -326,10 +333,17 @@ script for SSMS.
 | `src/app/shared/search-select.component.ts` | `app-search-select` — **the** dropdown. Type-to-filter, single or multi (chips). Works with `ngModel` and `formControlName`; `enumOptions()` builds the options for enum lists |
 | `src/app/shared/list-views.ts` | Columns + primary action per status view. The server says which statuses a view covers; this says what is worth showing once you are in it |
 | `src/app/shared/attachments.component.ts` | `app-attachments` (thumbnails, file rows) and the image viewer dialog — zoom, pan, next/previous. Download is secondary |
+| `src/app/shared/pdf-viewer.component.ts` | `PdfViewerDialog` + `openPdf(dialog, …)` — the one way a PDF is opened. Fetches with the bearer token, frames the blob, keeps Download as a button |
+| `src/app/shared/column-filter.component.ts` | `app-column-filter` (one filter cell), `ColumnFilterSpec`, and `ColumnFilterState`/`columnFilters()` — the grid filter row. Debounces typing, not selects; `asObject()` produces the `col[key]` query bag |
+| | Also `app-no-matches` — the strip shown *under* a still-visible table when filters match nothing |
 | `src/app/shared/file-drop.component.ts` | `app-file-drop` — choose / drag / **paste** (Win+Shift+S → Ctrl+V), with previews before anything is submitted |
 | `src/app/shared/attachment-upload.component.ts` | `app-attachment-upload` — the same three ways in, but straight onto a record that already exists. Carries the `kind` |
 | `src/app/layout/` | Shell, permission-filtered nav, notification bell, shift widget, quick-work widget (live clock) |
+| `src/app/layout/nav-preference.ts` | The sidebar-rail preference. Shared, because both the rail's toggle and the Settings page write it |
 | `src/app/features/` | One folder per area: dashboard, tasks (+ `panels/`), requests (incl. `batch-detail`), qc, workforce, reports, admin, me |
+| `src/app/features/me/settings.component.ts` | **The one door out of the profile menu.** Account facts, change password, per-browser preferences, and (for people who run the system) links to the configuration screens |
+| `src/app/features/admin/setup.component.ts` | The setup screen — tabs for clients, pause reasons, departments, teams. Every row shows what points at it and offers retire, not delete |
+| `src/app/features/admin/roles.component.ts` | The role map, and its editor for anyone holding `Admin.ManageRoles`. Permission grid grouped from the key prefixes, so a new server-side permission appears with no second edit |
 | `src/app/shared/quick-view.component.ts` | `app-quick-view` — the read-only drawer. Same endpoint as the full page, no tabs, no actions, desktop only |
 | `proxy.conf.json` | Dev-server proxy for `/api`, `/hubs`, `/health` |
 
@@ -338,6 +352,7 @@ script for SSMS.
 | Path | Contains |
 |---|---|
 | `scripts/sql/001-InitialCreate.idempotent.sql` | The `InitialCreate` migration as a re-runnable script for SSMS |
+| `scripts/sql/reset-dev-data.sql` | Empties a dev database back to `admin` + the seeded catalogue. Keeps Permissions/Roles/RolePermissions/PauseReasons; drops every request, task, quick-work record, batch, session, shift, attachment row, audit entry, org lookup and other account. One transaction, `XACT_ABORT`, child-first. **Add new tables here when you add them** |
 
 ## 5. Non-negotiable business rules (enforce in every phase)
 
@@ -468,9 +483,47 @@ script for SSMS.
 - **Screens re-fetch on real-time events; they never patch from the payload.** The server sends
   pointers by design, so applying an event as if it were a record would go wrong the moment two
   arrived out of order or one was missed during a reconnect.
+- **Form density is a global setting, not per-form CSS.** `subscriptSizing: 'dynamic'` in
+  `MAT_FORM_FIELD_DEFAULT_OPTIONS` is the single biggest change: by default every Material field
+  reserves a line beneath itself for an error that is usually absent — ~22px each, so a six-field
+  dialog carried 130px of nothing. Theme `density: -2` does the rest. The one trap: a container that
+  already spaces its children (`.stack`, `.row`, `.grid`) must null the field's own margin, or the
+  two add up and the gap doubles.
+- **A sortable table heading is a `<button>`, and buttons carry `text-transform: none` from the UA
+  stylesheet.** That is not inherited away, so sortable columns rendered "Worked" while plain ones
+  rendered "WORKED" in the same header row. `.mat-mdc-header-cell button` puts the inherited value
+  back — worth knowing before styling any header.
 - **Fonts and icons are self-hosted** (`@fontsource/roboto`, `material-icons`). The CSP is
   `'self'`-only and an internal LAN box may have no internet; a CDN font that silently fails leaves
   an icon set rendered as raw words.
+- **`StatusViews.RequestStatusFollowsTask` is the only place that decides whether a request's
+  status follows its task.** The rule was re-derived independently in four places — the view table,
+  the label, the list filter and the tile counts — and it produced two separate empty-screen bugs
+  before being consolidated. (1) `ApplyFilters` folded for *every* audience, so a coordinator's
+  approved request was judged against `ReviewerViews`' deliberately-empty task list and vanished:
+  the tile counted three and the list showed none. (2) The test was `== Requester`, but
+  `AudienceFor` classifies from **task** permissions and the Worker role holds `Request.Create` by
+  design — so a worker's own request was read with the reviewer's table and froze on "Approved"
+  forever. The rule is now "does this person triage work?" (`!= Coordinator`), asked once. Covered
+  by `Approved_view_lists_the_same_requests_the_tile_counts_for_a_reviewer` and
+  `A_requester_who_also_works_still_sees_their_request_follow_the_task`.
+- **Reference data is retired, never deleted.** A client with requests against it, a pause reason
+  in someone's timeline, a role somebody holds — deleting any of them rewrites history that other
+  screens still read, turning a report into blanks. So `SetupService` offers deactivate, and every
+  row shows what already points at it. The single exception is a role that is neither seeded nor
+  held, because a role carries no history of its own.
+- **A built-in role cannot be renamed or deleted; its permissions are still editable.**
+  `DefaultRoles.Map` is keyed by name and the seeder recreates anything it cannot find, so a rename
+  produces a second copy on the next restart and a delete silently comes back. What a role *grants*
+  is genuinely configurable.
+- **The permission editor refuses to lock itself.** Removing `Admin.ManageRoles` from the only role
+  that has it, while someone holds that role, would close the screen for everyone with no way back
+  short of SQL. `WouldOrphanAsync` refuses; a role nobody holds is free to edit, because it cannot
+  orphan anything.
+- **`Admin.ManageConfig` finally means something.** It was in the catalogue from the start, seeded
+  with a description, granted to Administrator — and enforced nowhere until `SetupController`.
+  Reading lookup data stays open to any signed-in caller through the existing endpoints; only
+  changing it is gated.
 - **How much of the workflow you see depends on what you do.** `StatusViews` groups the twenty-two
   task states into six for a worker, ten for a coordinator, and ten plain-language ones for a
   requester. The state machine is untouched — this is only about what is *shown*. It lives on the
@@ -483,6 +536,45 @@ script for SSMS.
   "In Progress" — the work is in hand, and a status that flickers with a worker's day only invites
   chasing. Coordinators still see paused, blocked and rework separately, because acting on that
   difference is their job.
+- **A filtered-empty grid keeps its filter row.** Every grid rendered its empty state *instead of*
+  the table, so a filter matching nothing took the filter row away with it — the control that caused
+  the problem vanished and the only way out was a reload. The message lied too: the people grid
+  announced "No accounts yet" while eight accounts existed. Now the full empty state is shown only
+  when there is nothing *and* no filter is set; otherwise the table stays and `app-no-matches` sits
+  under it with a Clear filters button. **Any new grid must keep this shape.**
+- **Filter cells have a real minimum width.** With `min-width: 0` the browser met the table's
+  `width: 100%` by crushing columns instead of scrolling — "TSK-000003" wrapped onto two lines and
+  the priority filter rendered as "An". Columns that do not fit make `.table-scroll` scroll.
+- **Filtering lives in the column, not in a card above the grid.** Every grid had a card holding a
+  search box and two or three dropdowns, each of which described one column below it — so the
+  reader had to map "Client: Any" onto the Client column themselves, and the card grew a control
+  every time a column was added. The row is now generated from the grid's own `columns()`, so a
+  column gets a filter if a spec names it and an empty cell if not; it cannot fall out of step with
+  the header. `mat-form-field` and `app-search-select` are deliberately **not** used here — a
+  filter row has to stay the height of a table header, and Material's field brings ~56px of label
+  and outline. This is the one place in the app where a bare `<input>`/`<select>` is right.
+- **Column filters are applied to the list and never to the tile counts.** A tile says how many
+  there are in that status; narrowing it by the column being typed into would send every tile
+  towards zero as you type, and the number you were navigating by would move under you. Enforced
+  structurally — `ApplyColumnFilters` is called in `ListAsync` only, not inside the shared
+  `ApplyFilters` that `StatusCountsAsync` also uses. A comment was not enough: the first attempt
+  put it in the shared method and the tiles moved.
+- **Filter columns are a dictionary, not a property per column.** `col[title]=invoice` on the wire,
+  `ColumnFilters` server-side, and the owning service decides what each key means. Adding a column
+  to a grid must not mean editing a query record, a controller signature and a client interface.
+  Unknown keys are **ignored, not rejected** — a stale bookmark or a removed column should show a
+  sensible list, and a key nobody handles simply filters nothing.
+- **Person columns filter by name, not by a dropdown of people.** The assignable-people endpoint is
+  behind `Task.Assign`, which a reviewer need not hold, so a select would 403 for half its users. A
+  contains-match on the name already printed in the column works for everyone. `-` in the task
+  grid's assignee column means unassigned — the one answer with no name to type, and the one a
+  coordinator looks for most.
+- **Where the whole list is already loaded, filtering client-side is correct.** The daily report and
+  the workload screen return every row unpaged, so narrowing them locally cannot misreport a total.
+  The paged grids (requests, tasks, people) filter server-side, because filtering the loaded page
+  would show "2 matches" out of thirty — the same class of lie as the tile/list mismatch.
+- **"Only mine" became the Requester column.** One control that answers "whose?" beats a switch
+  that answers it only for you, and it was the last thing keeping the filter card alive.
 - **The grid follows the view, not the screen.** `list-views.ts` names the columns and the one
   primary action per view. A fixed column set is wrong nearly everywhere: worked time on a queue
   nobody has started is a column of dashes. Everything the new columns need was already in the
@@ -494,6 +586,17 @@ script for SSMS.
   `RequestContextDto` carries the request's own words and screenshots onto the task. Both are
   summaries, not copies: `Request ≠ Task` still holds, and a second staler copy of either would be
   worse than the trip it saves.
+- **PDFs are read, not collected.** Every PDF went straight to the downloads folder, which is the
+  wrong default for the question people ask of them — "what does today's report say?" — because
+  answering it cost a file on disk, an external viewer, and a folder filling with
+  `team-daily-*.pdf` nobody deletes. `openPdf` opens the document; Download is a button in its
+  toolbar. The CSV export still downloads, deliberately: a spreadsheet is taken away to be worked
+  on. Same mechanism as the image viewer — the bytes need the caller's bearer token, which an
+  `<iframe src>` cannot carry, so our script fetches them and frames a blob URL. That is why
+  **`frame-src blob:` had to be added to the CSP**: without it the directive falls back to
+  `default-src 'self'` and the frame renders empty. Unrelated to `frame-ancestors`/`X-Frame-Options`,
+  which govern who may frame *us* and stay closed. PDF attachments get the viewer too; spreadsheets
+  and archives do not, because they need their own application anyway.
 - **Screenshots are looked at, not downloaded.** Thumbnails inline, a viewer with zoom/pan, paste
   and drag-drop on the way in. Attachments are fetched as blobs because an `<img src>` cannot carry
   a bearer token, which is why `img-src` in the CSP allows `blob:` — those URLs are same-origin,
@@ -548,6 +651,64 @@ script for SSMS.
   request reports the shared task's progress to its requester with no extra code. The client is
   *copied* onto each item rather than read through the batch, so correcting one item at triage
   cannot drag its siblings with it.
+- **Confirmation is for what cannot be taken back, or what starts a clock others read.**
+  A dialog on every button is clicked through without being read, which costs the protection on the
+  one that needed it — so it is not universal. Two things earn one. *No undo:* triage **Approve**
+  (creates the task), **Reject** and **Duplicate**; a QC **pass** or **fail** (a numbered attempt is
+  append-only); **approving a scope change**; removing a dependency; closing; deactivating an
+  account. *A commitment that starts recording or that other people see:* **start/end shift** and
+  **changing availability** (attendance and the timeline are written from the moment you click, and
+  the clock does not rewind), **starting work** (opens a session and pauses whatever else was
+  running — and is reachable in one click from a queue row via `?start=1`), **submitting a
+  request**, and **signing out** (which notably does *not* end your shift, so the dialog says so).
+  The re-decidable ones submit straight away: triage clarification/defer/escalate, a QC "need
+  information" (which by design leaves the task in QC), and reactivating an account.
+- **A confirmation performs the call, it does not just return an answer.** `ConfirmData.submit` and
+  `ReasonData.submit` exist so a refusal leaves the dialog open with the server's message beside
+  what the user typed. Wiring the dialog to merely return `true` and calling the API afterwards is
+  what throws away a reviewer's reason, or a checker's per-criterion answers, on a 409 — so any new
+  confirmation on a form must pass `submit`, which means the `ApiService` method needs its
+  `context?: HttpContext` parameter.
+- **A purpose-built dialog is its own confirmation; it does not open a second one.** `FoldDialog`
+  and `AssignDialog` already name what is being acted on, state the consequence and label their own
+  button, so they carry the missing sentence inline rather than stacking a modal on a modal. Reach
+  for `ConfirmDialog` when the action would otherwise fire from a single click, and note the one
+  exception to the submit-inside rule: the New Request form confirms with a plain `true` because it
+  is a whole page that survives a refusal untouched, and its submit path goes on to upload the
+  attachments afterwards — work that cannot run inside a dialog that has already closed.
+- **A dialog wider than 560px must be given a `width` at `open()`.** Material caps the dialog
+  *surface* there; a `mat-dialog-content` min-width above it does not widen the dialog, it overflows
+  it and clips the right-hand fields behind a sideways scrollbar. That is what was wrong with the
+  request edit dialog — the only one in the app over the cap. Sizing from the content alone works
+  only below 560px.
+- **Editing an account and changing what it can do are separate operations.** A misspelled surname
+  and a change of authority are different jobs done at different times, so they have their own
+  dialogs, endpoints and audit actions (`Admin.UserUpdated` vs `Admin.UserRolesChanged`). The
+  **username is not editable at all**: it is what the person signs in with and what every audit row
+  and login attempt was recorded against. Someone who genuinely needs a different one gets a new
+  account.
+- **Passwords an administrator types are masked, with a deliberate reveal — and the masking is
+  what stops the browser keeping them.** The create-user field was `<input name="password">` with
+  no `type` and no `autocomplete`, so the browser treated it as ordinary text: every temporary
+  password an admin typed went into **form history** and was then offered back as an autofill
+  suggestion the next time that dialog opened — for a different user. That, not any API leak, is
+  how an administrator could see passwords they had set for other people. `type="password"` fixes
+  it at the root (browsers never keep form history for password inputs, and never suggest into
+  them) and `autocomplete="new-password"` stops a saved credential being filled in. The reset
+  dialog had the same problem twice over, collecting it in a `<textarea>`. Both are masked now with
+  one click to reveal (it has to be read out to be handed over), and the reset asks twice, because
+  a masked typo locks someone out of an account they have never signed into.
+  **Values already in a browser's form history predate the fix and the app cannot clear them** —
+  that needs clearing autofill data in the browser. No password or hash has ever left the API:
+  `UserDto` does not carry one, and every password field in `AuthDtos` is inbound only.
+- **Editing what someone can do is a dialog, not a panel under the table.** The inline roles editor
+  opened below a 200-row table — off-screen on any real user list, with nothing tying the
+  checkboxes to the row that was clicked.
+- **The profile menu offers one door.** It grew an item per preference and had no general answer to
+  "where do I change X?". Everything about the account or this browser now sits behind **Settings**;
+  "My day" was removed outright because it is a work screen that already appears in the nav, and an
+  item in two places is one the reader has to think about twice. `/me/password` redirects rather
+  than 404s — it was a menu item long enough to have been bookmarked.
 - **The quick-view drawer is read-only and deliberately incomplete.** It answers "is this the one I
   am looking for?" and nothing else — no tabs, no actions, no second copy of the detail page's
   logic. It calls the same endpoint the full page calls. Desktop only: below 1100px there is no
@@ -648,13 +809,20 @@ separates the picture describing a problem from the picture proving it was fixed
 checker looked at, with the proof gated on being the person responsible for the work and the
 evidence kept with the numbered attempt it justified.
 
-**Tests:** 318 passing (`dotnet test`) — 29 domain state machines, 289 application services.
+**Tests:** 346 passing (`dotnet test`) — 29 domain state machines, 317 application services.
 All on EF Core InMemory or pure functions, so the suite runs with no SQL Server.
 
 ## 9. SQL Server: done and still outstanding
 
 SQL Server 2019 Developer Edition runs on the `localhost` default instance. `WorkflowApp_Dev` has
 been created, migrated and seeded, and every phase has been driven end to end over HTTP.
+
+**`WorkflowApp_Dev` is the only local database.** A second one, `WorkflowApp`, existed until
+2026-08-25: it was created accidentally by a `dotnet run` that fell back to base `appsettings.json`
+instead of the Development profile, held only `InitialCreate` and the bootstrap admin, and was
+seven migrations behind. It has been dropped. Remember that **a bare
+`dotnet run --project src/WorkflowApp.Api` starts Demo**, not Development (§10) - it is
+`--launch-profile Development` that reaches SQL Server.
 
 > **Second dev machine (DESKTOP-2E2D7JE) has no default instance.** It exposes
 > `localhost\SQLEXPRESS` (SQL Server 2022 Express) and `(localdb)\MSSQLLocalDB` (2025 Express)
@@ -718,9 +886,12 @@ Still outstanding before this is anything but a dev box:
       handshake has been exercised so far, not an actual pushed message
 - [ ] Phase 9: SignalR group membership is per-process. Running more than one instance needs a
       Redis backplane, or sticky sessions
-- [ ] `WorkflowApp_Dev` holds smoke-test rows (users prefixed `smoke_`/`p8_`/`p9_`/`qw1_`/`qw2_`/`bat1_`/`pf_`,
-      several requests, tasks and quick-work records). Drop the database to start clean - it is
-      recreated on the next `dotnet run`
+- [x] **Cleared 2026-08-25.** `WorkflowApp_Dev` is back to `admin` alone plus the seeded catalogue,
+      via `scripts/sql/reset-dev-data.sql`; the orphaned files under
+      `src/WorkflowApp.Api/storage-dev` were deleted by hand (the script never touches disk) and
+      `NumberSequences` reset, so the next request is `REQ-000001`. Clients/Departments/Teams/
+      Projects/Modules went with it - they are **not** seeded, so a client has to be re-added
+      before a request can be raised
 - [ ] The PDF export resolves a font off the machine (`FileSystemFontResolver`). A stripped Windows
       Server Core or a slim Linux container may have none of Segoe UI / Arial / DejaVu / Liberation,
       and startup will refuse with the list it looked for. Install one, or ship a `.ttf`

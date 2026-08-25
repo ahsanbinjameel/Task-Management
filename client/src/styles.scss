@@ -5,7 +5,10 @@ html {
   @include mat.theme((
     color: (primary: mat.$azure-palette, tertiary: mat.$blue-palette),
     typography: Roboto,
-    density: -1,
+    // -2 rather than -1: this is a dense operations tool where most screens are lists and forms,
+    // and Material's default sizing is built for touch. It takes a form field from ~56px to ~48px
+    // without making anything hard to hit with a mouse.
+    density: -2,
   ));
 }
 
@@ -87,7 +90,8 @@ body {
 /* --- layout helpers ------------------------------------------------------------------------- */
 
 .page {
-  padding: 24px 28px 48px;
+  /* The bottom 48px was dead space on every screen — the shell already scrolls. */
+  padding: 20px 24px 28px;
   max-width: 1500px;
   margin: 0 auto;
 }
@@ -99,15 +103,15 @@ body {
   box-shadow: var(--shadow-card);
 }
 
-.card-pad { padding: 20px; }
+.card-pad { padding: 16px 18px; }
 
 .card-title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.03em;
   color: var(--text-muted);
   text-transform: uppercase;
-  margin: 0 0 14px;
+  margin: 0 0 12px;
 }
 
 .grid {
@@ -129,8 +133,38 @@ body {
 .nowrap { white-space: nowrap; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.stack { display: flex; flex-direction: column; gap: 16px; }
+.stack { display: flex; flex-direction: column; gap: 14px; }
 .stack-sm { display: flex; flex-direction: column; gap: 8px; }
+
+/*
+ * Stacked form fields.
+ *
+ * With `subscriptSizing: 'dynamic'` (see app.config.ts) a field no longer reserves a line for an
+ * error, which also means consecutive fields would otherwise sit flush against each other. This is
+ * the deliberate gap that replaces the accidental one — smaller than what Material reserved, and
+ * the same everywhere instead of varying with whether a field had a hint.
+ */
+.mat-mdc-form-field {
+  margin-bottom: 14px;
+}
+
+/* The last field in a dialog or card should not push the actions down. */
+mat-dialog-content .mat-mdc-form-field:last-of-type,
+form .mat-mdc-form-field:last-of-type {
+  margin-bottom: 4px;
+}
+
+/*
+ * A container that already spaces its children must not have the margin added on top — a `.stack`
+ * (gap 14) plus the margin above gave 28px between every pair of fields, which is the doubled
+ * spacing this pass set out to remove.
+ */
+.row > .mat-mdc-form-field,
+.stack > .mat-mdc-form-field,
+.grid > .mat-mdc-form-field,
+.filters > .mat-mdc-form-field {
+  margin-bottom: 0;
+}
 
 /* --- tables --------------------------------------------------------------------------------- */
 
@@ -145,6 +179,16 @@ table.mat-mdc-table {
   letter-spacing: 0.02em;
   text-transform: uppercase;
   color: var(--text-muted);
+}
+
+/*
+ * A sortable heading is a <button>, and the UA stylesheet sets `text-transform: none` on buttons —
+ * which is not inherited away. So sortable columns rendered as "Worked" while plain ones rendered
+ * as "WORKED", in the same header row. Put the inherited value back.
+ */
+.mat-mdc-header-cell button {
+  text-transform: inherit;
+  letter-spacing: inherit;
 }
 
 .mat-mdc-row:hover { background: var(--surface-sunken); }
@@ -187,6 +231,41 @@ table.mat-mdc-table {
  * where the reader left it. `overflow-x: hidden` on the body would hide the symptom by cutting the
  * content off; these rules stop it arising.
  */
+/*
+ * The PDF viewer fills its dialog edge to edge — its own toolbar is the dialog's chrome, so the
+ * surface must not add padding, and the frame's square corners have to be clipped back to the
+ * dialog's radius. `panelClass` lands on the pane, outside any component's scoped styles, so this
+ * is one of the few rules that has to live here.
+ */
+.pdf-dialog .mat-mdc-dialog-surface {
+  overflow: hidden;
+  padding: 0;
+}
+
+/*
+ * The grid filter row: a second header row carrying one control per column.
+ *
+ * Shared here rather than per-table because every grid needs the same three things — no bold, no
+ * extra height, and a border that reads as part of the header rather than as the first data row.
+ */
+/* A reference number is one token; wrapping it makes it unreadable and unscannable. */
+.mat-mdc-cell .mono,
+.mat-mdc-cell a.number,
+.mat-mdc-cell a.mono { white-space: nowrap; }
+
+.filter-row .mat-mdc-header-cell.filter-cell {
+  padding-top: 0;
+  padding-bottom: 6px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+
+.filter-row .mat-mdc-header-cell {
+  /* Material makes header cells bold and uppercase-ish; a filter is an input, not a heading. */
+  font-weight: 400;
+  letter-spacing: normal;
+}
+
 @media (max-width: 900px) {
   .page { padding: 16px 14px 40px; }
 }
@@ -198,6 +277,12 @@ table.mat-mdc-table {
    * Dialogs take the width they are given. Every dialog already sizes itself with
    * `min(px, vw)`, but a nested form field with its own min-width can still hold one open wider
    * than the screen, and a dialog that overflows cannot be scrolled back into view.
+   *
+   * Note the ceiling this convention runs into: Material caps the dialog *surface* at 560px
+   * unless `open()` is passed an explicit `width`. A `mat-dialog-content` min-width above that
+   * does not widen the dialog — it overflows it, clipping the right-hand fields behind a sideways
+   * scrollbar. Wider forms must set `width` at the call site (see the request edit dialog); sizing
+   * from the content alone only works below 560px.
    */
   .mat-mdc-dialog-content { min-width: 0 !important; }
   .mat-mdc-dialog-content > * { max-width: 100%; }

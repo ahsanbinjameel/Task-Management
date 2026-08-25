@@ -3,9 +3,11 @@
 
     KEEPS:  the `admin` account with its roles and password, and the seeded catalogue —
             Permissions, Roles, RolePermissions, PauseReasons.
-    DROPS:  every request, task, work session, shift, activity event, QC review, comment,
-            dependency, scope change, attachment row, notification, audit entry, login
-            attempt, refresh token, and every user account other than the one kept.
+    DROPS:  every request (single and batched), task, quick-work record, work session, shift,
+            activity event, QC review, comment, dependency, scope change, attachment row,
+            notification, audit entry, login attempt, refresh token, the organisation lookups
+            (clients, departments, teams, projects, modules — these are typed in by hand, not
+            seeded), and every user account other than the one kept.
 
     Deletes run child-first so no foreign key is ever violated, and the whole thing is one
     transaction with XACT_ABORT on: any failure rolls the database back to exactly how it was.
@@ -20,7 +22,8 @@
         sqlcmd -S localhost -E -I -d WorkflowApp_Dev -b -i scripts\sql\reset-dev-data.sql
 
     Attachment ROWS are deleted, but the FILES on disk are not — clear FileStorage:Root
-    yourself (./storage-dev in Development, C:\WorkflowApp\storage by default elsewhere).
+    yourself (src\WorkflowApp.Api\storage-dev in Development, C:\WorkflowApp\storage
+    by default elsewhere).
 
     NOT for production. It deletes user accounts.
 */
@@ -43,6 +46,10 @@ END
 BEGIN TRANSACTION;
 
     -- --- task children ------------------------------------------------------------------
+    -- Attachments first: they hang off a request, a task or a batch, and a QC evidence file
+    -- also points at the numbered attempt it justified, so they precede QCReviews too.
+    DELETE FROM Attachments;
+
     DELETE FROM TaskActivities;
     DELETE FROM StatusHistories;
     DELETE FROM AssignmentHistories;
@@ -53,16 +60,21 @@ BEGIN TRANSACTION;
     DELETE FROM WorkSessions;
     DELETE FROM TaskCollaborators;
 
-    -- Attachments hang off either a request or a task, so they go before both.
-    DELETE FROM Attachments;
+    -- Quick work points at a user, a client, and optionally the task it interrupted and the
+    -- request it was promoted into — so it goes before every one of them.
+    DELETE FROM QuickWork;
 
     -- Subtasks reference a parent task; clear the children first.
     DELETE FROM Tasks WHERE ParentTaskId IS NOT NULL;
     DELETE FROM Tasks;
 
     -- --- request children ---------------------------------------------------------------
+    DELETE FROM RequestActivities;
     DELETE FROM RequestClarifications;
     DELETE FROM Requests;
+
+    -- A batch is only a wrapper around its items, so it goes once the items are gone.
+    DELETE FROM RequestBatches;
 
     -- --- workforce ----------------------------------------------------------------------
     DELETE FROM ActivityEvents;
@@ -73,6 +85,15 @@ BEGIN TRANSACTION;
     DELETE FROM AuditLogs;
     DELETE FROM LoginAttempts;
     DELETE FROM RefreshTokens;
+
+    -- --- organisation lookups -----------------------------------------------------------
+    -- Not seeded — whatever is here was typed in during testing. Modules hang off projects,
+    -- projects off clients, teams off departments.
+    DELETE FROM Modules;
+    DELETE FROM Projects;
+    DELETE FROM Clients;
+    DELETE FROM Teams;
+    DELETE FROM Departments;
 
     -- --- the accounts themselves --------------------------------------------------------
     -- The kept account keeps its own grants; everyone else loses theirs, then the account.

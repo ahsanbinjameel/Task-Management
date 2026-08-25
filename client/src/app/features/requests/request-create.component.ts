@@ -9,12 +9,14 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatAutocompleteModule } from '@angular/material/autocomplete';
+import { MatDialog } from '@angular/material/dialog';
 import { ApiService } from '../../core/api.service';
 import { ToastService } from '../../core/toast.service';
 import { RequestType, RequestedUrgency } from '../../core/models';
 import { enumOptions, SearchSelectComponent } from '../../shared/search-select.component';
 import { PageHeaderComponent } from '../../shared/ui';
 import { FileDropComponent } from '../../shared/file-drop.component';
+import { ConfirmDialog, ConfirmData } from '../../shared/dialogs';
 
 /** The optional detail fields, in the order they are offered. */
 const OPTIONAL_FIELDS = [
@@ -292,6 +294,7 @@ export class RequestCreateComponent implements OnInit {
   private readonly api = inject(ApiService);
   private readonly router = inject(Router);
   private readonly toast = inject(ToastService);
+  private readonly dialog = inject(MatDialog);
 
   private readonly destroyRef = inject(DestroyRef);
   readonly busy = signal(false);
@@ -451,8 +454,38 @@ export class RequestCreateComponent implements OnInit {
     }
   }
 
+  /**
+   * Asks before submitting, then hands off to the real thing.
+   *
+   * Unlike the dialogs elsewhere this one only returns an answer rather than performing the call:
+   * the form is a whole page that survives a refusal untouched, and the submit path continues on
+   * afterwards to upload the attachments — work that has no business running inside a dialog that
+   * has already closed.
+   */
   submit(): void {
     if (this.form.invalid) return;
+
+    const extras = this.form.getRawValue().extras.length;
+
+    this.dialog
+      .open<ConfirmDialog, ConfirmData>(ConfirmDialog, {
+        data: {
+          title: extras > 0 ? `Submit these ${extras + 1} requests?` : 'Submit this request?',
+          message: extras > 0
+            ? `All ${extras + 1} go to the review queue together under one submission. You can `
+              + 'still edit each one until a reviewer picks it up.'
+            : 'It goes to the review queue for someone to look at. You can still edit it until a '
+              + 'reviewer picks it up.',
+          confirmText: extras > 0 ? 'Submit them' : 'Submit it',
+        },
+      })
+      .afterClosed()
+      .subscribe((confirmed?: boolean) => {
+        if (confirmed) this.send();
+      });
+  }
+
+  private send(): void {
     this.busy.set(true);
 
     const v = this.form.getRawValue();

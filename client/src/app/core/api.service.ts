@@ -13,7 +13,17 @@ import {
   ScopeChangeDto, ShiftSessionDto, TaskCommentDto, TaskDependencyGraphDto, TaskDetailDto,
   TaskSummaryDto, TriageOutcome, UserDto, WorkSessionDto, WorkTaskStatus, WorkforceState,
   WorkforceStatusDto, WorkloadDto,
+  SetupClientDto, SetupDepartmentDto, SetupTeamDto, SetupPauseReasonDto, RoleDetailDto,
+  PauseCategory,
 } from './models';
+
+/**
+ * The grid filter row's contribution to a query string: `col[title]`, `col[client]`, and so on.
+ *
+ * Loosely typed on purpose — the keys are the grid's own column names, and the service that owns
+ * the table decides what each one means. `ColumnFilterState.asObject()` produces exactly this.
+ */
+export type ColumnFilterParams = Record<`col[${string}]`, string | undefined>;
 
 /** Drops null/undefined so an untouched filter never becomes `?status=null`. */
 function params(source: Record<string, unknown>): HttpParams {
@@ -46,8 +56,9 @@ export class ApiService {
     return this.http.post<void>('/api/auth/change-password', { currentPassword, newPassword });
   }
 
-  users(filter: { search?: string; isActive?: boolean; page?: number; pageSize?: number } = {}):
-    Observable<PagedResult<UserDto>> {
+  users(filter: {
+    search?: string; isActive?: boolean; page?: number; pageSize?: number;
+  } & ColumnFilterParams = {}): Observable<PagedResult<UserDto>> {
     return this.http.get<PagedResult<UserDto>>('/api/users', { params: params(filter) });
   }
 
@@ -59,6 +70,14 @@ export class ApiService {
     userName: string; email?: string; displayName: string; password: string; roles: string[];
   }, context?: HttpContext): Observable<UserDto> {
     return this.http.post<UserDto>('/api/users', body, { context });
+  }
+
+  updateUser(
+    id: number,
+    body: { displayName: string; email?: string | null; departmentId?: number | null; teamId?: number | null },
+    context?: HttpContext,
+  ): Observable<UserDto> {
+    return this.http.put<UserDto>(`/api/users/${id}`, body, { context });
   }
 
   setUserActive(id: number, isActive: boolean, context?: HttpContext): Observable<UserDto> {
@@ -93,7 +112,7 @@ export class ApiService {
   requests(filter: {
     status?: RequestStatus; view?: string; mine?: boolean; search?: string; clientId?: number;
     sortBy?: string; sortDescending?: boolean; page?: number; pageSize?: number;
-  }): Observable<PagedResult<RequestSummaryDto>> {
+  } & ColumnFilterParams): Observable<PagedResult<RequestSummaryDto>> {
     return this.http.get<PagedResult<RequestSummaryDto>>('/api/requests', { params: params(filter) });
   }
 
@@ -170,7 +189,7 @@ export class ApiService {
     unassigned?: boolean;
     clientId?: number; openOnly?: boolean; search?: string;
     sortBy?: string; sortDescending?: boolean; page?: number; pageSize?: number;
-  }): Observable<PagedResult<TaskSummaryDto>> {
+  } & ColumnFilterParams): Observable<PagedResult<TaskSummaryDto>> {
     return this.http.get<PagedResult<TaskSummaryDto>>('/api/tasks', { params: params(filter) });
   }
 
@@ -291,8 +310,8 @@ export class ApiService {
     // met: true = pass, false = fail, null = not applicable. Omitting a criterion entirely means
     // "not answered yet", which the server rejects on a pass — that distinction is deliberate.
     criteria: { index: number; met: boolean | null; note?: string }[];
-  }): Observable<TaskDetailDto> {
-    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/qc/review`, body);
+  }, context?: HttpContext): Observable<TaskDetailDto> {
+    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/qc/review`, body, { context });
   }
 
   qcHistory(id: number): Observable<QCReviewDto[]> {
@@ -368,8 +387,9 @@ export class ApiService {
     return this.http.post<ScopeChangeDto>(`/api/tasks/${id}/scope-changes`, body);
   }
 
-  approveScopeChange(scopeChangeId: number): Observable<ScopeChangeDto> {
-    return this.http.post<ScopeChangeDto>(`/api/tasks/scope-changes/${scopeChangeId}/approve`, {});
+  approveScopeChange(scopeChangeId: number, context?: HttpContext): Observable<ScopeChangeDto> {
+    return this.http.post<ScopeChangeDto>(
+      `/api/tasks/scope-changes/${scopeChangeId}/approve`, {}, { context });
   }
 
   // --- shifts & workforce ----------------------------------------------------------------------
@@ -446,16 +466,18 @@ export class ApiService {
     return this.http.post<QuickWorkDto>(`/api/quick-work/${id}/promote`, body, { context });
   }
 
-  startShift(): Observable<WorkforceStatusDto> {
-    return this.http.post<WorkforceStatusDto>('/api/shifts/start', {});
+  startShift(context?: HttpContext): Observable<WorkforceStatusDto> {
+    return this.http.post<WorkforceStatusDto>('/api/shifts/start', {}, { context });
   }
 
   endShift(context?: HttpContext, note?: string): Observable<WorkforceStatusDto> {
     return this.http.post<WorkforceStatusDto>('/api/shifts/end', { note }, { context });
   }
 
-  setWorkforceState(state: WorkforceState, note?: string): Observable<WorkforceStatusDto> {
-    return this.http.put<WorkforceStatusDto>('/api/shifts/state', { state, note });
+  setWorkforceState(
+    state: WorkforceState, note?: string, context?: HttpContext,
+  ): Observable<WorkforceStatusDto> {
+    return this.http.put<WorkforceStatusDto>('/api/shifts/state', { state, note }, { context });
   }
 
   myTimeline(date?: string): Observable<DailyTimelineDto> {
@@ -581,4 +603,106 @@ export class ApiService {
   auditActions(): Observable<string[]> {
     return this.http.get<string[]>('/api/audit/actions');
   }
+
+  // --- administrator setup ---------------------------------------------------------------------
+  //
+  // Reference data. Every list has create / update / set-active and deliberately no delete: these
+  // rows are pointed at by history, so they are retired rather than removed. Roles are the one
+  // exception, and only while nobody holds them.
+
+  setupClients(): Observable<SetupClientDto[]> {
+    return this.http.get<SetupClientDto[]>('/api/setup/clients');
+  }
+
+  createClient(body: { name: string; code?: string | null }, context?: HttpContext) {
+    return this.http.post<SetupClientDto>('/api/setup/clients', body, { context });
+  }
+
+  updateClient(id: number, body: { name: string; code?: string | null }, context?: HttpContext) {
+    return this.http.put<SetupClientDto>(`/api/setup/clients/${id}`, body, { context });
+  }
+
+  setClientActive(id: number, isActive: boolean, context?: HttpContext) {
+    return this.http.put<SetupClientDto>(`/api/setup/clients/${id}/active`, { isActive }, { context });
+  }
+
+  setupDepartments(): Observable<SetupDepartmentDto[]> {
+    return this.http.get<SetupDepartmentDto[]>('/api/setup/departments');
+  }
+
+  createDepartment(body: { name: string }, context?: HttpContext) {
+    return this.http.post<SetupDepartmentDto>('/api/setup/departments', body, { context });
+  }
+
+  updateDepartment(id: number, body: { name: string }, context?: HttpContext) {
+    return this.http.put<SetupDepartmentDto>(`/api/setup/departments/${id}`, body, { context });
+  }
+
+  setDepartmentActive(id: number, isActive: boolean, context?: HttpContext) {
+    return this.http.put<SetupDepartmentDto>(
+      `/api/setup/departments/${id}/active`, { isActive }, { context });
+  }
+
+  setupTeams(): Observable<SetupTeamDto[]> {
+    return this.http.get<SetupTeamDto[]>('/api/setup/teams');
+  }
+
+  createTeam(body: { name: string; departmentId?: number | null }, context?: HttpContext) {
+    return this.http.post<SetupTeamDto>('/api/setup/teams', body, { context });
+  }
+
+  updateTeam(id: number, body: { name: string; departmentId?: number | null }, context?: HttpContext) {
+    return this.http.put<SetupTeamDto>(`/api/setup/teams/${id}`, body, { context });
+  }
+
+  setTeamActive(id: number, isActive: boolean, context?: HttpContext) {
+    return this.http.put<SetupTeamDto>(`/api/setup/teams/${id}/active`, { isActive }, { context });
+  }
+
+  setupPauseReasons(): Observable<SetupPauseReasonDto[]> {
+    return this.http.get<SetupPauseReasonDto[]>('/api/setup/pause-reasons');
+  }
+
+  createPauseReason(body: SavePauseReasonBody, context?: HttpContext) {
+    return this.http.post<SetupPauseReasonDto>('/api/setup/pause-reasons', body, { context });
+  }
+
+  updatePauseReason(id: number, body: SavePauseReasonBody, context?: HttpContext) {
+    return this.http.put<SetupPauseReasonDto>(`/api/setup/pause-reasons/${id}`, body, { context });
+  }
+
+  setPauseReasonActive(id: number, isActive: boolean, context?: HttpContext) {
+    return this.http.put<SetupPauseReasonDto>(
+      `/api/setup/pause-reasons/${id}/active`, { isActive }, { context });
+  }
+
+  setupRoles(): Observable<RoleDetailDto[]> {
+    return this.http.get<RoleDetailDto[]>('/api/setup/roles');
+  }
+
+  createRole(body: { name: string; description?: string | null }, context?: HttpContext) {
+    return this.http.post<RoleDetailDto>('/api/setup/roles', body, { context });
+  }
+
+  updateRole(id: number, body: { name: string; description?: string | null }, context?: HttpContext) {
+    return this.http.put<RoleDetailDto>(`/api/setup/roles/${id}`, body, { context });
+  }
+
+  setRolePermissions(id: number, permissions: string[], context?: HttpContext) {
+    return this.http.put<RoleDetailDto>(
+      `/api/setup/roles/${id}/permissions`, { permissions }, { context });
+  }
+
+  deleteRole(id: number, context?: HttpContext): Observable<void> {
+    return this.http.delete<void>(`/api/setup/roles/${id}`, { context });
+  }
+}
+
+/** What every pause-reason write sends. Named because three call sites repeat it. */
+export interface SavePauseReasonBody {
+  name: string;
+  requiresComment: boolean;
+  isBlocker: boolean;
+  category: PauseCategory;
+  awayState?: WorkforceState | null;
 }
