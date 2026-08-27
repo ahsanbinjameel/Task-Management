@@ -5,6 +5,7 @@ using WorkflowApp.Application.Notifications;
 using WorkflowApp.Application.Common.Models;
 using WorkflowApp.Application.Common.Services;
 using WorkflowApp.Application.Requests.Dtos;
+using WorkflowApp.Application.Verifications.Services;
 using WorkflowApp.Domain.Entities.Requests;
 using WorkflowApp.Domain.Enums;
 
@@ -80,10 +81,11 @@ public sealed class RequestService : IRequestService
     private readonly ILookupService _lookups;
     private readonly IDateTimeProvider _clock;
     private readonly IBusinessCalendar _calendar;
+    private readonly IVerificationService _verifications;
 
     public RequestService(IWorkflowDbContext db, INumberGenerator numbers,
         INotificationService notifications, ILookupService lookups, IDateTimeProvider clock,
-        IBusinessCalendar calendar)
+        IBusinessCalendar calendar, IVerificationService verifications)
     {
         _db = db;
         _numbers = numbers;
@@ -91,6 +93,7 @@ public sealed class RequestService : IRequestService
         _lookups = lookups;
         _clock = clock;
         _calendar = calendar;
+        _verifications = verifications;
     }
 
     public async Task<Result<RequestDetailDto>> CreateAsync(
@@ -268,12 +271,18 @@ public sealed class RequestService : IRequestService
                 .FirstOrDefaultAsync(ct)
             : null;
 
+        // Whatever has been checked on this request, so a reviewer deciding what to do next reads
+        // the findings on the screen where the decision is made. Empty for the ordinary request
+        // that never needed a check, which is most of them.
+        var verifications = await _verifications.ForRequestAsync(requestId, ct);
+
         return Result<RequestDetailDto>.Success(new RequestDetailDto(
             request.Id, request.RequestNumber, request.Title, request.Description, request.Type,
             request.Status, request.RequestedUrgency, request.ClientId, clientName,
             request.BusinessImpact, request.ExpectedResult, request.CurrentResult, request.ReproductionSteps,
             request.RequestedByUserId, requester, request.RequestedAt, request.TargetDate,
             request.RelatedRequestId, request.GeneratedTaskId, activity, clarifications, attachments,
+            verifications,
             view.Key, view.Label, progress,
             request.BatchId, batch?.BatchNumber, request.OrdinalInBatch, batch?.ItemCount ?? 0));
     }

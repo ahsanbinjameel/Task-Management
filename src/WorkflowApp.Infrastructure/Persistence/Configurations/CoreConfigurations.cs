@@ -229,6 +229,7 @@ public class AttachmentConfig : IEntityTypeConfiguration<Attachment>
         b.HasIndex(a => a.RequestId);
         b.HasIndex(a => a.TaskId);
         b.HasIndex(a => a.BatchId);
+        b.HasIndex(a => a.VerificationId);
         b.HasIndex(a => a.Sha256);
 
         // "The completion proof on this task", "this attempt's evidence" — both asked on every

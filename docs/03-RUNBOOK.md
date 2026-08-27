@@ -115,9 +115,23 @@ which meant a production database came up with a valid schema and no roles in it
 The seeder creates the permission catalog, the seven system roles with their grants, the default
 pause reasons, and a bootstrap administrator.
 
+Grants are **additive**: a permission added to `DefaultRoles.Map` in a later release is backfilled
+onto the role at the next start, and one *removed* from the map is left alone. That is deliberate —
+a restart must never silently revoke a permission a site chose to add — but it means a change like
+"Administrator no longer gets `Workforce.TrackShift`" affects new databases only. On an existing
+one, remove it in the role editor.
+
 - [ ] Log in as `admin` / `ChangeMe!2024`
 - [ ] **Change that password immediately** — it is written to the log as a warning on every seed
 - [ ] Create real users and assign roles; `Task.Reopen` sits with Reviewer by default
+- [ ] **The administrator account is not a worker.** It is deliberately granted neither
+      `Workforce.TrackShift` nor `Task.Work`, so it has no shift widget and does not appear in
+      who-is-working-now or the assignable list. If the person administering the system also does
+      operational work, give their account the Worker role as well — do not add the permissions to
+      the Administrator role, which would put a shift clock in front of every administrator
+- [ ] Decide who carries out checks: `Verification.Work` ships on the QC role, and
+      `Verification.Create` on Reviewer and AssignmentManager. Neither implies `Workforce.TrackShift`
+      — whether a checker's hours are measured is a separate decision
 - [ ] Confirm the filtered unique indexes exist (see §6)
 - [ ] Confirm `Workforce:TimeZoneId` is right by starting a shift and checking the daily timeline
       lands on the expected date
@@ -188,7 +202,8 @@ under a race — so check them after any manual schema work:
     SELECT OBJECT_NAME(object_id) + '.' + name
     FROM sys.columns
     WHERE name = 'RowVersion' AND system_type_id = TYPE_ID('timestamp');
-    -- expect: Users, Requests, Tasks, WorkSessions, ShiftSessions, QuickWork, RequestBatches
+    -- expect: Users, Requests, Tasks, WorkSessions, ShiftSessions, QuickWork, RequestBatches,
+    --         Verifications
 
 ---
 

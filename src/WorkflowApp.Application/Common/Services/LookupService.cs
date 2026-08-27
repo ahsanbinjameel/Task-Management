@@ -5,6 +5,9 @@ using WorkflowApp.Domain.Entities.Requests;
 namespace WorkflowApp.Application.Common.Services;
 
 /// <summary>A known client: the name for the type-ahead, the id for the filter.</summary>
+/// <summary>A module for the picker: the name for the type-ahead, the id for the column.</summary>
+public sealed record ModuleOptionDto(long Id, string Name, string? ProjectName);
+
 public sealed record ClientOptionDto(long Id, string Name);
 
 
@@ -34,6 +37,14 @@ public interface ILookupService
     /// </summary>
     Task<long?> ResolveClientAsync(string? name, CancellationToken ct = default);
 
+    /// <summary>
+    /// Active modules, alphabetical. Needed because a verification can target one by real foreign
+    /// key, and a picker is the only way that column gets a valid value from a human.
+    ///
+    /// Deliberately not a create-on-type list like clients: a module is part of a project's
+    /// structure that an administrator maintains, not a label somebody invents at the point of use.
+    /// </summary>
+    Task<IReadOnlyList<ModuleOptionDto>> ModulesAsync(string? search, CancellationToken ct = default);
 }
 
 public sealed class LookupService : ILookupService
@@ -41,6 +52,27 @@ public sealed class LookupService : ILookupService
     private readonly IWorkflowDbContext _db;
 
     public LookupService(IWorkflowDbContext db) => _db = db;
+
+    public async Task<IReadOnlyList<ModuleOptionDto>> ModulesAsync(
+        string? search, CancellationToken ct = default)
+    {
+        var query = _db.Modules.AsNoTracking().Where(m => m.IsActive);
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim();
+            query = query.Where(m => m.Name.Contains(term));
+        }
+
+        return await query
+            .OrderBy(m => m.Name)
+            .Select(m => new ModuleOptionDto(
+                m.Id,
+                m.Name,
+                _db.Projects.Where(p => p.Id == m.ProjectId).Select(p => p.Name).FirstOrDefault()))
+            .Take(200)
+            .ToListAsync(ct);
+    }
 
     public async Task<IReadOnlyList<ClientOptionDto>> ClientsAsync(
         string? search, CancellationToken ct = default)

@@ -47,6 +47,17 @@ public sealed class SignalRIntegrationEventPublisher : IIntegrationEventPublishe
                 yield return RealtimeGroups.Permission(Permissions.TaskReview);
                 break;
 
+            // Narrower than a task deliberately. A verification concerns the checker holding it,
+            // whoever raised it, and the reviewers waiting on the answer — the assignment
+            // coordinators have no part in it, because verifications are not scheduled work.
+            case VerificationChangedEvent verification:
+                yield return RealtimeGroups.Verification(verification.VerificationId);
+                if (verification.AssignedToUserId is { } checker)
+                    yield return RealtimeGroups.User(checker);
+                yield return RealtimeGroups.Permission(Permissions.VerificationViewAll);
+                yield return RealtimeGroups.Permission(Permissions.TaskReview);
+                break;
+
             case WorkforceChangedEvent workforce:
                 yield return RealtimeGroups.User(workforce.UserId);
                 yield return RealtimeGroups.Permission(Permissions.WorkforceViewAll);

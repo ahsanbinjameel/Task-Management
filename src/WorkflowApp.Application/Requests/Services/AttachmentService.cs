@@ -15,12 +15,15 @@ public interface IAttachmentService
 {
     /// <summary>
     /// Stores a file against exactly one owner. A batch is the third because the screenshot showing
-    /// all eight problems belongs to the submission, not to whichever item happened to be first.
+    /// all eight problems belongs to the submission, not to whichever item happened to be first;
+    /// a verification is the fourth because a checker's evidence has to survive whether or not the
+    /// investigation ever produces a task to hang it on.
     /// </summary>
     Task<Result<AttachmentDto>> UploadAsync(
         long? requestId, long? taskId, long uploaderId,
         Stream content, string fileName, string contentType, CancellationToken ct = default,
-        long? batchId = null, AttachmentKind kind = AttachmentKind.General);
+        long? batchId = null, AttachmentKind kind = AttachmentKind.General,
+        long? verificationId = null);
 
     /// <summary>
     /// Ties the evidence a checker staged to the attempt they have just recorded.
@@ -61,20 +64,30 @@ public sealed class AttachmentService : IAttachmentService
     public async Task<Result<AttachmentDto>> UploadAsync(
         long? requestId, long? taskId, long uploaderId,
         Stream content, string fileName, string contentType, CancellationToken ct = default,
-        long? batchId = null, AttachmentKind kind = AttachmentKind.General)
+        long? batchId = null, AttachmentKind kind = AttachmentKind.General,
+        long? verificationId = null)
     {
-        // Proof and evidence belong to a task and to nothing else. A "completion proof" hanging off
-        // a request would be a claim about work that has not been created yet.
-        if (kind != AttachmentKind.General && taskId is null)
+        // Completion proof and QC evidence belong to a task and to nothing else. A "completion
+        // proof" hanging off a request would be a claim about work that has not been created yet.
+        if (kind is AttachmentKind.CompletionProof or AttachmentKind.QCEvidence && taskId is null)
             return Result<AttachmentDto>.Failure(Error.Validation(
-                "attachment.kind_needs_task", "Proof and evidence attach to a task."));
+                "attachment.kind_needs_task", "Proof and quality-check evidence attach to a task."));
 
-        // Exactly one owner: a request, a task, or a batch — never two, never none. Counted rather
-        // than compared, so adding a fourth owner later cannot quietly break the rule.
-        var owners = (requestId.HasValue ? 1 : 0) + (taskId.HasValue ? 1 : 0) + (batchId.HasValue ? 1 : 0);
+        // And the mirror of it: a verification's evidence belongs to the verification. Filing it
+        // against a task would be filing it against work that in most cases does not exist.
+        if (kind == AttachmentKind.VerificationEvidence && verificationId is null)
+            return Result<AttachmentDto>.Failure(Error.Validation(
+                "attachment.kind_needs_verification", "Verification evidence attaches to a verification."));
+
+        // Exactly one owner: a request, a task, a batch or a verification — never two, never none.
+        // Counted rather than compared, which is what made adding this fourth owner a one-line
+        // change instead of an unpicking of nested conditions.
+        var owners = (requestId.HasValue ? 1 : 0) + (taskId.HasValue ? 1 : 0)
+            + (batchId.HasValue ? 1 : 0) + (verificationId.HasValue ? 1 : 0);
         if (owners != 1)
             return Result<AttachmentDto>.Failure(Error.Validation(
-                "attachment.owner_required", "Attach to exactly one of a request, a task or a batch."));
+                "attachment.owner_required",
+                "Attach to exactly one of a request, a task, a batch or a verification."));
 
         if (requestId is { } rid && !await _db.Requests.AnyAsync(r => r.Id == rid, ct))
             return Result<AttachmentDto>.Failure(Error.NotFound("request.not_found", "Request not found."));
@@ -84,6 +97,10 @@ public sealed class AttachmentService : IAttachmentService
 
         if (batchId is { } bid && !await _db.RequestBatches.AnyAsync(b => b.Id == bid, ct))
             return Result<AttachmentDto>.Failure(Error.NotFound("batch.not_found", "Batch not found."));
+
+        if (verificationId is { } vid && !await _db.Verifications.AnyAsync(v => v.Id == vid, ct))
+            return Result<AttachmentDto>.Failure(
+                Error.NotFound("verification.not_found", "Verification not found."));
 
         // Who may claim to have proved what. Checked here rather than on the controller because
         // the answer depends on the task, not only on a permission: the proof that work was done
@@ -105,6 +122,21 @@ public sealed class AttachmentService : IAttachmentService
                 "attachment.not_checker", "Only a quality checker can attach evidence to a check."));
         }
 
+        // Same shape of rule as CompletionProof, and here for the same reason: the answer depends
+        // on the record rather than only on the caller. Evidence for an investigation is the
+        // investigator's to supply, so holding Verification.Create — or every permission there is —
+        // still does not let somebody else file material under the checker's name.
+        if (kind == AttachmentKind.VerificationEvidence)
+        {
+            var isChecker = await _db.Verifications.AsNoTracking()
+                .AnyAsync(v => v.Id == verificationId && v.AssignedToUserId == uploaderId, ct);
+
+            if (!isChecker)
+                return Result<AttachmentDto>.Failure(Error.Forbidden(
+                    "attachment.not_verification_checker",
+                    "Only the assigned checker can attach evidence to this verification."));
+        }
+
         // Allow-list by extension. The client-declared content type is stored for the response but
         // never trusted as the security check.
         if (!_storage.IsAllowedFileName(fileName))
@@ -116,7 +148,10 @@ public sealed class AttachmentService : IAttachmentService
                 "attachment.too_large",
                 $"Maximum file size is {_storage.MaxFileSizeBytes / (1024 * 1024)} MB."));
 
-        var folder = requestId.HasValue ? "requests" : batchId.HasValue ? "batches" : "tasks";
+        var folder = requestId.HasValue ? "requests"
+            : batchId.HasValue ? "batches"
+            : verificationId.HasValue ? "verifications"
+            : "tasks";
         var stored = await _storage.SaveAsync(content, fileName, folder, ct);
 
         if (stored.SizeBytes > _storage.MaxFileSizeBytes)
@@ -138,6 +173,7 @@ public sealed class AttachmentService : IAttachmentService
             UploadedByUserId = uploaderId,
             RequestId = requestId,
             BatchId = batchId,
+            VerificationId = verificationId,
             Kind = kind,
             TaskId = taskId
         };
@@ -149,7 +185,11 @@ public sealed class AttachmentService : IAttachmentService
             actorUserId: uploaderId,
             entityType: nameof(Attachment),
             entityId: attachment.Id,
-            newValues: new { attachment.OriginalFileName, attachment.SizeBytes, requestId, taskId, batchId, Kind = kind.ToString() });
+            newValues: new
+            {
+                attachment.OriginalFileName, attachment.SizeBytes,
+                requestId, taskId, batchId, verificationId, Kind = kind.ToString()
+            });
 
         await _db.SaveChangesAsync(ct);
 

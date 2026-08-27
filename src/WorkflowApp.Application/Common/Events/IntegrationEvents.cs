@@ -34,6 +34,20 @@ public sealed record RequestChangedEvent(
     public override string Channel => "requestChanged";
 }
 
+/// <summary>
+/// A verification moved. Thin like the rest: an id, the new state and who has it — never the
+/// findings, which are the whole substance and would be the first thing to go stale.
+/// </summary>
+public sealed record VerificationChangedEvent(
+    long VerificationId,
+    string VerificationNumber,
+    VerificationStatus Status,
+    long? AssignedToUserId,
+    ChangeKind Kind) : IntegrationEvent
+{
+    public override string Channel => "verificationChanged";
+}
+
 public sealed record WorkforceChangedEvent(
     long UserId,
     WorkforceState State) : IntegrationEvent
@@ -66,6 +80,9 @@ public static class RealtimeGroups
 
     /// <summary>Whoever currently has this task open.</summary>
     public static string Task(long taskId) => $"task:{taskId}";
+
+    /// <summary>Whoever currently has this verification open.</summary>
+    public static string Verification(long verificationId) => $"verification:{verificationId}";
 
     /// <summary>
     /// Everyone holding a permission. Joined at connection time from the token's claims, which is

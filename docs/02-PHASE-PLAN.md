@@ -155,10 +155,35 @@ Each phase is independently shippable. Complete a phase, verify, then move on.
 - [x] `scripts/deploy.ps1` and `docs/03-RUNBOOK.md`
 - [ ] Responsive UI polish — **blocked**: the Angular front end has not been started
 
+## Phase 13 — Verification (DONE — verified against SQL Server)
+
+Assigned investigation, added 2026-08-26. Not a phase in the original plan: it came out of the
+observation that a reviewer holding "the salary form calculates tax wrongly" has no honest way
+forward, because every option available to them either guesses or commits the organisation to work.
+
+- [x] `Verification` + `VerificationActivity` aggregates, `VER-` number sequence, `RowVersion`
+- [x] `VerificationStatus` / `VerificationResult` / `VerificationTargetType`;
+      `RequestStatus.UnderVerification`
+- [x] `Verification.Create` / `.Work` / `.ViewAll`, seeded onto Reviewer, AssignmentManager, QC and
+      Management
+- [x] `TriageOutcome.SendForVerification` — the seventh outcome, and the sixth that creates no work
+- [x] Every result returns the request to `InReview`; **no result creates a task**
+- [x] No decisive triage outcome is allowed while a check is open
+- [x] `AttachmentKind.VerificationEvidence` and a fourth attachment owner
+- [x] `VerificationChangedEvent` derived from the change tracker like every other event
+- [x] Angular: the checks list, the checker's detail screen, the raise dialog, the triage action,
+      and the checks panel on the request
+- [x] `RequestStatus.UnderVerification` reads as "Being Checked" to a requester and "Being verified"
+      to a reviewer
+- [x] Driven end to end over HTTP against SQL Server, the way phases 3-12 were — 36 checks
+
+Also in this change: `Administrator` stopped being granted `Workforce.TrackShift` and `Task.Work`
+by default. Note the seeder is additive, so an existing database keeps what it has.
+
 ## Not started
 
-The Angular front end. Everything above is the server side; `wwwroot/index.html` is a throwaway dev
-console, not the product. A front end needs its own phase plan.
+Nothing outstanding in the plan. The Angular front end, listed here as not started when this
+document was written, is built and covers the whole pipeline.
 
 ## Key Business Rules (guardrails for every phase)
 1. A request never auto-becomes a task.
@@ -169,6 +194,8 @@ console, not the product. A front end needs its own phase plan.
 5. Reason mandatory for: reject, pause, block, QC fail, reopen, override, reassign.
 6. History is append-only; nothing overwrites prior comments/sessions/QC attempts.
 7. DB is source of truth; SignalR only notifies.
+8. A verification never creates work — findings go back to a reviewer, who decides.
+9. `Task.Work`, `Verification.Work` and `Workforce.TrackShift` are independent of one another.
 
 ## Known Edge Cases to Handle
 - ~~User closes browser without ending shift~~ → handled in Phase 2: `ShiftMaintenanceService` sweep.
@@ -180,3 +207,6 @@ console, not the product. A front end needs its own phase plan.
 - ~~Closing work nobody signed off~~ → handled in Phase 7: the closure checklist.
 - ~~Criteria edited after QC passed~~ → handled: verdicts only carry over while the text matches,
   so widening the criteria reopens the closure gate.
+- ~~Request decided out from under a running check~~ → handled in Phase 13: every decisive triage
+  outcome is refused with `request.verification_pending` while a check is open.
+- ~~Check called off leaves the request stranded~~ → handled: cancelling returns it to `InReview`.

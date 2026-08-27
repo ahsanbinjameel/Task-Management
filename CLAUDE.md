@@ -13,6 +13,9 @@ When you add/move/rename anything structural, update this file in the same chang
 Internal operations system enforcing **Request → Review → Approval → Assignment → Execution →
 QC → Closure**, plus shift/attendance tracking and real-time updates.
 
+A review can also branch sideways into **Verification** — assigned investigation into whether there
+is really a problem — which produces findings and never work. See §6.
+
 Design rationale: `docs/01-ARCHITECTURE.md` · Phase checklist: `docs/02-PHASE-PLAN.md`
 Deploy + operate: `docs/03-RUNBOOK.md`
 (the duplicate copies that used to sit at the repo root have been deleted — `docs/` is the only home.)
@@ -37,7 +40,7 @@ on the local SQL Server 2019 Developer Edition default instance. Base/prod:
 ### Commands
 
     dotnet build                    # from repo root
-    dotnet test                     # 258 tests; none require SQL Server
+    dotnet test                     # 397 tests; none require SQL Server
 
     cd client && npm ci && npm run build    # the Angular client -> src/WorkflowApp.Api/wwwroot
     cd client && npm start                  # dev server on :4200, proxied to the API on :7099
@@ -59,10 +62,21 @@ for the `net8.0` target, so `dotnet build` / `test` / `run` all work with no rol
 `<RollForward>Major</RollForward>` settings on the test and Api projects are harmless leftovers
 from when only a newer runtime was present — they never engage now.
 
-**`dotnet-ef` is not installed.** `dotnet tool list --global` is empty. Either install it
-(`dotnet tool install --global dotnet-ef --version 8.*`) before running any `ef` command, or skip
-it: in Development the API applies migrations on startup, and `scripts/sql/` holds the idempotent
-script for SSMS.
+**`dotnet-ef` is per-machine.** On the secondary machine (DESKTOP-2E2D7JE) it is installed
+globally at 8.0.30. If `dotnet tool list --global` is empty on a machine, install it
+(`dotnet tool install --global dotnet-ef --version 8.*`) or skip it: in Development the API applies
+migrations on startup, and `scripts/sql/` holds the idempotent script for SSMS.
+
+**`WorkflowDbContextFactory` does not read user-secrets** — it builds its own configuration from
+`appsettings*.json` + environment variables only. So on the secondary machine every `dotnet ef`
+command that *touches the database* (`database update`, `migrations list`) resolves `Server=localhost`
+and fails with a Named Pipes error. Prefix it with the real connection string, or apply migrations by
+running the API instead (`--launch-profile Development`), which does load user-secrets:
+
+    export ConnectionStrings__Default='Server=(localdb)\MSSQLLocalDB;Database=WorkflowApp_Dev;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true'
+    dotnet ef database update --project ../WorkflowApp.Infrastructure --startup-project .
+
+`migrations add` and `migrations script` are unaffected — they read the model, never the database.
 
 ## 3. Solution layout & dependency direction
 
@@ -90,7 +104,7 @@ script for SSMS.
 | `Entities/Common/NumberSequence.cs` | Named counter behind `REQ-`/`TSK-` numbers; `Version` is a plain int concurrency token |
 | `Common/BaseEntity.cs` | `Id`, `CreatedAt`, `UpdatedAt`, `CreatedByUserId`, `UpdatedByUserId`, `RowVersion` |
 | `Enums/TaskStatus.cs` | `WorkTaskStatus` — the enforced lifecycle (named WorkTask*, avoids System.Threading.Tasks clash) |
-| `Enums/Enums.cs` | `Priority`, `RequestedUrgency`, `RequestStatus`, `RequestType`, `WorkforceState`, `WorkSessionStatus`, `QCResult`, `CommentCategory`, `DependencyType`, `ActivityType` |
+| `Enums/Enums.cs` | `Priority`, `RequestedUrgency`, `RequestStatus` (incl. `UnderVerification`), `RequestType`, `WorkforceState`, `WorkSessionStatus`, `QCResult`, `CommentCategory`, `DependencyType`, `PauseCategory`, `ActivityType`, `VerificationStatus`, `VerificationResult`, `VerificationTargetType` |
 | `Workflow/TaskWorkflow.cs` | **The allowed-transition map** — single source of truth. `Find` / `IsAllowed` / `NextStates` |
 | `Workflow/WorkforceStateMachine.cs` | **The workforce availability map** — transitions carry their timeline label. `IsOnShift` / `IsAway` / `IsProductive` / `IsSelfServiceTarget` |
 | `Workflow/WorkflowExceptions.cs` | `InvalidWorkflowTransitionException`, `TransitionReasonRequiredException` |
@@ -101,6 +115,7 @@ script for SSMS.
 | `Entities/Requests/RequestBatch.cs` | `RequestBatch` — several things asked for at once. Holds the shared client/note/files; carries **no status of its own** |
 | `Entities/Tasks/WorkTask.cs` | `WorkTask`, `TaskCollaborator` |
 | `Entities/Tasks/QuickWork.cs` | `QuickWork`, `QuickWorkStatus` — work that arrived without a request. Not a `WorkTask`, deliberately |
+| `Entities/Verifications/Verification.cs` | `Verification`, `VerificationActivity` — **assigned investigation**: "is there really a problem here?". Needs no task, and creating one is not something it can do |
 | `Entities/Tasks/WorkSessionAndHistory.cs` | `WorkSession`, `QCReview`, `AssignmentHistory`, `StatusHistory`, `TaskActivity` |
 | `Entities/Tasks/CommentsDependenciesAudit.cs` | `TaskComment`, `TaskDependency`, `ScopeChange`, `Notification`, `AuditLog` |
 
@@ -133,7 +148,8 @@ script for SSMS.
 | `Workforce/Services/DailyTimelineBuilder.cs` | ✅ | **Pure**: events → intervals + totals. Handles carry-over, open entries, clock skew |
 | `Workforce/Services/WorkforceQueryService.cs` | ✅ | Who's-working-now, daily timeline, activity list, shift history |
 | `Workforce/Services/ShiftMaintenanceService.cs` | ✅ | Closes abandoned shifts at the last sign of life; flags + audits |
-| `Common/Services/NumberGenerator.cs` | ✅ | `INumberGenerator` + `NumberSequences` names. Retry loop on concurrency conflict |
+| `Common/Services/NumberGenerator.cs` | ✅ | `INumberGenerator` + `NumberSequences` names (`REQ`/`TSK`/`BAT`/`VER`). Retry loop on concurrency conflict |
+| `Common/Services/LookupService.cs` | ✅ | Client type-ahead + `ResolveClientAsync`, and the module picker the verification target needs |
 | `Common/Interfaces/IFileStorage.cs` | ✅ | Attachment binary storage contract |
 | `Common/Options/FileStorageOptions.cs` | ✅ | Section `FileStorage`: `Root`, `MaxFileSizeBytes`, `AllowedExtensions` |
 | `Requests/Dtos/RequestDtos.cs` | ✅ | Create/update/triage DTOs, `TriageOutcome`, summary + detail projections |
@@ -141,7 +157,9 @@ script for SSMS.
 | `Requests/Services/RequestTriageService.cs` | ✅ | **The request→work gate.** Six outcomes; only Approve creates a task |
 | `Requests/Services/RequestBatchService.cs` | ✅ | Batch intake, and the fold: several approved items into one task. Still calls `TaskCreationService` |
 | `Requests/Dtos/RequestBatchDtos.cs` | ✅ | Batch create/detail/summary DTOs, `ApproveTogetherDto` |
-| `Requests/Services/AttachmentService.cs` | ✅ | Metadata + access control; owner must be exactly one of request/task |
+| `Requests/Services/AttachmentService.cs` | ✅ | Metadata + access control; owner must be exactly one of request/task/batch/verification |
+| `Verifications/Services/VerificationService.cs` | ✅ | **Assigned investigation.** Raise, assign, start, report, cancel. Its defining rule: a result *never* creates work — every outcome hands the request back to a reviewer |
+| `Verifications/Dtos/VerificationDtos.cs` | ✅ | Create/assign/result/cancel DTOs, `SendForVerificationDto` (carried inside triage), summary + detail + `RequestVerificationDto` |
 | `Tasks/Dtos/TaskDtos.cs` | ✅ | Transition/assign/queue DTOs, task summary + detail, workload, sessions |
 | `Tasks/Services/TaskCreationService.cs` | ✅ | **The only place a WorkTask is created.** One caller: triage approval |
 | `Tasks/Services/TaskWorkflowService.cs` | ✅ | Persistent workflow engine: status, both history streams, idempotency, overrides |
@@ -176,10 +194,11 @@ script for SSMS.
 | `Persistence/Configurations/CoreConfigurations.cs` | ✅ | User/Role/Permission, Request, WorkTask, WorkSession, ShiftSession, Attachment, Dependency, AuditLog |
 | `Persistence/Configurations/IdentityConfigurations.cs` | ✅ | RefreshToken (unique hash index), LoginAttempt |
 | `Persistence/Configurations/SupportingConfigurations.cs` | ✅ | Org lookups, ActivityEvent, decimal precision, task history/comments/QC/notifications |
+| `Persistence/Configurations/VerificationConfigurations.cs` | ✅ | `Verification` (unique number, checker-queue index, Restrict on every FK) and `VerificationActivity` |
 | `Persistence/Interceptors/AuditableEntityInterceptor.cs` | ✅ | **Sole** writer of CreatedAt/UpdatedAt/CreatedByUserId/UpdatedByUserId — never set these by hand |
 | `Persistence/Interceptors/IntegrationEventDispatchInterceptor.cs` | ✅ | Derives real-time events from the change tracker; dispatches **after** commit, drops them on rollback |
 | `Persistence/Seed/DatabaseSeeder.cs` | ✅ | Idempotent: permissions, roles+grants, pause reasons, bootstrap admin |
-| `Persistence/Migrations/` | ✅ | `InitialCreate` (squashed while still unapplied — **do not squash again**), then `QuickWork`, `RequestBatches`, `AttachmentProof`, + model snapshot |
+| `Persistence/Migrations/` | ✅ | 9 migrations: `InitialCreate` (squashed while still unapplied — **do not squash again**), `OptionalUserEmail`, `RequiredSubtasks`, `PauseCategoryAndAwayState`, `RequestActivityHistory`, `QuickWork`, `RequestBatches`, `AttachmentProof`, `Verifications`, + model snapshot. **All tracked in git — the schema travels with the code; never move a database backup between machines** |
 | `Identity/JwtTokenService.cs` | ✅ | Access-token issuance + `AppClaimTypes`; refresh token generation and SHA-256 hashing |
 | `Identity/PasswordHasherAdapter.cs` | ✅ | Wraps `PasswordHasher<User>` (PBKDF2-HMAC-SHA256) |
 | `Storage/DiskFileStorage.cs` | ✅ | Generated stored names, path-traversal guard, hash-while-writing |
@@ -210,6 +229,8 @@ script for SSMS.
 | `Services/SignalRIntegrationEventPublisher.cs` | ✅ | **The one place** that decides who hears about what |
 | `Controllers/DashboardsController.cs` | ✅ | The home screen, the four dashboards + `ReportsController` (daily reports, CSV, PDF) |
 | `Controllers/QuickWorkController.cs` | ✅ | Quick work — always the caller's own record; gated on `Workforce.TrackShift` |
+| `Controllers/VerificationsController.cs` | ✅ | Checks: raise, assign, start, report, cancel, evidence. Split `Verification.Create` / `Verification.Work`; two rules live in the service because they depend on the record |
+| `Controllers/LookupsController.cs` | ✅ | `api/lookups/clients` and `/modules` — the type-aheads. Signed in is enough |
 | `Services/DailyReportPdf.cs` | ✅ | The daily report as a document (MigraDoc). Header, summary, detail, quick work, notes, page numbers |
 | `Services/FileSystemFontResolver.cs` | ✅ | PDFsharp 6 ships no font handling; this finds one on the machine and fails at **startup** if it cannot |
 | `Controllers/NotificationsController.cs` | ✅ | The bell icon + `AuditController` (audit stream) |
@@ -298,6 +319,25 @@ script for SSMS.
 | POST | `/api/tasks/scope-changes/{id}/approve` | `Task.Approve` |
 | POST | `/api/tasks/{id}/reopen` | `Task.Reopen` |
 
+### Endpoints (Verification)
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | `/api/verifications` | authenticated (scoped: yours unless `Verification.ViewAll`) |
+| GET | `/api/verifications/my-queue` | `Verification.Work` |
+| GET | `/api/verifications/assignable-checkers` | `Verification.Create` |
+| GET | `/api/verifications/{id}` | authenticated; **404** rather than 403 when out of scope |
+| POST | `/api/verifications` | `Verification.Create` |
+| PUT | `/api/verifications/{id}/assignee` | `Verification.Create` (reason required to re-route) |
+| POST | `/api/verifications/{id}/claim` | `Verification.Work` — takes an *unclaimed* check for yourself |
+| POST | `/api/verifications/{id}/start`, `/result` | `Verification.Work` **and** be the assigned checker |
+| POST | `/api/verifications/{id}/cancel` | `Verification.Create` (reason required) |
+| POST | `/api/verifications/{id}/attachments` | the assigned checker only |
+| GET | `/api/lookups/modules` | authenticated |
+
+`POST /api/requests/{id}/triage` gains the `SendForVerification` outcome, which carries a
+`verification` object and returns `verificationId`/`verificationNumber` instead of a task.
+
 ### Endpoints (Phases 9-12)
 
 | Method | Route | Permission |
@@ -339,10 +379,11 @@ script for SSMS.
 | `src/app/shared/column-filter.component.ts` | `app-column-filter` (one filter cell — text, date, or a **multi-value** dropdown), `ColumnFilterSpec`, `ColumnFilterState`/`columnFilters()`. Debounces typing, not choices; `asObject()` produces the `col[key]` query bag |
 | | Also `app-no-matches` (the strip shown *under* a still-visible table when filters match nothing) and `app-filter-summary` (the "N filters applied · Clear all" bar above the grid) |
 | `src/app/shared/file-drop.component.ts` | `app-file-drop` — choose / drag / **paste** (Win+Shift+S → Ctrl+V), with previews before anything is submitted |
-| `src/app/shared/attachment-upload.component.ts` | `app-attachment-upload` — the same three ways in, but straight onto a record that already exists. Carries the `kind` |
+| `src/app/shared/attachment-upload.component.ts` | `app-attachment-upload` — the same three ways in, but straight onto a record that already exists. Carries the `kind`, and takes **exactly one** of `taskId`/`verificationId`, mirroring the server's owner rule |
 | `src/app/layout/` | Shell, permission-filtered nav, notification bell, shift widget, quick-work widget (live clock) |
 | `src/app/layout/nav-preference.ts` | The sidebar-rail preference. Shared, because both the rail's toggle and the Settings page write it |
-| `src/app/features/` | One folder per area: dashboard, tasks (+ `panels/`), requests (incl. `batch-detail`), qc, workforce, reports, admin, me |
+| `src/app/features/` | One folder per area: dashboard, tasks (+ `panels/`), requests (incl. `batch-detail`), qc, verifications, workforce, reports, admin, me |
+| `src/app/features/verifications/` | The checks list — a standard grid: tiles, a generated filter row, sortable headings, and the table kept on screen when nothing matches. Filtering and sorting run **client-side**, which is correct here because the whole set is loaded in one call. Plus the detail where a checker takes it and reports, and the dialogs that raise and assign |
 | `src/app/features/me/settings.component.ts` | **The one door out of the profile menu.** Account facts, change password, per-browser preferences, and (for people who run the system) links to the configuration screens |
 | `src/app/features/admin/setup.component.ts` | The setup screen — tabs for clients, pause reasons, departments, teams. Every row shows what points at it and offers retire, not delete |
 | `src/app/features/admin/roles.component.ts` | The role map, and its editor for anyone holding `Admin.ManageRoles`. Permission grid grouped from the key prefixes, so a new server-side permission appears with no second edit |
@@ -354,6 +395,7 @@ script for SSMS.
 | Path | Contains |
 |---|---|
 | `scripts/sql/001-InitialCreate.idempotent.sql` | The `InitialCreate` migration as a re-runnable script for SSMS |
+| `scripts/verify-verification-e2e.sh` | The 36-check HTTP drive of the verification feature against a running API (`bash scripts/verify-verification-e2e.sh`, API on `https://localhost:7099`). Creates four `e2e_*` accounts and leaves its records behind — a dev-box tool, not a test |
 | `scripts/sql/reset-dev-data.sql` | Empties a dev database back to `admin` + the seeded catalogue. Keeps Permissions/Roles/RolePermissions/PauseReasons; drops every request, task, quick-work record, batch, session, shift, attachment row, audit entry, org lookup and other account. One transaction, `XACT_ABORT`, child-first. **Add new tables here when you add them** |
 
 ## 5. Non-negotiable business rules (enforce in every phase)
@@ -371,6 +413,12 @@ script for SSMS.
 9. QCPassed / QCFailedRework / Closed are reachable only through their dedicated service, so each
    always has its record behind it. Overrides are the one exception, and they are audited.
 10. A task cannot close while a subtask is open, and cannot start while a dependency is unfinished.
+11. **A verification never creates work.** Every result — a confirmed problem included — returns the
+    request to `InReview` with the findings attached, and a reviewer approves it explicitly or not
+    at all. Nothing may be decided on a request while a check on it is still open.
+12. **`Task.Work`, `Verification.Work` and `Workforce.TrackShift` are independent.** None implies
+    another, and every combination is a legitimate configuration. Administering the system implies
+    none of them.
 
 ### DB-level guarantees already declared
 
@@ -378,7 +426,7 @@ script for SSMS.
 - `UX_ShiftSession_OneOpenPerUser` — filtered unique index, `WHERE [ShiftEnd] IS NULL`
 - `UX_QuickWork_OneActivePerUser` — filtered unique index, `WHERE [Status] = 0`
 - `RowVersion` concurrency token on `User`, `Request`, `WorkTask`, `WorkSession`, `ShiftSession`,
-  `QuickWork`, `RequestBatch`
+  `QuickWork`, `RequestBatch`, `Verification`
 
 ## 6. Decisions made (don't re-litigate)
 
@@ -790,6 +838,73 @@ script for SSMS.
   Application layer knows what the numbers mean and should not know how they are drawn. MigraDoc
   (MIT) rather than a hand-built PDF, because page numbers and tables that break across pages are
   the sort of thing that looks easy until the third page.
+- **Verification is a first-class aggregate, not a shape of QC review.** `QCReview` answers "does
+  this finished work meet its acceptance criteria?"; it belongs to a task's lifecycle, owns the
+  transitions into `QCPassed`/`QCFailedRework`, and carries numbered attempts and segregation of
+  duties. A verification answers "is there really a problem here?", and in the case it exists for
+  there *is no task* — a reviewer handed "the salary form is calculating tax wrongly" cannot tell
+  whether it is a defect, a configuration mistake, bad data or a misunderstanding. Making `QCReview`
+  polymorphic over both would have given every one of those invariants a null case to mean nothing.
+- **A verification never creates work, and that is the whole point.** `IssueConfirmed` returns the
+  request to `InReview` with the findings attached and stops. `TaskCreationService` keeps its
+  monopoly, so "a request never auto-becomes a task" stays an auditable fact rather than an
+  intention — an automatic task on a confirmed issue would have made the check the approval.
+- **Every result hands the request back the same way.** Five outcomes with five consequences would
+  be five rules to remember and five places for a request to get stuck. "It has been looked at, here
+  is what they found, you decide" is one rule, and the reviewer already has all seven triage
+  outcomes in front of them.
+- **No decision may be taken on a request while a check is open.** The guard sits in `DecideAsync`
+  and covers *every* decisive outcome, not only approval — a checker who submits findings against a
+  request that was rejected underneath them has done the work for nothing, and the verification is
+  left pointing at a decision it played no part in. Asking for a clarification is exempt: that is a
+  question, not a decision.
+- **A verification's target has real foreign keys where a real row exists, and words where none
+  does.** `RequestId` and `ModuleId` are constrained FKs; a form, a screen or a build is described
+  in `TargetName`/`TargetReference`, because none of them is an aggregate this database holds. A
+  single untyped `SourceId` interpreted through `TargetType` would have been unjoinable,
+  unconstrained, and silently orphaned on the first delete.
+- **Claiming and assigning are different acts, so they are different endpoints.**
+  `PUT /{id}/assignee` is a coordinator handing work out and needs `Verification.Create`;
+  `POST /{id}/claim` is a checker picking up something nobody holds and needs `Verification.Work`.
+  Without the second, the "needs a checker" notification — which is addressed to exactly the people
+  holding `Verification.Work` — led to a page they could do nothing on, and a check raised without
+  an assignee was a dead end. Claim is refused once anybody holds it: moving work off a person is a
+  decision about two people's workloads, and that goes through assignment, which asks why.
+- **Three verification permissions, not four.** `Verification.Create` covers raising, assigning,
+  re-routing and cancelling — a check with no checker is inert, so naming one is part of raising it,
+  and the reviewer who routes a request is the person who says who should look at it. A separate
+  `Verification.Assign` would have meant holding two permissions to perform the single action the
+  feature exists for, with no difference in authority behind the split.
+- **Who may start, report and attach evidence is decided on the record, not by an attribute.** The
+  check is `AssignedToUserId == caller`, so a reviewer holding every permission there is still
+  cannot report findings under the checker's name — the same shape of rule, and the same reasoning,
+  as `CompletionProof` on a task.
+- **`Administrator` is not a worker.** `DefaultRoles.AdministratorGrants` is everything *except*
+  `Workforce.TrackShift` and `Task.Work`. Granting them by default put a shift widget in front of
+  every administrator, listed the account in who-is-working-now, and offered it for real work —
+  none of which follows from administering the system. An administrator who genuinely also does the
+  work gets a role that grants it, in the role editor. Note the seeder is **additive**, so an
+  existing database keeps the grants it already has: this changes what a *new* one gets, and an
+  existing site removes them in the editor. Pinned by `RoleAndShiftSeparationTests`.
+- **A requester is told "Being Checked" and nothing else.** `RequestStatus.UnderVerification` folds
+  into the requester's existing `checking` view — the same words a task in QC gets — because to the
+  person who asked, "somebody is establishing whether this is broken" and "somebody is checking the
+  fix" are the same news: it is in hand, and there is nothing for them to do. Reviewers get their
+  own `verifying` tile, because "waiting on a checker" and "waiting on the person who asked" are
+  different queues with different people to chase.
+- **`AttachmentKind.VerificationEvidence` rather than a fourth owner alone.** The file genuinely
+  belongs to the verification *and* is evidence for a finding; the owner column says what it hangs
+  off, the kind says what it is for. The owner count in `AttachmentService` was already written as a
+  sum rather than a chain of comparisons, which is what made adding the fourth owner one line.
+- **`.card` is a surface; `.card-pad` is what puts content inside it.** `.card` sets only border,
+  radius and shadow — a card without `card-pad` has its content flush to its own edges, which is
+  how the first verification detail rendered. The exception is a card whose only child is a table:
+  a grid should meet the card's edges, as the request and task lists do.
+- **`class="grid"` is a CSS-Grid utility, not a table class.** `styles.scss` defines `.grid` as
+  `display: grid`, so putting it on a `<table>` collapses the whole thing into one run-on line —
+  which is exactly how the first checks list rendered. Every real grid in this app is an Angular
+  Material `mat-table`; the header/row/cell styling in `styles.scss` is written against
+  `.mat-mdc-header-cell` and `.mat-mdc-row` and applies to nothing else.
 - **Activity events ordered by `(OccurredAt, Id)` everywhere.** Two events can share a timestamp;
   without the `Id` tie-break, "the latest state" resolves arbitrarily and timelines go wrong.
 
@@ -854,7 +969,14 @@ separates the picture describing a problem from the picture proving it was fixed
 checker looked at, with the proof gated on being the person responsible for the work and the
 evidence kept with the numbered attempt it justified.
 
-**Tests:** 356 passing (`dotnet test`) — 29 domain state machines, 327 application services.
+Added 2026-08-26: **Verification** — assigned investigation, distinct from both task QC and Quick
+Work. A reviewer who cannot yet tell whether a request describes a real problem sends it to a
+checker instead of guessing or approving to find out; an authorised user can also raise one against
+a form, a module or a build with no request behind it at all. Every result hands the request back to
+a reviewer, and nothing it can do creates a task. In the same change, `Administrator` stopped being
+granted `Workforce.TrackShift` and `Task.Work` by default.
+
+**Tests:** 397 passing (`dotnet test`) — 29 domain state machines, 368 application services.
 All on EF Core InMemory or pure functions, so the suite runs with no SQL Server.
 
 ## 9. SQL Server: done and still outstanding
@@ -920,6 +1042,18 @@ Verified:
 - [x] Phase 2 timeline renders labelled intervals per state. Note `Break -> Lunch` is *not* a legal
       move: away states reach each other only via Available or Working, per `WorkforceStateMachine`
 - [x] Placeholder `Jwt:SigningKey` refuses to boot outside Development, as intended
+- [x] **Verification driven end to end over HTTP against SQL Server** (36 checks, all passing):
+      request → send for checking → the requester reads "Being Checked" while the reviewer reads
+      "Being verified" → approve and reject both refused with `request.verification_pending` →
+      only the assigned checker may start it or attach evidence (a reviewer gets 403 on both) →
+      findings recorded → request back in `InReview` with **no task** → approval is what creates
+      the task. Plus an independent check with no request behind it, a checker who cannot be
+      assigned one (`verification.checker_cannot_work`), 404-not-403 scoping, and the original
+      request→approval→task pipeline still running unchanged
+- [x] The seeder's **additive** behaviour confirmed live: `Verification.*` was backfilled onto the
+      existing roles on restart, and the Administrator role kept the `Workforce.TrackShift` it
+      already had. The new default (`AdministratorGrants`) applies to a fresh database; an existing
+      one removes it in the role editor
 Still outstanding before this is anything but a dev box:
 
 - [ ] Change the bootstrap admin password away from `ChangeMe!2024`
@@ -971,5 +1105,8 @@ guard is exercised in code but not enforced by the database.
 
 Demo mode uses `EnsureCreated()`, which does **not** migrate. An existing `workflowapp-demo.db`
 created before a schema change will be missing the new tables — delete the file to have it rebuilt.
+**This applies to the `Verifications` change:** a demo database made before 2026-08-26 has no
+`Verifications` or `VerificationActivities` table and will fail the moment a request detail is
+opened, because that read now includes the checks raised against it.
 `dotnet run --project src/WorkflowApp.Api` with no `--launch-profile` starts **Demo**, not
 Development; pass `--launch-profile Development` to run against SQL Server.

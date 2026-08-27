@@ -7,6 +7,7 @@ using WorkflowApp.Domain.Entities.Common;
 using WorkflowApp.Domain.Entities.Identity;
 using WorkflowApp.Domain.Entities.Requests;
 using WorkflowApp.Domain.Entities.Tasks;
+using WorkflowApp.Domain.Entities.Verifications;
 using WorkflowApp.Domain.Entities.Workforce;
 
 namespace WorkflowApp.Infrastructure.Persistence;
@@ -47,6 +48,10 @@ public class WorkflowDbContext : DbContext, IWorkflowDbContext
     public DbSet<Attachment> Attachments => Set<Attachment>();
 
     // Tasks
+    // Verifications
+    public DbSet<Verification> Verifications => Set<Verification>();
+    public DbSet<VerificationActivity> VerificationActivities => Set<VerificationActivity>();
+
     public DbSet<WorkTask> Tasks => Set<WorkTask>();
     public DbSet<TaskCollaborator> TaskCollaborators => Set<TaskCollaborator>();
     public DbSet<WorkSession> WorkSessions => Set<WorkSession>();

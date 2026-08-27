@@ -70,6 +70,7 @@ public sealed class NotificationService : INotificationService
     /// <summary>Link targets, so the client can route a click without parsing prose.</summary>
     public const string LinkTask = "Task";
     public const string LinkRequest = "Request";
+    public const string LinkVerification = "Verification";
 
     private readonly IWorkflowDbContext _db;
     private readonly IDateTimeProvider _clock;

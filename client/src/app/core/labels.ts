@@ -24,6 +24,9 @@ import {
   Priority,
   QCResult,
   RequestStatus,
+  VerificationStatus,
+  VerificationResult,
+  VerificationTargetType,
   RequestType,
   RequestedUrgency,
   TriageOutcome,
@@ -67,6 +70,38 @@ const REQUEST_STATUS: Record<RequestStatus, string> = {
   Duplicate: 'Duplicate',
   Deferred: 'Postponed',
   Escalated: 'Escalated',
+  UnderVerification: 'Being checked',
+};
+
+/**
+ * Mirrors `StatusLabels.VerificationStatusLabels`.
+ *
+ * Note these are shown to reviewers, coordinators and checkers — never to a requester, who is told
+ * about their *request*, and whose request reads "Being Checked" while one of these is running.
+ */
+const VERIFICATION_STATUS: Record<VerificationStatus, string> = {
+  Requested: 'Waiting for a checker',
+  Assigned: 'Assigned',
+  InProgress: 'Being checked',
+  Completed: 'Checked',
+  Cancelled: 'Called off',
+};
+
+/** Mirrors `StatusLabels.VerificationResultLabels`. What was established, not what the code calls it. */
+const VERIFICATION_RESULT: Record<VerificationResult, string> = {
+  IssueConfirmed: 'Problem confirmed',
+  WorkingCorrectly: 'Working correctly',
+  ConfigurationOrDataIssue: 'Settings or data, not software',
+  NeedsClarification: 'Needs more information',
+  Inconclusive: 'Could not determine',
+};
+
+const VERIFICATION_TARGET: Record<VerificationTargetType, string> = {
+  Request: 'The request itself',
+  Form: 'A form or screen',
+  Module: 'A module',
+  Build: 'A build',
+  Other: 'Something else',
 };
 
 const WORKFORCE_STATE: Record<WorkforceState, string> = {
@@ -167,6 +202,7 @@ const TRIAGE_OUTCOME: Record<TriageOutcome, string> = {
   MarkDuplicate: 'Mark as a duplicate',
   Defer: 'Postpone',
   Escalate: 'Escalate',
+  SendForVerification: 'Send for checking',
 };
 
 /**
@@ -219,6 +255,12 @@ export const pauseCategoryLabel = (v: PauseCategory | null | undefined) => looku
 export const qcResultLabel = (v: QCResult | null | undefined) => lookup(QC_RESULT, v);
 export const sessionStatusLabel = (v: WorkSessionStatus | null | undefined) => lookup(SESSION_STATUS, v);
 export const triageOutcomeLabel = (v: TriageOutcome | null | undefined) => lookup(TRIAGE_OUTCOME, v);
+export const verificationStatusLabel = (v: VerificationStatus | null | undefined) =>
+  lookup(VERIFICATION_STATUS, v);
+export const verificationResultLabel = (v: VerificationResult | null | undefined) =>
+  lookup(VERIFICATION_RESULT, v);
+export const verificationTargetLabel = (v: VerificationTargetType | null | undefined) =>
+  lookup(VERIFICATION_TARGET, v);
 export const roleLabel = (v: string | null | undefined) => lookup(ROLE, v);
 
 /**
@@ -229,7 +271,8 @@ export const roleLabel = (v: string | null | undefined) => lookup(ROLE, v);
 export type LabelKind =
   | 'status' | 'requestStatus' | 'priority' | 'urgency' | 'workforce' | 'requestType'
   | 'commentCategory' | 'dependencyType' | 'pauseCategory' | 'qcResult' | 'sessionStatus'
-  | 'triageOutcome' | 'role' | 'plain';
+  | 'triageOutcome' | 'role' | 'plain'
+  | 'verificationStatus' | 'verificationResult' | 'verificationTarget';
 
 export function label(kind: LabelKind, value: string | null | undefined): string {
   switch (kind) {
@@ -245,6 +288,9 @@ export function label(kind: LabelKind, value: string | null | undefined): string
     case 'qcResult': return qcResultLabel(value as QCResult);
     case 'sessionStatus': return sessionStatusLabel(value as WorkSessionStatus);
     case 'triageOutcome': return triageOutcomeLabel(value as TriageOutcome);
+    case 'verificationStatus': return verificationStatusLabel(value as VerificationStatus);
+    case 'verificationResult': return verificationResultLabel(value as VerificationResult);
+    case 'verificationTarget': return verificationTargetLabel(value as VerificationTargetType);
     case 'role': return roleLabel(value);
     default: return humanizeEnum(value);
   }

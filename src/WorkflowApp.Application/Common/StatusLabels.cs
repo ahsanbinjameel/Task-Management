@@ -56,6 +56,31 @@ public static class StatusLabels
             [RequestStatus.Duplicate] = "Duplicate",
             [RequestStatus.Deferred] = "Postponed",
             [RequestStatus.Escalated] = "Escalated",
+            [RequestStatus.UnderVerification] = "Being checked",
+        };
+
+    private static readonly IReadOnlyDictionary<VerificationStatus, string> VerificationStatusLabels =
+        new Dictionary<VerificationStatus, string>
+        {
+            [VerificationStatus.Requested] = "Waiting for a checker",
+            [VerificationStatus.Assigned] = "Assigned",
+            [VerificationStatus.InProgress] = "Being checked",
+            [VerificationStatus.Completed] = "Checked",
+            [VerificationStatus.Cancelled] = "Called off",
+        };
+
+    /// <summary>
+    /// What the checker found, in a sentence rather than an enum name. These are read by reviewers
+    /// deciding what to do next, so they say what was established, not what the code called it.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<VerificationResult, string> VerificationResultLabels =
+        new Dictionary<VerificationResult, string>
+        {
+            [VerificationResult.IssueConfirmed] = "Problem confirmed",
+            [VerificationResult.WorkingCorrectly] = "Working correctly",
+            [VerificationResult.ConfigurationOrDataIssue] = "Settings or data, not software",
+            [VerificationResult.NeedsClarification] = "Needs more information",
+            [VerificationResult.Inconclusive] = "Could not determine",
         };
 
     public static string For(WorkTaskStatus status) =>
@@ -63,6 +88,12 @@ public static class StatusLabels
 
     public static string For(RequestStatus status) =>
         RequestLabels.TryGetValue(status, out var label) ? label : Humanise(status.ToString());
+
+    public static string For(VerificationStatus status) =>
+        VerificationStatusLabels.TryGetValue(status, out var label) ? label : Humanise(status.ToString());
+
+    public static string For(VerificationResult result) =>
+        VerificationResultLabels.TryGetValue(result, out var label) ? label : Humanise(result.ToString());
 
     /// <summary>Last resort for a value added to the enum but not to the map above.</summary>
     private static string Humanise(string name)

@@ -4,7 +4,7 @@ import { Observable } from 'rxjs';
 import {
   AcceptanceCriteriaDto, ActiveWorkforceDto, ActivityEventDto, AssignableUserDto, AttachmentDto,
   AttachmentKind,
-  AuditLogDto, ClientOptionDto, HomeDashboardDto, QuickWorkDto, StartQuickWorkDto,
+  AuditLogDto, ClientOptionDto, ModuleOptionDto, HomeDashboardDto, QuickWorkDto, StartQuickWorkDto,
   CreateRequestBatchDto, RequestBatchDetailDto, RequestBatchSummaryDto, ApproveTogetherDto,
   FinishQuickWorkDto, PromoteQuickWorkDto, ClosureChecklistDto, StatusCountDto, TriageResultDto, CoordinatorDashboardDto, CommentCategory, DailyTeamReportDto,
   DailyTimelineDto, DailyUserReportDto, DependencyType, ManagementDashboardDto, NotificationDto,
@@ -16,6 +16,9 @@ import {
   SetupClientDto, SetupDepartmentDto, SetupTeamDto, SetupPauseReasonDto, RoleDetailDto,
   FilterOptionsDto,
   PauseCategory,
+  VerificationStatus, VerificationSummaryDto, VerificationDetailDto, AssignableCheckerDto,
+  CreateVerificationDto, SendForVerificationDto, AssignVerificationDto,
+  RecordVerificationResultDto, CancelVerificationDto,
 } from './models';
 
 /**
@@ -121,6 +124,10 @@ export class ApiService {
     return this.http.get<ClientOptionDto[]>('/api/lookups/clients', { params: params({ search }) });
   }
 
+  modules(search?: string): Observable<ModuleOptionDto[]> {
+    return this.http.get<ModuleOptionDto[]>('/api/lookups/modules', { params: params({ search }) });
+  }
+
   // --- requests ------------------------------------------------------------------------------
 
   requestFilterOptions(filter: {
@@ -168,8 +175,77 @@ export class ApiService {
     estimatedEffortHours?: number; dueDate?: string | null; acceptanceCriteria?: string;
     duplicateOfRequestId?: number;
     clientName?: string | null;
+    /** Required when the outcome is SendForVerification. Produces a check, never a task. */
+    verification?: SendForVerificationDto;
   }, context?: HttpContext): Observable<TriageResultDto> {
     return this.http.post<TriageResultDto>(`/api/requests/${id}/triage`, body, { context });
+  }
+
+  // --- verifications -------------------------------------------------------------------------
+  //
+  // Assigned investigation. Nothing here creates work: recording a result hands the request back
+  // to a reviewer, and approving it stays a separate call to `triage` above.
+
+  verifications(filter: {
+    status?: VerificationStatus; mineOnly?: boolean; page?: number; pageSize?: number;
+  }): Observable<PagedResult<VerificationSummaryDto>> {
+    return this.http.get<PagedResult<VerificationSummaryDto>>(
+      '/api/verifications', { params: params(filter) });
+  }
+
+  myVerificationQueue(): Observable<VerificationSummaryDto[]> {
+    return this.http.get<VerificationSummaryDto[]>('/api/verifications/my-queue');
+  }
+
+  verification(id: number): Observable<VerificationDetailDto> {
+    return this.http.get<VerificationDetailDto>(`/api/verifications/${id}`);
+  }
+
+  assignableCheckers(): Observable<AssignableCheckerDto[]> {
+    return this.http.get<AssignableCheckerDto[]>('/api/verifications/assignable-checkers');
+  }
+
+  createVerification(
+    body: CreateVerificationDto, context?: HttpContext,
+  ): Observable<VerificationDetailDto> {
+    return this.http.post<VerificationDetailDto>('/api/verifications', body, { context });
+  }
+
+  assignVerification(
+    id: number, body: AssignVerificationDto, context?: HttpContext,
+  ): Observable<VerificationDetailDto> {
+    return this.http.put<VerificationDetailDto>(`/api/verifications/${id}/assignee`, body, { context });
+  }
+
+  /** A checker taking an unclaimed check. Refused once somebody holds it — that needs assigning. */
+  claimVerification(id: number, context?: HttpContext): Observable<VerificationDetailDto> {
+    return this.http.post<VerificationDetailDto>(`/api/verifications/${id}/claim`, {}, { context });
+  }
+
+  startVerification(id: number, context?: HttpContext): Observable<VerificationDetailDto> {
+    return this.http.post<VerificationDetailDto>(`/api/verifications/${id}/start`, {}, { context });
+  }
+
+  recordVerificationResult(
+    id: number, body: RecordVerificationResultDto, context?: HttpContext,
+  ): Observable<VerificationDetailDto> {
+    return this.http.post<VerificationDetailDto>(`/api/verifications/${id}/result`, body, { context });
+  }
+
+  cancelVerification(
+    id: number, body: CancelVerificationDto, context?: HttpContext,
+  ): Observable<VerificationDetailDto> {
+    return this.http.post<VerificationDetailDto>(`/api/verifications/${id}/cancel`, body, { context });
+  }
+
+  /**
+   * Evidence for an investigation. The kind is fixed server-side, and only the assigned checker is
+   * accepted — the same shape of rule as completion proof on a task.
+   */
+  uploadVerificationAttachment(verificationId: number, file: File): Observable<AttachmentDto> {
+    const form = new FormData();
+    form.append('file', file);
+    return this.http.post<AttachmentDto>(`/api/verifications/${verificationId}/attachments`, form);
   }
 
   answerClarification(clarificationId: number, answer: string, context?: HttpContext): Observable<RequestDetailDto> {

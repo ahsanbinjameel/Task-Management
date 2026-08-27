@@ -8,6 +8,7 @@ using WorkflowApp.Application.Notifications;
 using WorkflowApp.Application.Reporting;
 using WorkflowApp.Application.Requests.Services;
 using WorkflowApp.Application.Tasks.Services;
+using WorkflowApp.Application.Verifications.Services;
 using WorkflowApp.Application.Workforce.Services;
 
 namespace WorkflowApp.Application;
@@ -62,6 +63,10 @@ public static class DependencyInjection
         services.AddScoped<ITaskCommentService, TaskCommentService>();
         services.AddScoped<ITaskDependencyService, TaskDependencyService>();
         services.AddScoped<IScopeChangeService, ScopeChangeService>();
+
+        // Verifications — assigned investigation. Deliberately separate from both the task
+        // services and QC: see VerificationService.
+        services.AddScoped<IVerificationService, VerificationService>();
 
         // Notifications & audit
         services.AddScoped<INotificationService, NotificationService>();

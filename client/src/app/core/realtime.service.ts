@@ -24,6 +24,14 @@ export interface WorkforceChangedEvent {
   state: string;
 }
 
+export interface VerificationChangedEvent {
+  verificationId: number;
+  verificationNumber: string;
+  status: string;
+  assignedToUserId?: number | null;
+  kind: 'Created' | 'Updated';
+}
+
 export interface NotificationRaisedEvent {
   recipientUserId: number;
   notificationId: number;
@@ -47,12 +55,14 @@ export class RealtimeService {
 
   private connection: HubConnection | null = null;
   private readonly subscribedTasks = new Set<number>();
+  private readonly subscribedVerifications = new Set<number>();
 
   readonly connected = signal(false);
 
   readonly taskChanged = new Subject<TaskChangedEvent>();
   readonly requestChanged = new Subject<RequestChangedEvent>();
   readonly workforceChanged = new Subject<WorkforceChangedEvent>();
+  readonly verificationChanged = new Subject<VerificationChangedEvent>();
   readonly notificationRaised = new Subject<NotificationRaisedEvent>();
 
   constructor() {
@@ -84,6 +94,7 @@ export class RealtimeService {
     connection.on('taskChanged', (e: TaskChangedEvent) => this.emit(this.taskChanged, e));
     connection.on('requestChanged', (e: RequestChangedEvent) => this.emit(this.requestChanged, e));
     connection.on('workforceChanged', (e: WorkforceChangedEvent) => this.emit(this.workforceChanged, e));
+    connection.on('verificationChanged', (e: VerificationChangedEvent) => this.emit(this.verificationChanged, e));
     connection.on('notification', (e: NotificationRaisedEvent) => this.emit(this.notificationRaised, e));
 
     connection.onreconnected(() => {
@@ -92,6 +103,9 @@ export class RealtimeService {
       // OnConnectedAsync, but task subscriptions were ours to make, so we re-make them.
       for (const taskId of this.subscribedTasks) {
         void connection.invoke('SubscribeToTask', taskId).catch(() => undefined);
+      }
+      for (const verificationId of this.subscribedVerifications) {
+        void connection.invoke('SubscribeToVerification', verificationId).catch(() => undefined);
       }
     });
 
@@ -114,6 +128,7 @@ export class RealtimeService {
     const connection = this.connection;
     this.connection = null;
     this.subscribedTasks.clear();
+    this.subscribedVerifications.clear();
     this.connected.set(false);
 
     if (connection) {
@@ -135,6 +150,23 @@ export class RealtimeService {
 
     if (this.connection?.state === HubConnectionState.Connected) {
       void this.connection.invoke('UnsubscribeFromTask', taskId).catch(() => undefined);
+    }
+  }
+
+  /** Join the group for one verification — call it when a verification screen opens. */
+  subscribeToVerification(verificationId: number): void {
+    this.subscribedVerifications.add(verificationId);
+
+    if (this.connection?.state === HubConnectionState.Connected) {
+      void this.connection.invoke('SubscribeToVerification', verificationId).catch(() => undefined);
+    }
+  }
+
+  unsubscribeFromVerification(verificationId: number): void {
+    this.subscribedVerifications.delete(verificationId);
+
+    if (this.connection?.state === HubConnectionState.Connected) {
+      void this.connection.invoke('UnsubscribeFromVerification', verificationId).catch(() => undefined);
     }
   }
 

@@ -44,6 +44,27 @@ export const routes: Routes = [
           import('./features/tasks/task-detail.component').then((m) => m.TaskDetailComponent),
       },
 
+      // --- checks -------------------------------------------------------------------------
+      //
+      // Reachable by anyone who raises, carries out or oversees them. A person with none of those
+      // has nothing to see: the list is scoped server-side to what they raised or were given.
+      {
+        path: 'verifications',
+        title: 'Checks',
+        canActivate: [requirePermission(
+          Perm.verificationCreate, Perm.verificationWork, Perm.verificationViewAll)],
+        loadComponent: () =>
+          import('./features/verifications/verification-list.component')
+            .then((m) => m.VerificationListComponent),
+      },
+      {
+        path: 'verifications/:id',
+        title: 'Check',
+        loadComponent: () =>
+          import('./features/verifications/verification-detail.component')
+            .then((m) => m.VerificationDetailComponent),
+      },
+
       // --- intake -------------------------------------------------------------------------
       {
         path: 'requests',

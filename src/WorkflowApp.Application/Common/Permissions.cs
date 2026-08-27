@@ -29,6 +29,24 @@ public static class Permissions
     public const string TaskDefer = "Task.Defer";
     public const string TaskOverride = "Task.Override";
 
+    // Verification — assigned investigation, distinct from task QC. See VerificationService.
+    //
+    // Three rather than four. "Assign" is deliberately not separate from Create: a verification
+    // with no checker is inert, so naming one is part of raising it, and the reviewer who routes a
+    // request is the same person who says who should look at it. Splitting them would mean holding
+    // two permissions to perform the single action the feature exists for, with no real difference
+    // in authority behind the split. If reassignment ever needs to be somebody else's job, it is
+    // one constant here and a role-map line — not a schema change.
+
+    /// <summary>Raise a verification, name its checker, re-route it, and call it off.</summary>
+    public const string VerificationCreate = "Verification.Create";
+
+    /// <summary>Investigate an assigned verification and record what was found.</summary>
+    public const string VerificationWork = "Verification.Work";
+
+    /// <summary>See every verification, not only the ones you raised or were given.</summary>
+    public const string VerificationViewAll = "Verification.ViewAll";
+
     // Workforce / management
     public const string WorkforceViewAll = "Workforce.ViewAll";
 
@@ -58,6 +76,7 @@ public static class Permissions
         RequestCreate, RequestViewOwn, RequestViewAll,
         TaskReview, TaskApprove, TaskAssign, TaskWork,
         TaskQCReview, TaskClose, TaskReopen, TaskCancel, TaskDefer, TaskOverride,
+        VerificationCreate, VerificationWork, VerificationViewAll,
         WorkforceViewAll, WorkforceManageOthers, WorkforceTrackShift, DashboardManagement, ReportsView,
         AdminManageUsers, AdminManageRoles, AdminManageConfig, AdminViewAudit
     };
@@ -74,9 +93,32 @@ public static class DefaultRoles
     public const string QC = "QC";
     public const string Management = "Management";
 
+    /// <summary>
+    /// What an administrator gets by default: everything <em>except</em> the two permissions that
+    /// describe an operational worker rather than an authority.
+    ///
+    /// <see cref="Permissions.WorkforceTrackShift"/> means "this person's attendance is measured"
+    /// and <see cref="Permissions.TaskWork"/> means "this person executes tasks". Neither follows
+    /// from administering the system, and granting them by default made every administrator a
+    /// worker: the shell offered a shift widget nobody wanted, the account appeared in
+    /// who-is-working-now, and it turned up in the assignable list for real work.
+    ///
+    /// An administrator who genuinely also does the work gets these the same way anybody else does
+    /// — a role that grants them, through the role editor. <c>Administrator = Worker</c> is a
+    /// configuration decision, and it does not belong in code.
+    ///
+    /// Note the seeder is additive: this changes what a <em>new</em> database grants. An existing
+    /// Administrator role keeps the grants it already has until someone removes them in the editor,
+    /// which is deliberate — restarting the application must not silently revoke a permission a
+    /// site chose to add.
+    /// </summary>
+    public static readonly string[] AdministratorGrants = Permissions.All
+        .Where(key => key is not (Permissions.WorkforceTrackShift or Permissions.TaskWork))
+        .ToArray();
+
     public static readonly IReadOnlyDictionary<string, string[]> Map = new Dictionary<string, string[]>
     {
-        [Administrator] = Permissions.All,
+        [Administrator] = AdministratorGrants,
         [Requester] = new[] { Permissions.RequestCreate, Permissions.RequestViewOwn },
         // Reopen sits with the reviewer, not QC: it is a judgement about whether the delivered work
         // answers the original request, which is the same call they make at triage. QC's remit is to
@@ -84,12 +126,16 @@ public static class DefaultRoles
         [Reviewer] = new[]
         {
             Permissions.RequestViewAll, Permissions.TaskReview, Permissions.TaskApprove,
-            Permissions.TaskDefer, Permissions.TaskReopen
+            Permissions.TaskDefer, Permissions.TaskReopen,
+            // The triage route: a reviewer who cannot yet tell whether there is anything to build
+            // sends it to be looked at instead of guessing, or approving to find out.
+            Permissions.VerificationCreate, Permissions.VerificationViewAll
         },
         [AssignmentManager] = new[]
         {
             Permissions.RequestViewAll, Permissions.TaskAssign, Permissions.WorkforceViewAll,
-            Permissions.WorkforceManageOthers, Permissions.DashboardManagement
+            Permissions.WorkforceManageOthers, Permissions.DashboardManagement,
+            Permissions.VerificationCreate, Permissions.VerificationViewAll
         },
         // Workers are the only default role on the clock — see Permissions.WorkforceTrackShift.
         //
@@ -104,11 +150,20 @@ public static class DefaultRoles
             Permissions.TaskWork, Permissions.WorkforceTrackShift,
             Permissions.RequestCreate, Permissions.RequestViewOwn
         },
-        [QC] = new[] { Permissions.TaskQCReview, Permissions.TaskClose },
+        // QC checks finished work and now also investigates whether there is anything to build.
+        // Note what is still absent: Workforce.TrackShift. Whether a checker's attendance is
+        // measured is an independent decision for whoever configures the organisation, and
+        // Verification.Work deliberately does not imply it — see Permissions.WorkforceTrackShift.
+        [QC] = new[]
+        {
+            Permissions.TaskQCReview, Permissions.TaskClose,
+            Permissions.VerificationWork, Permissions.VerificationViewAll
+        },
         [Management] = new[]
         {
             Permissions.RequestViewAll, Permissions.WorkforceViewAll,
-            Permissions.DashboardManagement, Permissions.ReportsView
+            Permissions.DashboardManagement, Permissions.ReportsView,
+            Permissions.VerificationViewAll
         },
     };
 }

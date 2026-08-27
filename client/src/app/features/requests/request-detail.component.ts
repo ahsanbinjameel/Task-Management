@@ -22,7 +22,7 @@ import { Perm } from '../../core/permissions';
 import { saveBlob } from '../../core/format';
 import { requestTypeLabel } from '../../core/labels';
 import { Priority, RequestDetailDto, RequestType, TriageOutcome, TriageResultDto } from '../../core/models';
-import { enumOptions, SearchSelectComponent } from '../../shared/search-select.component';
+import { enumOptions, SearchSelectComponent, SelectOption } from '../../shared/search-select.component';
 import { AttachmentsComponent } from '../../shared/attachments.component';
 import {
   ChipComponent, FieldComponent, LoadingComponent, PageHeaderComponent,
@@ -31,8 +31,8 @@ import {
 /**
  * A request, and — for a reviewer — the triage panel.
  *
- * Triage is the gate between "someone asked" and "someone is doing it". Five of its six outcomes
- * end the request without creating any work, and only Approve produces a task. The panel makes that
+ * Triage is the gate between "someone asked" and "someone is doing it". Six of its seven outcomes
+ * create no work at all, and only Approve produces a task. The panel makes that
  * asymmetry visible instead of burying it in a dropdown.
  */
 @Component({
@@ -255,6 +255,11 @@ import {
                   <mat-button-toggle value="RequestClarification">
                     <mat-icon>help</mat-icon> Ask for clarification
                   </mat-button-toggle>
+                  @if (canSendForVerification()) {
+                    <mat-button-toggle value="SendForVerification">
+                      <mat-icon>fact_check</mat-icon> Send for checking
+                    </mat-button-toggle>
+                  }
                   <mat-button-toggle value="Reject">
                     <mat-icon>cancel</mat-icon> Reject
                   </mat-button-toggle>
@@ -299,10 +304,51 @@ import {
                   </mat-form-field>
                 }
 
+                @if (outcome === 'SendForVerification') {
+                  <div class="verify-fields">
+                    <p class="note">
+                      Somebody finds out whether there is really a problem here. This creates no
+                      task — whatever they find, the request comes back to you and approving it is
+                      still your decision.
+                    </p>
+
+                    <app-search-select class="full" label="Give it to"
+                                       nullLabel="Leave for someone to pick up"
+                                       [options]="checkerOptions()" [(ngModel)]="checkerId" />
+
+                    <mat-form-field class="full">
+                      <mat-label>What should they look at? (optional)</mat-label>
+                      <textarea matInput rows="3" [(ngModel)]="verifyInstructions"
+                                placeholder="Reproduce it on the higher tax band and say whether the rate table has a row for it."></textarea>
+                    </mat-form-field>
+                  </div>
+                }
+
                 <button matButton="filled" class="full submit"
                         [disabled]="!triageValid() || busy()" (click)="triage()">
-                  {{ outcome === 'Approve' ? 'Approve and create task' : 'Record decision' }}
+                  {{ submitLabel() }}
                 </button>
+              </div>
+            }
+
+            @if (r.verifications.length > 0 && !isRequesterView()) {
+              <div class="card card-pad">
+                <h2 class="card-title">Checks</h2>
+                @for (v of r.verifications; track v.id) {
+                  <div class="check">
+                    <div class="check-head">
+                      <a [routerLink]="['/verifications', v.id]">{{ v.verificationNumber }}</a>
+                      <span class="chip tone-neutral">{{ v.statusLabel }}</span>
+                    </div>
+                    <div class="muted small">
+                      {{ v.assignedToDisplayName ?? 'Nobody yet' }}
+                    </div>
+                    @if (v.resultLabel) {
+                      <div class="check-result"><strong>{{ v.resultLabel }}</strong></div>
+                      <p class="check-findings">{{ v.findings }}</p>
+                    }
+                  </div>
+                }
               </div>
             }
 
@@ -391,6 +437,15 @@ import {
     .waiting mat-icon { font-size: 18px; width: 18px; height: 18px; flex: none; margin-top: 1px; }
     .update { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
     .update p { margin: 0 0 4px; }
+    .note {
+      margin: 0 0 12px; padding: 9px 11px; border-radius: 8px;
+      background: var(--tone-running-bg); font-size: 12.5px; line-height: 1.5;
+    }
+    .check { padding: 10px 0; border-top: 1px solid var(--border); }
+    .check:first-of-type { border-top: none; padding-top: 0; }
+    .check-head { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+    .check-result { margin-top: 6px; font-size: 13px; }
+    .check-findings { margin: 4px 0 0; font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; }
     .outcomes { width: 100%; margin-bottom: 14px; }
     .outcomes .mat-button-toggle { text-align: left; }
     .approve-fields { display: contents; }
@@ -417,6 +472,8 @@ export class RequestDetailComponent implements OnInit {
   readonly answers: Record<number, string> = {};
 
   outcome: TriageOutcome = 'Approve';
+  checkerId: number | null = null;
+  verifyInstructions = '';
   priority: Priority = 'Normal';
   estimate: number | null = null;
   criteria = '';
@@ -465,6 +522,24 @@ export class RequestDetailComponent implements OnInit {
       && ['Submitted', 'InReview', 'ClarificationRequired'].includes(r.status);
   });
 
+  /**
+   * The extra outcome, offered only to someone who may actually raise a check. Hiding it is a
+   * courtesy — the endpoint refuses it either way — but offering a button that always 403s is
+   * worse than not offering it.
+   */
+  readonly canSendForVerification = computed(() => this.auth.has(Perm.verificationCreate));
+
+  /**
+   * Whether this reader is being shown the plain-language view. Checks are internal vocabulary:
+   * a requester is told "Being Checked" on their status and nothing more, because "VER-000012 is
+   * with Quentin" is our terminology, not theirs.
+   */
+  readonly isRequesterView = computed(() =>
+    !this.auth.hasAny(Perm.taskReview, Perm.taskAssign, Perm.verificationViewAll));
+
+  /** Who a check can be given to. Loaded only for someone who can raise one. */
+  readonly checkerOptions = signal<SelectOption[]>([]);
+
   label = (value: string) => requestTypeLabel(value as RequestType);
 
   /**
@@ -488,6 +563,16 @@ export class RequestDetailComponent implements OnInit {
   ngOnInit(): void {
     this.requestId = Number(this.id());
     this.load();
+
+    if (this.canSendForVerification()) {
+      this.api.assignableCheckers().subscribe((checkers) => {
+        this.checkerOptions.set(checkers.map((c) => ({
+          value: c.userId,
+          label: c.displayName,
+          hint: c.openVerifications === 0 ? 'free' : `${c.openVerifications} open`,
+        })));
+      });
+    }
   
     // Re-fetch on the server's say-so; see syncOn for why it debounces and tears down.
     syncOn<RequestChangedEvent>(
@@ -511,7 +596,18 @@ export class RequestDetailComponent implements OnInit {
   triageValid(): boolean {
     if (this.outcome === 'Approve') return true;
     if (this.outcome === 'MarkDuplicate' && !this.duplicateOf) return false;
+    // Sending for checking needs no reason: the instructions are the reason, and they are optional
+    // because the request the checker is looking at already says what the problem is supposed to be.
+    if (this.outcome === 'SendForVerification') return true;
     return this.reason.trim().length > 0;
+  }
+
+  submitLabel(): string {
+    switch (this.outcome) {
+      case 'Approve': return 'Approve and create task';
+      case 'SendForVerification': return 'Send for checking';
+      default: return 'Record decision';
+    }
   }
 
   /**
@@ -590,15 +686,30 @@ export class RequestDetailComponent implements OnInit {
       estimatedEffortHours: this.outcome === 'Approve' ? (this.estimate ?? undefined) : undefined,
       acceptanceCriteria: this.outcome === 'Approve' ? (this.criteria.trim() || undefined) : undefined,
       duplicateOfRequestId: this.duplicateOf ?? undefined,
+      verification: this.outcome === 'SendForVerification'
+        ? {
+            // The target is the request itself: that is what the reviewer could not decide about.
+            targetType: 'Request' as const,
+            instructions: this.verifyInstructions.trim() || null,
+            assignToUserId: this.checkerId,
+          }
+        : undefined,
     }, context);
   }
 
   private afterTriage(result: TriageResultDto): void {
     this.reason = '';
+    this.verifyInstructions = '';
 
     if (result.createdTaskId) {
       this.toast.success('Approved — the task has been created.');
       void this.router.navigate(['/tasks', result.createdTaskId]);
+      return;
+    }
+
+    if (result.verificationId) {
+      this.toast.success(`Sent for checking as ${result.verificationNumber}.`);
+      void this.router.navigate(['/verifications', result.verificationId]);
       return;
     }
 

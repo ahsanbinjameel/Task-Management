@@ -19,4 +19,10 @@ public sealed class LookupsController : ApiControllerBase
     [ProducesResponseType(typeof(IReadOnlyList<ClientOptionDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> Clients([FromQuery] string? search, CancellationToken ct)
         => Ok(await _lookups.ClientsAsync(search, ct));
+
+    /// <summary>Active modules, for the verification target picker.</summary>
+    [HttpGet("modules")]
+    [ProducesResponseType(typeof(IReadOnlyList<ModuleOptionDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Modules([FromQuery] string? search, CancellationToken ct)
+        => Ok(await _lookups.ModulesAsync(search, ct));
 }

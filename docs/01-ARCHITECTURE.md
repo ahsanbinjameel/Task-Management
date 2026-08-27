@@ -49,6 +49,37 @@ tasks, so they never pollute worker queues. `Task.RequestId` links back for trac
 Request (intake)  --approved-->  Task (executable)  --> WorkSessions, QC, Closure
 ```
 
+### 4b. Verification — the branch that creates nothing
+
+A reviewer often cannot tell from the words whether a request describes a defect, a configuration
+mistake, bad data, a permission problem or a misunderstanding. Before `Verification` existed the
+only ways forward were to guess, to bounce it back to a requester who has already said what they
+know, or to approve it into a task so that *somebody* would look — which commits the organisation
+to building something before anyone has established there is anything to build.
+
+```
+Request (intake)  --send for verification-->  Verification (investigation)
+                                                     |
+                        findings, whatever they are  |
+                                                     v
+                  Request (back in review)  --approved-->  Task
+```
+
+The rule that makes this safe: **a verification never creates work.** Even a confirmed problem
+returns the request to `InReview` with the findings attached; approving it stays an explicit act by
+a reviewer, through `TaskCreationService`, which remains the only place a task is born.
+
+**It is not `QCReview`.** QC answers "does this finished work meet its acceptance criteria?" and is
+bound to a task's lifecycle, its numbered attempts and its segregation-of-duties rules. Verification
+answers "is there really a problem here?" — and in the case it exists for, no task exists at all.
+
+**It is not `QuickWork` either.** Quick work is unplanned work somebody picked up themselves and is
+already doing; a verification is planned work one person deliberately assigns to another.
+
+A verification also stands alone: an authorised user can raise one against a form, a module or a
+deployed build with no request behind it, which is the ordinary case for "check whether X still
+works" and needs no fake create-task-then-complete-it lifecycle.
+
 ## 5. Workflow State Model
 
 Task statuses (enforced transitions, not free-form):
@@ -75,7 +106,27 @@ permissions = union of their roles' permissions. Server-side checks on every mut
 and every workflow transition. UI hiding is convenience only, never the security boundary.
 
 Example permissions: `Request.Create`, `Request.Review`, `Task.Assign`, `Task.Start`,
-`Task.QCReview`, `Task.Close`, `Admin.ManageUsers`, `Task.Override`.
+`Task.QCReview`, `Task.Close`, `Admin.ManageUsers`, `Task.Override`,
+`Verification.Create`, `Verification.Work`, `Verification.ViewAll`.
+
+Three of these are deliberately independent of one another, and none implies another:
+
+| Permission | Means |
+|---|---|
+| `Task.Work` | executes tasks |
+| `Verification.Work` | investigates whether there is a problem |
+| `Workforce.TrackShift` | this person's attendance is measured |
+
+Every combination is a legitimate configuration — a checker whose hours are tracked and one whose
+hours are not are both normal. Administering the system implies none of the three:
+`DefaultRoles.AdministratorGrants` is everything *except* `Task.Work` and `Workforce.TrackShift`,
+because `Administrator = Worker` is a decision for whoever configures the organisation, not
+something to hardcode.
+
+Two rules cannot be expressed as a permission attribute at all, because the answer depends on the
+record rather than on the caller: only a task's primary assignee may attach completion proof, and
+only a verification's assigned checker may start it, report on it or attach evidence to it. Those
+are enforced in the service.
 
 ## 7. Real-Time Design (SignalR)
 

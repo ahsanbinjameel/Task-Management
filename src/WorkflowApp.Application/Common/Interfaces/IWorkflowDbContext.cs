@@ -5,6 +5,7 @@ using WorkflowApp.Domain.Entities.Common;
 using WorkflowApp.Domain.Entities.Identity;
 using WorkflowApp.Domain.Entities.Requests;
 using WorkflowApp.Domain.Entities.Tasks;
+using WorkflowApp.Domain.Entities.Verifications;
 using WorkflowApp.Domain.Entities.Workforce;
 
 namespace WorkflowApp.Application.Common.Interfaces;
@@ -48,6 +49,10 @@ public interface IWorkflowDbContext
     DbSet<RequestClarification> RequestClarifications { get; }
     DbSet<RequestActivity> RequestActivities { get; }
     DbSet<Attachment> Attachments { get; }
+
+    // Verifications — assigned investigation, no completed task required. See Verification.
+    DbSet<Verification> Verifications { get; }
+    DbSet<VerificationActivity> VerificationActivities { get; }
 
     // Tasks
     DbSet<WorkTask> Tasks { get; }

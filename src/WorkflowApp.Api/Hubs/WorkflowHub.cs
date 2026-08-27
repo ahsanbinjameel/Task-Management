@@ -55,4 +55,15 @@ public sealed class WorkflowHub : Hub
 
     public Task UnsubscribeFromTask(long taskId) =>
         Groups.RemoveFromGroupAsync(Context.ConnectionId, RealtimeGroups.Task(taskId));
+
+    /// <summary>
+    /// The same for one verification. Joining a per-record group is safe without a permission
+    /// check because the payload carries no content — an id and a status — and acting on it means
+    /// a REST fetch, where the scoping rules in <c>VerificationService.GetAsync</c> apply.
+    /// </summary>
+    public Task SubscribeToVerification(long verificationId) =>
+        Groups.AddToGroupAsync(Context.ConnectionId, RealtimeGroups.Verification(verificationId));
+
+    public Task UnsubscribeFromVerification(long verificationId) =>
+        Groups.RemoveFromGroupAsync(Context.ConnectionId, RealtimeGroups.Verification(verificationId));
 }

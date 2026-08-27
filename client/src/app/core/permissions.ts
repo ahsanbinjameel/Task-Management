@@ -21,6 +21,10 @@ export const Perm = {
   taskDefer: 'Task.Defer',
   taskOverride: 'Task.Override',
 
+  verificationCreate: 'Verification.Create',
+  verificationWork: 'Verification.Work',
+  verificationViewAll: 'Verification.ViewAll',
+
   workforceViewAll: 'Workforce.ViewAll',
   workforceManageOthers: 'Workforce.ManageOthers',
   workforceTrackShift: 'Workforce.TrackShift',

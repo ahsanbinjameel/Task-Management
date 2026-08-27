@@ -12,7 +12,9 @@ export type WorkTaskStatus =
 
 export type RequestStatus =
   | 'Submitted' | 'InReview' | 'ClarificationRequired' | 'Approved'
-  | 'Rejected' | 'Duplicate' | 'Deferred' | 'Escalated';
+  | 'Rejected' | 'Duplicate' | 'Deferred' | 'Escalated'
+  /** Routed to a checker to establish whether there is really a problem. No task exists. */
+  | 'UnderVerification';
 
 export type Priority = 'Critical' | 'High' | 'Normal' | 'Low';
 export type RequestedUrgency = 'Critical' | 'High' | 'Normal' | 'Low';
@@ -34,7 +36,23 @@ export type CommentCategory =
 export type DependencyType = 'Blocks' | 'DependsOn' | 'Related' | 'Duplicate' | 'ParentChild';
 
 export type TriageOutcome =
-  | 'Approve' | 'Reject' | 'RequestClarification' | 'MarkDuplicate' | 'Defer' | 'Escalate';
+  | 'Approve' | 'Reject' | 'RequestClarification' | 'MarkDuplicate' | 'Defer' | 'Escalate'
+  /** Have it looked at before deciding. Creates a verification, never a task. */
+  | 'SendForVerification';
+
+// --- verification ----------------------------------------------------------------------------
+//
+// Assigned investigation: "is there actually a problem here?". Deliberately not QC, which asks
+// whether finished work meets its acceptance criteria and belongs to a task's lifecycle.
+
+export type VerificationStatus =
+  | 'Requested' | 'Assigned' | 'InProgress' | 'Completed' | 'Cancelled';
+
+export type VerificationResult =
+  | 'IssueConfirmed' | 'WorkingCorrectly' | 'ConfigurationOrDataIssue'
+  | 'NeedsClarification' | 'Inconclusive';
+
+export type VerificationTargetType = 'Request' | 'Form' | 'Module' | 'Build' | 'Other';
 
 // --- shared ---------------------------------------------------------------------------------
 
@@ -50,6 +68,13 @@ export interface PagedResult<T> {
 export interface ClientOptionDto {
   id: number;
   name: string;
+}
+
+/** A module, for the verification target picker. Maintained by an administrator, not typed in. */
+export interface ModuleOptionDto {
+  id: number;
+  name: string;
+  projectName?: string | null;
 }
 
 /** One clickable count above a list. */
@@ -193,7 +218,10 @@ export interface AttachmentDto {
  * "show me the evidence it was actually done" cannot be asked. Mirrors `AttachmentKind` on the
  * server — the API serialises the name, not the ordinal.
  */
-export type AttachmentKind = 'General' | 'CompletionProof' | 'QCEvidence';
+export type AttachmentKind =
+  | 'General' | 'CompletionProof' | 'QCEvidence'
+  /** What a checker attached to an investigation. Belongs to the verification, not to a task. */
+  | 'VerificationEvidence';
 
 /**
  * What POST /requests/{id}/triage actually returns — a decision, not the request.
@@ -207,6 +235,9 @@ export interface TriageResultDto {
   status: RequestStatus;
   createdTaskId?: number | null;
   createdTaskNumber?: string | null;
+  /** Set when the outcome was SendForVerification. Never set alongside a task. */
+  verificationId?: number | null;
+  verificationNumber?: string | null;
 }
 
 export interface RequestDetailDto {
@@ -232,6 +263,8 @@ export interface RequestDetailDto {
   activity: RequestActivityDto[];
   clarifications: ClarificationDto[];
   attachments: AttachmentDto[];
+  /** Checks raised against this request, newest first. Empty for most requests. */
+  verifications: RequestVerificationDto[];
   /** The status this reader should be told — folds in the task where there is one. */
   viewKey: string;
   viewLabel: string;
@@ -1017,4 +1050,138 @@ export interface RoleDetailDto {
  */
 export interface FilterOptionsDto {
   columns: Record<string, string[]>;
+}
+
+
+// --- verification DTOs -------------------------------------------------------------------------
+
+/** A check as it appears on the request that spawned it. A summary; the full page is one click on. */
+export interface RequestVerificationDto {
+  id: number;
+  verificationNumber: string;
+  status: VerificationStatus;
+  /** Server-owned wording, so the two sides cannot drift. */
+  statusLabel: string;
+  assignedToUserId?: number | null;
+  assignedToDisplayName?: string | null;
+  requestedAt: string;
+  completedAt?: string | null;
+  result?: VerificationResult | null;
+  resultLabel?: string | null;
+  findings?: string | null;
+}
+
+export interface VerificationSummaryDto {
+  id: number;
+  verificationNumber: string;
+  title: string;
+  status: VerificationStatus;
+  statusLabel: string;
+  priority: Priority;
+  targetType: VerificationTargetType;
+  /** The target in one line, whichever kind it is. */
+  targetSummary: string;
+  requestedByUserId: number;
+  requestedByDisplayName: string;
+  requestedAt: string;
+  assignedToUserId?: number | null;
+  assignedToDisplayName?: string | null;
+  result?: VerificationResult | null;
+  resultLabel?: string | null;
+  completedAt?: string | null;
+  requestId?: number | null;
+  requestNumber?: string | null;
+  attachmentCount: number;
+}
+
+export interface VerificationActivityDto {
+  id: number;
+  type: string;
+  actorUserId: number;
+  actorDisplayName?: string | null;
+  occurredAt: string;
+  description: string;
+}
+
+export interface VerificationDetailDto {
+  id: number;
+  verificationNumber: string;
+  title: string;
+  instructions?: string | null;
+  expectedBehavior?: string | null;
+  status: VerificationStatus;
+  statusLabel: string;
+  priority: Priority;
+  targetType: VerificationTargetType;
+  targetSummary: string;
+  moduleId?: number | null;
+  moduleName?: string | null;
+  targetName?: string | null;
+  targetReference?: string | null;
+  requestedByUserId: number;
+  requestedByDisplayName: string;
+  requestedAt: string;
+  assignedToUserId?: number | null;
+  assignedToDisplayName?: string | null;
+  assignedByUserId?: number | null;
+  assignedAt?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  result?: VerificationResult | null;
+  resultLabel?: string | null;
+  findings?: string | null;
+  cancellationReason?: string | null;
+  requestId?: number | null;
+  requestNumber?: string | null;
+  requestTitle?: string | null;
+  activity: VerificationActivityDto[];
+  attachments: AttachmentDto[];
+  rowVersion?: string | null;
+}
+
+/** Somebody a check can be given to, with how much they are already holding. */
+export interface AssignableCheckerDto {
+  userId: number;
+  displayName: string;
+  openVerifications: number;
+}
+
+export interface CreateVerificationDto {
+  title: string;
+  instructions?: string | null;
+  expectedBehavior?: string | null;
+  targetType: VerificationTargetType;
+  moduleId?: number | null;
+  targetName?: string | null;
+  targetReference?: string | null;
+  priority: Priority;
+  assignToUserId?: number | null;
+}
+
+/** Routing a request to a checker instead of deciding it. Carried inside the triage payload. */
+export interface SendForVerificationDto {
+  title?: string | null;
+  instructions?: string | null;
+  expectedBehavior?: string | null;
+  targetType: VerificationTargetType;
+  moduleId?: number | null;
+  targetName?: string | null;
+  targetReference?: string | null;
+  priority?: Priority | null;
+  assignToUserId?: number | null;
+}
+
+export interface AssignVerificationDto {
+  assignToUserId: number;
+  /** Mandatory when taking it off somebody who already had it. */
+  reason?: string | null;
+}
+
+export interface RecordVerificationResultDto {
+  result: VerificationResult;
+  findings: string;
+}
+
+export interface CancelVerificationDto {
+  reason: string;
 }

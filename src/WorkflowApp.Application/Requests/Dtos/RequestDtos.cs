@@ -63,7 +63,14 @@ public enum TriageOutcome
     RequestClarification = 2,
     MarkDuplicate = 3,
     Defer = 4,
-    Escalate = 5
+    Escalate = 5,
+
+    /// <summary>
+    /// Route it to a checker to establish whether there is really a problem, before deciding
+    /// anything. Creates a <c>Verification</c> and <b>never</b> a task: the request comes back to
+    /// review with the findings attached, and approving it remains a separate, explicit act.
+    /// </summary>
+    SendForVerification = 6
 }
 
 public sealed record TriageDecisionDto
@@ -94,6 +101,13 @@ public sealed record TriageDecisionDto
 
     [MaxLength(4000)]
     public string? AcceptanceCriteria { get; init; }
+
+    /// <summary>
+    /// Required when the outcome is <see cref="TriageOutcome.SendForVerification"/>. Everything
+    /// about the check lives in its own shape rather than being smeared across the fields above,
+    /// which all mean something else.
+    /// </summary>
+    public Verifications.Dtos.SendForVerificationDto? Verification { get; init; }
 }
 
 public sealed record AnswerClarificationDto
@@ -212,6 +226,13 @@ public sealed record RequestDetailDto(
     IReadOnlyList<RequestActivityDto> Activity,
     IReadOnlyList<ClarificationDto> Clarifications,
     IReadOnlyList<AttachmentDto> Attachments,
+
+    /// <summary>
+    /// The checks raised against this request, newest first. Empty for the ordinary request that
+    /// never needed one. A summary, not a copy: the findings are here because that is the whole
+    /// point of reading them, but everything else is one click away on the verification itself.
+    /// </summary>
+    IReadOnlyList<Verifications.Dtos.RequestVerificationDto> Verifications,
 
     /// <summary>The status this reader should be told, folding in the task where there is one.</summary>
     string ViewKey = "",

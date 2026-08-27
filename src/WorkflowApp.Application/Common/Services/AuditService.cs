@@ -79,6 +79,21 @@ public static class AuditActions
 
     /// <summary>A scope change was accepted and the estimate or deadline moved because of it.</summary>
     public const string ScopeChangeApproved = "Task.ScopeChangeApproved";
+
+    /// <summary>Somebody asked for a thing to be checked. Never creates work by itself.</summary>
+    public const string VerificationRaised = "Verification.Raised";
+
+    /// <summary>A checker was given it, or it was moved to a different one.</summary>
+    public const string VerificationAssigned = "Verification.Assigned";
+
+    /// <summary>
+    /// The check reported. Audited whatever it found — a "working correctly" verdict closes a
+    /// request down as surely as a rejection, and is worth the same trail.
+    /// </summary>
+    public const string VerificationCompleted = "Verification.Completed";
+
+    /// <summary>Called off before it reported. Always carries a reason.</summary>
+    public const string VerificationCancelled = "Verification.Cancelled";
 }
 
 public sealed class AuditService : IAuditService

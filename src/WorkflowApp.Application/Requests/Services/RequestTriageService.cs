@@ -7,6 +7,8 @@ using WorkflowApp.Application.Common.Services;
 using WorkflowApp.Application.Notifications;
 using WorkflowApp.Application.Requests.Dtos;
 using WorkflowApp.Application.Tasks.Services;
+using WorkflowApp.Application.Verifications.Dtos;
+using WorkflowApp.Application.Verifications.Services;
 using WorkflowApp.Domain.Entities.Requests;
 using WorkflowApp.Domain.Enums;
 
@@ -26,21 +28,38 @@ public interface IRequestTriageService
         long clarificationId, long answeringUserId, string answer, CancellationToken ct = default);
 }
 
-/// <summary>What triage did, including the task id when a task was created.</summary>
-public sealed record TriageResult(RequestStatus Status, long? CreatedTaskId, string? CreatedTaskNumber);
+/// <summary>
+/// What triage did, including the task id when a task was created — and the verification id when
+/// one was raised instead. Never both: those are the two ends of the decision.
+/// </summary>
+public sealed record TriageResult(
+    RequestStatus Status,
+    long? CreatedTaskId,
+    string? CreatedTaskNumber,
+    long? VerificationId = null,
+    string? VerificationNumber = null);
 
 /// <summary>
 /// The gate between "someone asked for something" and "the organisation is going to do it".
 ///
-/// The rule this class exists to enforce: a request never becomes a task on its own. Five of the
-/// six outcomes end the request's life without producing any work at all, which is what keeps
-/// rejected and duplicate submissions out of worker queues.
+/// The rule this class exists to enforce: a request never becomes a task on its own. Six of the
+/// seven outcomes produce no work at all, which is what keeps rejected, duplicate and
+/// not-yet-understood submissions out of worker queues.
+///
+/// <para>
+/// <see cref="TriageOutcome.SendForVerification"/> is the newest of those six and the only one that
+/// does not end the request's life: it hands the request to a checker, who establishes whether
+/// there is anything to build, and the request comes back here for a real decision with their
+/// findings attached. It creates a <c>Verification</c>, never a task — a confirmed problem still
+/// has to be approved explicitly, so <see cref="ITaskCreationService"/> keeps its monopoly.
+/// </para>
 /// </summary>
 public sealed class RequestTriageService : IRequestTriageService
 {
     private readonly IWorkflowDbContext _db;
     private readonly IRequestService _requests;
     private readonly ITaskCreationService _taskCreation;
+    private readonly IVerificationService _verifications;
     private readonly IAuditService _audit;
     private readonly INotificationService _notifications;
     private readonly ILookupService _lookups;
@@ -51,6 +70,7 @@ public sealed class RequestTriageService : IRequestTriageService
         IWorkflowDbContext db,
         IRequestService requests,
         ITaskCreationService taskCreation,
+        IVerificationService verifications,
         IAuditService audit,
         INotificationService notifications,
         ILookupService lookups,
@@ -60,6 +80,7 @@ public sealed class RequestTriageService : IRequestTriageService
         _db = db;
         _requests = requests;
         _taskCreation = taskCreation;
+        _verifications = verifications;
         _audit = audit;
         _notifications = notifications;
         _lookups = lookups;
@@ -102,6 +123,22 @@ public sealed class RequestTriageService : IRequestTriageService
             return Result<TriageResult>.Failure(Error.Validation(
                 "triage.reason_required", $"A reason is required to {decision.Outcome}."));
 
+        // Nothing gets decided while somebody is still checking. Same reasoning as the unanswered
+        // clarification below: the reviewer asked a question and does not yet have the answer.
+        //
+        // Applied to every decisive outcome rather than only to approval, because the loose end is
+        // the same either way — a checker who submits findings against a request that was rejected
+        // underneath them has done the work for nothing, and the verification is left pointing at a
+        // decision it played no part in. Asking for a clarification is exempt: that is a question,
+        // not a decision, and the two can reasonably run at once.
+        if (decision.Outcome is not (TriageOutcome.RequestClarification or TriageOutcome.SendForVerification)
+            && await _verifications.HasOpenForRequestAsync(request.Id, ct))
+        {
+            return Result<TriageResult>.Failure(Error.Conflict(
+                "request.verification_pending",
+                "This request is still being checked. Wait for the findings, or call the check off."));
+        }
+
         return decision.Outcome switch
         {
             TriageOutcome.Approve => await ApproveAsync(request, reviewerId, decision, ct),
@@ -110,6 +147,7 @@ public sealed class RequestTriageService : IRequestTriageService
             TriageOutcome.Reject => await CloseAsync(request, reviewerId, RequestStatus.Rejected, decision.Reason!, ct),
             TriageOutcome.Defer => await CloseAsync(request, reviewerId, RequestStatus.Deferred, decision.Reason!, ct),
             TriageOutcome.Escalate => await CloseAsync(request, reviewerId, RequestStatus.Escalated, decision.Reason, ct),
+            TriageOutcome.SendForVerification => await SendForVerificationAsync(request, reviewerId, decision, ct),
             _ => Result<TriageResult>.Failure(Error.Validation("triage.unknown_outcome", "Unknown triage outcome."))
         };
     }
@@ -212,6 +250,75 @@ public sealed class RequestTriageService : IRequestTriageService
             request.RequestNumber, reviewerId, task.TaskNumber);
 
         return Result<TriageResult>.Success(new TriageResult(RequestStatus.Approved, task.Id, task.TaskNumber));
+    }
+
+    /// <summary>
+    /// Route the request to a checker rather than deciding it.
+    ///
+    /// The reviewer's honest position is "I cannot tell from this whether there is anything to
+    /// build". Before this existed the only ways forward were to guess, to bounce it back to the
+    /// requester who already said what they knew, or to approve it into a task so that somebody
+    /// would look — which commits the organisation to work before anyone has established there is
+    /// any. This is the fourth answer, and it creates no work.
+    /// </summary>
+    private async Task<Result<TriageResult>> SendForVerificationAsync(
+        Request request, long reviewerId, TriageDecisionDto decision, CancellationToken ct)
+    {
+        if (decision.Verification is not { } details)
+            return Result<TriageResult>.Failure(Error.Validation(
+                "triage.verification_details_required", "Say what needs checking, and by whom."));
+
+        // One at a time. A second open check on the same request would leave two people
+        // investigating the same thing and the request waiting on whichever answered last.
+        if (await _verifications.HasOpenForRequestAsync(request.Id, ct))
+            return Result<TriageResult>.Failure(Error.Conflict(
+                "request.verification_pending", "This request is already being checked."));
+
+        var raised = await _verifications.RaiseForRequestAsync(request, reviewerId, details, ct);
+        if (!raised.IsSuccess) return Result<TriageResult>.Failure(raised.Error!);
+
+        var verification = raised.Value!;
+
+        request.Status = RequestStatus.UnderVerification;
+
+        _db.RequestActivities.Add(new RequestActivity
+        {
+            RequestId = request.Id,
+            Type = ActivityType.VerificationRequested,
+            ActorUserId = reviewerId,
+            OccurredAt = _clock.UtcNow,
+            Description = $"Sent for checking as {verification.VerificationNumber}"
+        });
+
+        _audit.Record(
+            AuditActions.RequestTriaged,
+            actorUserId: reviewerId,
+            entityType: nameof(Request),
+            entityId: request.Id,
+            newValues: new
+            {
+                Status = RequestStatus.UnderVerification.ToString(),
+                verification.VerificationNumber,
+                VerificationId = verification.Id
+            });
+
+        // The requester is told in their own words — "being checked" — not that a Verification
+        // aggregate now exists. See StatusViews: this folds into "Being Checked" for them.
+        _notifications.RaiseFor(
+            new long?[] { request.RequestedByUserId }, reviewerId,
+            $"Your request {request.RequestNumber} is being checked",
+            "Someone is looking into it before a decision is made.",
+            NotificationService.LinkRequest, request.Id);
+
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "Request {RequestNumber} sent for verification as {VerificationNumber} by {ReviewerId}",
+            request.RequestNumber, verification.VerificationNumber, reviewerId);
+
+        return Result<TriageResult>.Success(new TriageResult(
+            RequestStatus.UnderVerification, null, null,
+            verification.Id, verification.VerificationNumber));
     }
 
     private async Task<Result<TriageResult>> RequestClarificationAsync(

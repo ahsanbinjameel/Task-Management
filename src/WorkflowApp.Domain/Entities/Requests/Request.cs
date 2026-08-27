@@ -93,6 +93,13 @@ public enum AttachmentKind
 
     /// <summary>What the checker attached to a quality-check verdict.</summary>
     QCEvidence = 2,
+
+    /// <summary>
+    /// What an investigator attached to a verification: the screenshot of the wrong tax figure,
+    /// the log extract. Distinct from <see cref="QCEvidence"/> because it justifies a finding about
+    /// whether a problem exists, not a verdict on whether finished work is acceptable.
+    /// </summary>
+    VerificationEvidence = 3,
 }
 
 public class Attachment : BaseEntity
@@ -105,12 +112,14 @@ public class Attachment : BaseEntity
 
     public long UploadedByUserId { get; set; }
 
-    // Polymorphic owner: an attachment belongs to a request, a task, or a batch — exactly one.
-    // The batch case exists so the screenshot showing all eight problems is uploaded once rather
-    // than once per item.
+    // Polymorphic owner: an attachment belongs to a request, a task, a batch, or a verification —
+    // exactly one. The batch case exists so the screenshot showing all eight problems is uploaded
+    // once rather than once per item; the verification case so a checker's evidence stays with the
+    // investigation rather than being filed against a task that may never exist.
     public long? RequestId { get; set; }
     public long? TaskId { get; set; }
     public long? BatchId { get; set; }
+    public long? VerificationId { get; set; }
 
     /// <summary>
     /// Why this file is here. The owner says what it is attached to; this says what it is *for*.

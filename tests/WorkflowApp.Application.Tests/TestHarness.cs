@@ -12,6 +12,7 @@ using WorkflowApp.Application.Reporting;
 using WorkflowApp.Application.Admin.Services;
 using WorkflowApp.Application.Requests.Services;
 using WorkflowApp.Application.Tasks.Services;
+using WorkflowApp.Application.Verifications.Services;
 using WorkflowApp.Application.Workforce.Services;
 using WorkflowApp.Domain.Entities.Requests;
 using WorkflowApp.Domain.Entities.Identity;
@@ -145,13 +146,16 @@ public sealed class TestHarness : IDisposable
         AuditQueries = new AuditQueryService(Db);
         Numbers = new NumberGenerator(Db);
         Lookups = new LookupService(Db);
-        Requests = new RequestService(Db, Numbers, Notifications, Lookups, Clock, Calendar);
+        Verifications = new VerificationService(
+            Db, Numbers, Audit, Notifications, Clock, NullLogger<VerificationService>.Instance);
+
+        Requests = new RequestService(Db, Numbers, Notifications, Lookups, Clock, Calendar, Verifications);
         TaskCreation = new TaskCreationService(Db, Numbers, Clock);
         Dependencies = new TaskDependencyService(Db, Clock);
         TaskQueries = new TaskQueryService(Db, CurrentUser, Dependencies, Calendar);
 
         Triage = new RequestTriageService(
-            Db, Requests, TaskCreation, Audit, Notifications, Lookups, Clock,
+            Db, Requests, TaskCreation, Verifications, Audit, Notifications, Lookups, Clock,
             NullLogger<RequestTriageService>.Instance);
 
         TaskWorkflow = new TaskWorkflowService(
@@ -216,6 +220,7 @@ public sealed class TestHarness : IDisposable
     public INumberGenerator Numbers { get; }
     public IRequestService Requests { get; }
     public IRequestTriageService Triage { get; }
+    public IVerificationService Verifications { get; }
     public ITaskCreationService TaskCreation { get; }
     public ITaskQueryService TaskQueries { get; }
     public ITaskWorkflowService TaskWorkflow { get; }

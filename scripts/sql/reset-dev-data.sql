@@ -1,4 +1,4 @@
-/*
+﻿/*
     Clears operational data from a WorkflowApp database, leaving a usable empty system.
 
     KEEPS:  the `admin` account with its roles and password, and the seeded catalogue —
@@ -46,8 +46,9 @@ END
 BEGIN TRANSACTION;
 
     -- --- task children ------------------------------------------------------------------
-    -- Attachments first: they hang off a request, a task or a batch, and a QC evidence file
-    -- also points at the numbered attempt it justified, so they precede QCReviews too.
+    -- Attachments first: they hang off a request, a task, a batch or a verification, and a QC
+    -- evidence file also points at the numbered attempt it justified, so they precede QCReviews
+    -- and Verifications too.
     DELETE FROM Attachments;
 
     DELETE FROM TaskActivities;
@@ -67,6 +68,13 @@ BEGIN TRANSACTION;
     -- Subtasks reference a parent task; clear the children first.
     DELETE FROM Tasks WHERE ParentTaskId IS NOT NULL;
     DELETE FROM Tasks;
+
+    -- --- verifications ------------------------------------------------------------------
+    -- Between the tasks and the requests: a verification points at a request, a module and two
+    -- users, and nothing points at it except its own activity stream and its attachments, both
+    -- already gone above.
+    DELETE FROM VerificationActivities;
+    DELETE FROM Verifications;
 
     -- --- request children ---------------------------------------------------------------
     DELETE FROM RequestActivities;

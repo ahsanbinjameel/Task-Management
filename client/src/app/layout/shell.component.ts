@@ -187,6 +187,11 @@ export class ShellComponent {
 
     { section: 'Quality', label: 'QC queue', icon: 'verified', route: '/qc',
       permissions: [Perm.taskQCReview] },
+    // Sits beside QC because the same people usually do both, and deliberately named "Checks"
+    // rather than "Verifications" — it is the shorter word for the same idea, and the one people
+    // already use for it out loud.
+    { section: 'Quality', label: 'Checks', icon: 'fact_check', route: '/verifications',
+      permissions: [Perm.verificationCreate, Perm.verificationWork, Perm.verificationViewAll] },
 
     { section: 'Insight', label: 'Reports', icon: 'summarize', route: '/reports',
       permissions: [Perm.reportsView] },

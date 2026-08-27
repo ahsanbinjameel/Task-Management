@@ -218,7 +218,11 @@ public static class StatusViews
             new[] { RequestStatus.Deferred },
             new[] { WorkTaskStatus.Blocked, WorkTaskStatus.OnHold, WorkTaskStatus.Deferred }),
         new RequestStatusView("checking", "Being Checked",
-            Array.Empty<RequestStatus>(),
+            // Under verification folds in here on purpose. To the person who asked, "somebody is
+            // establishing whether this is really broken" and "somebody is checking the fix" are
+            // the same news: it is in hand and there is nothing for them to do. Telling them apart
+            // would mean teaching them what a verification is, which is our vocabulary, not theirs.
+            new[] { RequestStatus.UnderVerification },
             new[] { WorkTaskStatus.CompletedReadyForQC, WorkTaskStatus.QCReview }),
         new RequestStatusView("done", "Completed",
             Array.Empty<RequestStatus>(),
@@ -243,6 +247,11 @@ public static class StatusViews
             new[] { RequestStatus.InReview }, Array.Empty<WorkTaskStatus>()),
         new RequestStatusView("input", "Needs information",
             new[] { RequestStatus.ClarificationRequired }, Array.Empty<WorkTaskStatus>()),
+        // Its own tile, unlike the requester's view: "waiting on a checker" and "waiting on the
+        // person who asked" are different queues with different people to chase, and separating
+        // them is the reviewer's job.
+        new RequestStatusView("verifying", "Being verified",
+            new[] { RequestStatus.UnderVerification }, Array.Empty<WorkTaskStatus>()),
         new RequestStatusView("approved", "Approved",
             new[] { RequestStatus.Approved }, Array.Empty<WorkTaskStatus>()),
         new RequestStatusView("escalated", "Escalated",

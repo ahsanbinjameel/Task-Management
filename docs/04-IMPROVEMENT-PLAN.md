@@ -993,3 +993,137 @@ form that has not been submitted. Nothing to remember to press afterwards.
       neither leaks into the task's own file lists, and the request's screenshots stay on the request
 - [x] Evidence downloads back byte-for-byte through the authorised endpoint
 - [x] `ng build --configuration production` clean
+
+
+---
+
+# 2026-08-26 — Verification, and the administrator who was a worker
+
+Two changes, related only in that both come from the same mistake: assuming that because two things
+often go together, one implies the other.
+
+## Part 1 — Verification
+
+### The gap
+
+A reviewer opens *"Employee Salary form is not calculating tax correctly."* They cannot tell from
+that whether it is a software defect, a configuration mistake, a data problem, a permission problem,
+a misunderstanding, or expected behaviour somebody dislikes. Triage offered six outcomes and not one
+of them said *"find out"*:
+
+| What they could do | What it costs |
+|---|---|
+| **Approve** it into a task | Commits the organisation to building something before anyone has established there is anything to build. And it is irreversible — an unwanted task has to be cancelled on its own page |
+| **Ask for clarification** | Bounces it back to a requester who has already told you everything they know. The information needed is in the system, not in their head |
+| **Reject** it | Guessing, with the requester bearing the cost of a wrong guess |
+| Fake it as a task, complete it, send it to QC | Four states, an assignee, acceptance criteria and a closure checklist, every one given a meaningless answer, to record twenty minutes of looking |
+
+The fourth is what people actually did, which is how you end up unable to distinguish *work that was
+done* from *looking that was done* in any report.
+
+### The shape of it
+
+`Verification` — assigned investigation. A reference number, a target, a checker, instructions, a
+result, findings, evidence, and its own history stream.
+
+```
+Request → Review → Send for checking → Verification → findings → Review → (approve or not)
+                                                                              ↓
+                                                                      TaskCreationService
+```
+
+Three concepts that look alike and are kept apart:
+
+| | Answers | Needs a task? | Who starts it |
+|---|---|---|---|
+| `QCReview` | "Does this finished work meet its acceptance criteria?" | yes, a completed one | the process, after Complete |
+| `Verification` | "Is there really a problem here?" | **no** — usually there is none | a reviewer, deliberately assigning it |
+| `QuickWork` | "What was I doing for those forty minutes?" | no | the person doing it, for themselves |
+
+### Decisions
+
+| Decision | |
+|---|---|
+| A **new aggregate**, not a polymorphic `QCReview` | QC owns the transitions into `QCPassed`/`QCFailedRework`, numbered attempts, criteria evaluation and segregation of duties. Every one of those would have needed a null case meaning "not applicable" — and the null case would have been the common one |
+| **A result never creates work** | `IssueConfirmed` returns the request to `InReview` with the findings attached and stops. This is the load-bearing decision: an automatic task on a confirmed issue would have made the check *be* the approval, and `TaskCreationService`'s monopoly is what makes "a request never auto-becomes a task" auditable rather than aspirational |
+| **Every** result hands the request back the same way | Five outcomes with five consequences would be five rules to remember and five places for a request to get stuck. The reviewer already has all seven triage outcomes in front of them |
+| No decision while a check is open | Applied to every decisive outcome, not only approval. A checker who submits findings against a request rejected underneath them has done the work for nothing. Asking for a clarification is exempt — a question is not a decision |
+| Real FKs where a real row exists | `RequestId` and `ModuleId` are constrained; a form, screen or build is described in `TargetName`/`TargetReference`. One untyped `SourceId` read through `TargetType` would be unjoinable, unconstrained, and silently orphaned on the first delete |
+| **Three** permissions, not four | `Verification.Create` covers raise/assign/re-route/cancel. A check with no checker is inert, so naming one is part of raising it — a separate `Verification.Assign` would mean holding two permissions to do the one thing the feature exists for |
+| Start / report / attach decided **on the record** | `AssignedToUserId == caller`. A reviewer holding every permission there is cannot file findings under the checker's name. Same shape, same reasoning, as `CompletionProof` |
+| A requester is told **"Being Checked"** | `UnderVerification` folds into their existing `checking` view — the same words a task in QC gets. To the person who asked, "establishing whether this is broken" and "checking the fix" are the same news. Reviewers get their own `verifying` tile, because those are two different queues with two different people to chase |
+
+## Part 2 — Administrator was quietly a worker
+
+`DefaultRoles.Map[Administrator]` was `Permissions.All`, which included `Workforce.TrackShift` and
+`Task.Work`. So every administrator got a shift widget in the toolbar, appeared in
+who-is-working-now, and turned up in the assignable list for real work — none of which follows from
+administering the system.
+
+`DefaultRoles.AdministratorGrants` is now everything except those two. `Administrator = Worker` is a
+configuration decision: an administrator who also does the work gets the Worker role too.
+
+Note the seeder is **additive** by design — a restart must never silently revoke a permission a site
+chose to add — so this changes what a *new* database grants. An existing one keeps what it has until
+someone removes it in the role editor. Said in the runbook's first-run checklist.
+
+`RoleAndShiftSeparationTests` pins the three independent permissions, including the one nobody was
+testing: signing in does not start a shift.
+
+## Verified
+
+- [x] 37 new application tests (`VerificationTests`, `RoleAndShiftSeparationTests`); suite at
+      **393** (29 domain + 364 application), all green
+- [x] `dotnet build` clean across the solution; `npm run build` clean on the Angular client
+- [x] `Verifications` migration generated and applied to `WorkflowApp_Dev`
+- [x] `UserAdminServiceTests.List_roles_reports_the_seeded_permission_grants` updated — it asserted
+      the old assumption, exempting Administrator from the "nobody else is shift-tracked" rule
+- [x] `scripts/sql/reset-dev-data.sql` extended, child-first, between the tasks and the requests
+- [x] **Verification driven end to end over HTTP against SQL Server** (36 checks, all passing):
+      request → send for checking → the requester reads "Being Checked" while the reviewer reads
+      "Being verified" → approve and reject both refused with `request.verification_pending` →
+      only the assigned checker may start it or attach evidence (a reviewer gets 403 on both) →
+      findings recorded → request back in `InReview` with **no task** → approval is what creates
+      the task. Plus an independent check with no request behind it, a checker who cannot be
+      assigned one (`verification.checker_cannot_work`), 404-not-403 scoping, and the original
+      request→approval→task pipeline still running unchanged
+- [x] One thing the HTTP run corrected: whitespace-only findings are caught by `[Required]` on the
+      DTO **before** the controller runs, so they come back as a 400 field error rather than the
+      service's `verification.findings_required`. That is the better shape — the client renders it
+      under the textarea — and the service check still guards the contract for non-HTTP callers
+
+### Follow-up, same day — the two things the first cut got wrong
+
+Both found by actually using the screen rather than by reading the code.
+
+**A check with no checker was a dead end.** `PUT /{id}/assignee` and `assignableCheckers` were
+built and then never called from anywhere: nothing in the UI could give a check to somebody. A
+verification raised without an assignee sat at "Waiting for a checker · Nobody yet" with no action
+on the page but *Call it off* — and the "needs a checker" notification, addressed to exactly the
+people holding `Verification.Work`, led them to that same dead page.
+
+Fixed with two paths, because they are two different acts:
+
+| | Who | Permission | When |
+|---|---|---|---|
+| `POST /{id}/claim` | a checker taking it | `Verification.Work` | only while nobody holds it |
+| `PUT /{id}/assignee` | a coordinator giving it out | `Verification.Create` | any time, and asks why if somebody already has it |
+
+Both are reachable from the list (a **Take it** / **Assign** column) and the detail. The detail also
+now says out loud that an unassigned check is not moving, rather than leaving it to be inferred from
+"Nobody yet" in a field.
+
+**The list rendered as one run-on line of text.** `<table class="grid">` — but `.grid` in
+`styles.scss` is a CSS-Grid utility (`display: grid`), so it flattened the table. Every other grid
+in the app is a `mat-table`, and the table styling in `styles.scss` is written against
+`.mat-mdc-header-cell` / `.mat-mdc-row`, which a plain `<table>` never matches. Rewritten as a
+`mat-table`.
+
+Three smaller things went with them: the evidence panel printed its empty message twice (its own
+paragraph plus `app-attachments`' built-in one), status chips had no tone so everything was grey,
+and *Call it off* sent a canned reason instead of asking for one — the server requires a reason, so
+every call-off was recorded as "Called off from the check screen."
+
+- [x] 4 more tests (claim, claim-refused-when-held, idempotent claim, claim-without-permission);
+      suite at **397**
+- [x] `npm run build` clean

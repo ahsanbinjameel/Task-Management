@@ -6,6 +6,7 @@ using WorkflowApp.Application.Common.Events;
 using WorkflowApp.Domain.Entities.Identity;
 using WorkflowApp.Domain.Entities.Requests;
 using WorkflowApp.Domain.Entities.Tasks;
+using WorkflowApp.Domain.Entities.Verifications;
 
 namespace WorkflowApp.Infrastructure.Persistence.Interceptors;
 
@@ -100,6 +101,12 @@ public sealed class IntegrationEventDispatchInterceptor : SaveChangesInterceptor
                 case WorkTask task:
                     _queue.Enqueue(new TaskChangedEvent(
                         task.Id, task.TaskNumber, task.Status, task.PrimaryAssigneeUserId, Kind(entry)));
+                    break;
+
+                case Verification verification:
+                    _queue.Enqueue(new VerificationChangedEvent(
+                        verification.Id, verification.VerificationNumber, verification.Status,
+                        verification.AssignedToUserId, Kind(entry)));
                     break;
 
                 case Request request:

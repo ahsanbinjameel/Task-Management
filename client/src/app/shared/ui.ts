@@ -3,8 +3,12 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatButtonModule } from '@angular/material/button';
 import { RouterLink } from '@angular/router';
-import { Priority, WorkTaskStatus, WorkforceState } from '../core/models';
-import { priorityTone, statusTone, workforceTone } from '../core/format';
+import {
+  Priority, WorkTaskStatus, WorkforceState, VerificationStatus, VerificationResult,
+} from '../core/models';
+import {
+  priorityTone, statusTone, workforceTone, verificationTone, verificationResultTone,
+} from '../core/format';
 import { LabelKind, label } from '../core/labels';
 
 /** A status, priority or availability value rendered as a tone-coded chip. */
@@ -27,6 +31,8 @@ export class ChipComponent {
       case 'priority':
       case 'urgency': return priorityTone(this.value() as Priority);
       case 'workforce': return workforceTone(this.value() as WorkforceState);
+      case 'verificationStatus': return verificationTone(this.value() as VerificationStatus);
+      case 'verificationResult': return verificationResultTone(this.value() as VerificationResult);
       default: return 'neutral';
     }
   };

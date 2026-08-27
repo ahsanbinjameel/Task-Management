@@ -226,18 +226,20 @@ public class UserAdminServiceTests
         var roles = await h.UserAdmin.ListRolesAsync();
 
         var administrator = Assert.Single(roles, r => r.Name == DefaultRoles.Administrator);
-        Assert.Equal(Permissions.All.Length, administrator.Permissions.Count);
+        Assert.Equal(DefaultRoles.AdministratorGrants.Length, administrator.Permissions.Count);
 
         var worker = Assert.Single(roles, r => r.Name == DefaultRoles.Worker);
         // Workers execute tasks and are the only default role on the clock.
         Assert.Contains(Permissions.TaskWork, worker.Permissions);
         Assert.Contains(Permissions.WorkforceTrackShift, worker.Permissions);
 
-        // Nobody else is shift-tracked by default.
-        foreach (var role in roles.Where(r =>
-                     r.Name != DefaultRoles.Worker && r.Name != DefaultRoles.Administrator))
+        // Nobody else is shift-tracked by default — and that now includes the administrator, who
+        // used to be exempted here. Administering the system is not doing the work: see
+        // DefaultRoles.AdministratorGrants.
+        foreach (var role in roles.Where(r => r.Name != DefaultRoles.Worker))
         {
             Assert.DoesNotContain(Permissions.WorkforceTrackShift, role.Permissions);
+            Assert.DoesNotContain(Permissions.TaskWork, role.Permissions);
         }
     }
 

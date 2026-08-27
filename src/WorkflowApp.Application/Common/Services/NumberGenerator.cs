@@ -75,4 +75,9 @@ public static class NumberSequences
     // request sequence would put gaps in both.
     public const string Batch = "Batch";
     public const string BatchPrefix = "BAT";
+
+    // Same reasoning again. A verification is quoted to people ("what did VER-000042 find?"), so it
+    // needs a dense counter of its own rather than a share of the request or task sequence.
+    public const string Verification = "Verification";
+    public const string VerificationPrefix = "VER";
 }

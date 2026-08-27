@@ -1,5 +1,7 @@
 import { Pipe, PipeTransform } from '@angular/core';
-import { Priority, WorkTaskStatus, WorkforceState } from './models';
+import {
+  Priority, WorkTaskStatus, WorkforceState, VerificationStatus, VerificationResult,
+} from './models';
 import { LabelKind, humanizeEnum as humanize, label } from './labels';
 
 /**
@@ -111,6 +113,36 @@ export function statusTone(status: WorkTaskStatus): string {
       return 'danger';
     default:
       return 'neutral';
+  }
+}
+
+/**
+ * Colour for a check's state. Mirrors the task mapping where the meaning matches: being looked at
+ * is `review`, the same as a task in QC, because it is the same news to whoever is waiting.
+ */
+export function verificationTone(status: VerificationStatus): string {
+  switch (status) {
+    case 'Requested': return 'warn';       // nobody has it — the one that needs chasing
+    case 'Assigned': return 'neutral';
+    case 'InProgress': return 'review';
+    case 'Completed': return 'good';
+    case 'Cancelled': return 'muted';
+    default: return 'neutral';
+  }
+}
+
+/**
+ * Colour for what a check found. Only a confirmed problem is bad news; "working correctly" is a
+ * perfectly good outcome and colouring it red would misread the whole point of asking.
+ */
+export function verificationResultTone(result: VerificationResult): string {
+  switch (result) {
+    case 'IssueConfirmed': return 'danger';
+    case 'WorkingCorrectly': return 'good';
+    case 'ConfigurationOrDataIssue': return 'warn';
+    case 'NeedsClarification': return 'warn';
+    case 'Inconclusive': return 'muted';
+    default: return 'neutral';
   }
 }
 
