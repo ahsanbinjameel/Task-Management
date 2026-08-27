@@ -165,7 +165,6 @@ import { VerificationAssignDialog } from './verification-assign-dialog.component
                     <mat-label>What you found</mat-label>
                     <textarea matInput rows="5" name="findings" [(ngModel)]="findings"
                               maxlength="8000"
-                              placeholder="What you did, what happened, and what you concluded."
                               (input)="form.clearField('findings')"></textarea>
                     @if (form.fieldError('findings'); as e) { <mat-error>{{ e }}</mat-error> }
                   </mat-form-field>

@@ -259,7 +259,6 @@ export class FoldDialog {
         </div>
       } @else {
         <app-empty message="That submission is not here" icon="inbox"
-                   hint="It may have been removed, or belong to someone else."
                    actionLabel="All requests" actionRoute="/requests" />
       }
     </div>

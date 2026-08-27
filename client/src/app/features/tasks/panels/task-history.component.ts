@@ -54,9 +54,6 @@ interface Entry {
       @if (entries().length === 0) {
         <app-empty
           [message]="view() === 'story' ? 'Nothing has happened yet' : 'No transitions recorded'"
-          [hint]="view() === 'story'
-            ? 'Starting work, pausing, finishing and quality checks all show up here.'
-            : 'The status trail begins the first time this task moves.'"
           icon="history" />
       } @else {
         <div class="timeline">

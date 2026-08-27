@@ -30,10 +30,6 @@ import { ConfirmDialog, ConfirmData } from '../../../shared/dialogs';
     <div class="stack">
       <div class="card card-pad">
         <h2 class="card-title">Request a scope change</h2>
-        <p class="muted small note">
-          The estimate and due date only move once someone with approval rights accepts this.
-        </p>
-
         <mat-form-field class="full">
           <mat-label>What is changing?</mat-label>
           <textarea matInput rows="2" [(ngModel)]="description"></textarea>
@@ -58,8 +54,7 @@ import { ConfirmDialog, ConfirmData } from '../../../shared/dialogs';
       <div class="card">
         <div class="card-pad"><h2 class="card-title" style="margin:0">History</h2></div>
         @if (changes().length === 0) {
-          <app-empty message="The scope has not changed" icon="rule"
-                     hint="Record a change when the job turns out bigger or smaller than agreed — the original estimate is kept either way." />
+          <app-empty message="The scope has not changed" icon="rule" />
         } @else {
           @for (change of changes(); track change.id) {
             <div class="change">

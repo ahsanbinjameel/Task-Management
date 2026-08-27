@@ -35,10 +35,6 @@ import { enumOptions, SearchSelectComponent } from '../../shared/search-select.c
         </div>
       }
 
-      <p class="muted small note">
-        The people reviewing this will be told what you changed.
-      </p>
-
       <mat-form-field class="full">
         <mat-label>Title</mat-label>
         <input matInput name="title" [(ngModel)]="title" />

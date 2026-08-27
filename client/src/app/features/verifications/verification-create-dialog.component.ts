@@ -45,7 +45,6 @@ import { SearchSelectComponent, SelectOption, enumOptions } from '../../shared/s
         <mat-form-field>
           <mat-label>What needs checking</mat-label>
           <input matInput name="title" [(ngModel)]="title" cdkFocusInitial maxlength="300"
-                 placeholder="Whether the Employee Salary form calculates tax correctly"
                  (input)="form.clearField('title')" />
           @if (form.fieldError('title'); as e) { <mat-error>{{ e }}</mat-error> }
         </mat-form-field>
@@ -59,7 +58,6 @@ import { SearchSelectComponent, SelectOption, enumOptions } from '../../shared/s
 
         @if (targetType === 'Module') {
           <app-search-select label="Module" name="moduleId"
-                             placeholder="Type to find a module"
                              [options]="moduleOptions()" [(ngModel)]="moduleId" />
         } @else {
           <mat-form-field>

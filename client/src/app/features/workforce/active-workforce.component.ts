@@ -25,7 +25,7 @@ import {
   ],
   template: `
     <div class="page">
-      <app-page-header title="Who's working" subtitle="Live view of everyone on shift.">
+      <app-page-header title="Who's working">
         <button matButton (click)="load()"><mat-icon>refresh</mat-icon> Refresh</button>
       </app-page-header>
 
@@ -41,8 +41,7 @@ import {
 
         <div class="card top-gap">
           @if (d.workers.length === 0) {
-            <app-empty message="Nobody is on shift" icon="sensors_off"
-                       hint="People appear here as they start their day." />
+            <app-empty message="Nobody is on shift" icon="sensors_off" />
           } @else {
             @for (worker of d.workers; track worker.userId) {
               <div class="worker">

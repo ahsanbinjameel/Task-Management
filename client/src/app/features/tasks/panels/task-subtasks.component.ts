@@ -46,8 +46,7 @@ import { TaskTableComponent } from '../../../shared/task-table.component';
         </div>
 
         @if (parentSubtasks().length === 0) {
-          <app-empty message="This task has not been broken into smaller tasks" icon="account_tree"
-                     hint="Break the work down when it is too big to track as one item." />
+          <app-empty message="This task has not been broken into smaller tasks" icon="account_tree" />
         } @else {
           @for (sub of parentSubtasks(); track sub.taskId) {
             <a class="sub" [routerLink]="['/tasks', sub.taskId]">
@@ -70,11 +69,6 @@ import { TaskTableComponent } from '../../../shared/task-table.component';
       @if (canCreate && !isTerminal()) {
         <div class="card card-pad">
           <h2 class="card-title">Add a smaller task</h2>
-          <p class="muted small note">
-            A smaller task is a task in its own right — its own number, its own responsible person
-            and its own timer.
-          </p>
-
           <mat-checkbox [(ngModel)]="isRequired" class="required-box">
             This has to be done before the main task can be finished
           </mat-checkbox>

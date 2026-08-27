@@ -90,15 +90,13 @@ const SUGGESTED_BY_TYPE: Record<string, OptionalKey[]> = {
     <div class="page narrow">
       <app-page-header
         title="New request"
-        subtitle="Tell us what you need. A reviewer decides what happens next."
       />
 
       <form class="card card-pad stack" [formGroup]="form" (ngSubmit)="submit()">
         @if (extras.length > 0) {
           <mat-form-field class="full">
             <mat-label>What is this batch about?</mat-label>
-            <input matInput formControlName="batchTitle"
-                   placeholder="e.g. Month-end problems" />
+            <input matInput formControlName="batchTitle" />
           </mat-form-field>
 
           <div class="item-head first">
@@ -108,20 +106,18 @@ const SUGGESTED_BY_TYPE: Record<string, OptionalKey[]> = {
 
         <mat-form-field class="full">
           <mat-label>Title</mat-label>
-          <input matInput formControlName="title" placeholder="Short summary of what you need" />
+          <input matInput formControlName="title" />
         </mat-form-field>
 
         <mat-form-field class="full">
           <mat-label>Description</mat-label>
-          <textarea matInput rows="4" formControlName="description"
-                    placeholder="What do you need, and where does it happen?"></textarea>
+          <textarea matInput rows="4" formControlName="description"></textarea>
         </mat-form-field>
 
         <div class="form-grid">
           <mat-form-field>
             <mat-label>Client (optional)</mat-label>
-            <input matInput formControlName="clientName" [matAutocomplete]="clientList"
-                   placeholder="Type a name, or leave blank" />
+            <input matInput formControlName="clientName" [matAutocomplete]="clientList" />
             <mat-autocomplete #clientList>
               @for (name of suggestions(); track name) {
                 <mat-option [value]="name">{{ name }}</mat-option>
@@ -154,12 +150,6 @@ const SUGGESTED_BY_TYPE: Record<string, OptionalKey[]> = {
           knows what they have to say.
         -->
         <div class="optional">
-          @if (extras.length > 0) {
-            <p class="muted small items-note">
-              The extra detail fields below belong to this first request. The others ask for a title
-              and a description &mdash; a reviewer can always come back with a question.
-            </p>
-          }
           <div class="row row-wrap chips-row">
             <span class="muted small label">Add more detail (optional)</span>
             @for (field of optionalFields; track field.key) {
@@ -197,12 +187,6 @@ const SUGGESTED_BY_TYPE: Record<string, OptionalKey[]> = {
         -->
         @if (extras.length > 0) {
           <div class="items" formArrayName="extras">
-            <p class="muted small items-note">
-              These go in together as {{ extras.length + 1 }} separate requests, sharing the client
-              and files above. A reviewer decides on each one, and may combine any of them into a
-              single piece of work.
-            </p>
-
             @for (item of extras.controls; track $index; let i = $index) {
               <div class="item card-pad" [formGroupName]="i">
                 <div class="row item-head">
@@ -216,13 +200,12 @@ const SUGGESTED_BY_TYPE: Record<string, OptionalKey[]> = {
 
                 <mat-form-field class="full">
                   <mat-label>Title</mat-label>
-                  <input matInput formControlName="title" placeholder="Short summary" />
+                  <input matInput formControlName="title" />
                 </mat-form-field>
 
                 <mat-form-field class="full">
                   <mat-label>Description</mat-label>
-                  <textarea matInput rows="3" formControlName="description"
-                            placeholder="What do you need, and where does it happen?"></textarea>
+                  <textarea matInput rows="3" formControlName="description"></textarea>
                 </mat-form-field>
 
                 <div class="form-grid">
@@ -279,7 +262,6 @@ const SUGGESTED_BY_TYPE: Record<string, OptionalKey[]> = {
     .add-chip.suggested { border-style: solid; color: inherit; }
     .add-chip mat-icon { font-size: 16px; width: 16px; height: 16px; }
     .items { display: flex; flex-direction: column; gap: 12px; margin: 6px 0 12px; }
-    .items-note { margin: 0 0 10px; }
     .item {
       border: 1px solid var(--border); border-radius: var(--radius);
       background: var(--surface-sunken);

@@ -1,20 +1,14 @@
 import { DestroyRef, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { RealtimeService } from '../../core/realtime.service';
 import { syncOn } from '../../core/realtime-sync';
-import { DatePipe } from '@angular/common';
-import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
-import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
-import { MatInputModule } from '@angular/material/input';
-import { MatSlideToggleModule } from '@angular/material/slide-toggle';
-import { MatTableModule } from '@angular/material/table';
-import { MatPaginatorModule, PageEvent } from '@angular/material/paginator';
+import { PageEvent } from '@angular/material/paginator';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { ApiService } from '../../core/api.service';
 import { StatusTilesComponent } from '../../shared/status-tiles.component';
-import { SortHeaderComponent, SortState } from '../../shared/sort-header.component';
+import { SortState } from '../../shared/sort-header.component';
 import { AuthService } from '../../core/auth.service';
 import { Perm } from '../../core/permissions';
 import {
@@ -22,13 +16,10 @@ import {
   RequestBatchSummaryDto, StatusCountDto,
 } from '../../core/models';
 import { urgencyLabel } from '../../core/labels';
-import { SearchSelectComponent } from '../../shared/search-select.component';
-import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../shared/ui';
+import { ChipComponent, PageHeaderComponent } from '../../shared/ui';
 import { QuickViewComponent, QuickViewTarget } from '../../shared/quick-view.component';
-import {
-  ColumnFilterComponent, ColumnFilterSpec, FilterSummaryComponent, NoMatchesComponent,
-  columnFilters,
-} from '../../shared/column-filter.component';
+import { columnFilters } from '../../shared/column-filter.component';
+import { DataGridComponent, GridCellDirective, GridColumn } from '../../shared/data-grid.component';
 
 const URGENCIES: RequestedUrgency[] = ['Critical', 'High', 'Normal', 'Low'];
 
@@ -41,15 +32,13 @@ const STATUSES: RequestStatus[] = [
   selector: 'app-request-list',
   standalone: true,
   imports: [
-    DatePipe, RouterLink, MatButtonModule, MatIconModule,
-    MatTableModule, MatPaginatorModule,
-    MatTooltipModule, QuickViewComponent, PageHeaderComponent, ChipComponent, EmptyComponent, LoadingComponent,
-    StatusTilesComponent, SortHeaderComponent, ColumnFilterComponent, NoMatchesComponent,
-    FilterSummaryComponent,
+    RouterLink, MatButtonModule, MatIconModule, MatTooltipModule,
+    QuickViewComponent, PageHeaderComponent, ChipComponent, StatusTilesComponent,
+    DataGridComponent, GridCellDirective,
   ],
   template: `
     <div class="page">
-      <app-page-header title="Requests" subtitle="Everything that has been asked for.">
+      <app-page-header title="Requests">
         @if (auth.has(Perm.requestCreate)) {
           <a matButton="filled" routerLink="/requests/new">
             <mat-icon>add</mat-icon> New request
@@ -71,7 +60,6 @@ const STATUSES: RequestStatus[] = [
       -->
       @if (batches().length > 0) {
         <div class="batch-strip">
-          <span class="muted small">Asked for as a set:</span>
           @for (batch of batches(); track batch.id) {
             <a class="batch-pill" [routerLink]="['/requests/batches', batch.id]">
               <span class="mono small">{{ batch.batchNumber }}</span>
@@ -82,186 +70,75 @@ const STATUSES: RequestStatus[] = [
         </div>
       }
 
-      <app-filter-summary [count]="filters.activeCount()" (clear)="filters.clear()" />
+      <app-data-grid
+        [rows]="page().items" [columns]="columns()"
+        [loading]="loading()" [refreshing]="refreshing()"
+        [filters]="filters" [filterOptions]="options()" [externalFilter]="view() !== null"
+        [sort]="sort()" (sortChange)="applySort($event)"
+        [total]="page().totalCount" [pageSize]="page().pageSize"
+        [pageIndex]="page().page - 1" [pageSizeOptions]="[25, 50]" (pageChange)="onPage($event)"
+        emptyMessage="No requests match" emptyIcon="inbox"
+        emptyActionLabel="Raise a request" emptyActionRoute="/requests/new"
+        noMatchesMessage="No requests match those filters."
+        [clickable]="true" (rowClick)="open($event)" (clearedFilters)="clearView()">
 
-      <div class="card" [class.refreshing]="refreshing()">
-        @if (loading()) {
-          <app-loading />
-        } @else if (page().items.length === 0 && !filters.any()) {
-          <app-empty message="No requests match" icon="inbox"
-                     hint="Pick a different status card above."
-                     actionLabel="Raise a request" actionRoute="/requests/new" />
-        } @else {
-          <div class="table-scroll">
-            <table mat-table [dataSource]="page().items">
-              <ng-container matColumnDef="number">
-                <th mat-header-cell *matHeaderCellDef>
-                  <app-sort-header label="Request" column="number" [sort]="sort()"
-                                   (sortChange)="applySort($event)" />
-                </th>
-                <td mat-cell *matCellDef="let r">
-                  <a class="mono link" [routerLink]="['/requests', r.id]">{{ r.requestNumber }}</a>
-                </td>
-              </ng-container>
+        <ng-template gridCell="number" let-r>
+          <a class="grid-link mono" [routerLink]="['/requests', r.id]">{{ r.requestNumber }}</a>
+        </ng-template>
 
-              <ng-container matColumnDef="title">
-                <th mat-header-cell *matHeaderCellDef>
-                  <app-sort-header label="Title" column="title" [sort]="sort()"
-                                   (sortChange)="applySort($event)" />
-                </th>
-                <td mat-cell *matCellDef="let r">
-                  <a class="title" [routerLink]="['/requests', r.id]">{{ r.title }}</a>
-                  @if (r.hasOpenClarification) {
-                    <mat-icon class="flag" matTooltip="Waiting on a clarification">help</mat-icon>
-                  }
-                </td>
-              </ng-container>
-
-              <!--
-                The status shown is the one the server decided for this reader: for a requester
-                that follows the task their request generated, because after approval the request
-                itself stops moving and "Approved" would sit there for a fortnight while the work
-                was actually being done.
-              -->
-              <ng-container matColumnDef="status">
-                <th mat-header-cell *matHeaderCellDef>
-                  <app-sort-header label="Status" column="status" [sort]="sort()"
-                                   (sortChange)="applySort($event)" />
-                </th>
-                <td mat-cell *matCellDef="let r">
-                  <span class="chip" [class]="'tone-' + tone(r)">{{ r.viewLabel }}</span>
-                </td>
-              </ng-container>
-
-              <ng-container matColumnDef="client">
-                <th mat-header-cell *matHeaderCellDef>
-                  <app-sort-header label="Client" column="client" [sort]="sort()"
-                                   (sortChange)="applySort($event)" />
-                </th>
-                <td mat-cell *matCellDef="let r">
-                  @if (r.clientName) {
-                    <span class="truncate">{{ r.clientName }}</span>
-                  } @else { <span class="muted small">Internal</span> }
-                </td>
-              </ng-container>
-
-              <!-- Who is doing it, once someone is. The requester's most-asked question. -->
-              <ng-container matColumnDef="responsible">
-                <th mat-header-cell *matHeaderCellDef>Responsible person</th>
-                <td mat-cell *matCellDef="let r">
-                  @if (r.responsibleDisplayName) {
-                    <span class="truncate">{{ r.responsibleDisplayName }}</span>
-                  } @else { <span class="muted small">Nobody yet</span> }
-                </td>
-              </ng-container>
-
-              <ng-container matColumnDef="updated">
-                <th mat-header-cell *matHeaderCellDef>Updated</th>
-                <td mat-cell *matCellDef="let r" class="nowrap">
-                  {{ (r.updatedAt ?? r.requestedAt) | date: 'MMM d' }}
-                </td>
-              </ng-container>
-
-              <!--
-                One action, the one that is actually waiting on this reader. Anything rarer is on
-                the detail screen rather than crowding every row.
-              -->
-              <ng-container matColumnDef="action">
-                <th mat-header-cell *matHeaderCellDef aria-label="Actions"></th>
-                <td mat-cell *matCellDef="let r" class="action-cell">
-                  <!-- A look without leaving the list. Chrome, not a column; desktop only. -->
-                  <button matIconButton class="peek" type="button" matTooltip="Quick look"
-                          [attr.aria-label]="'Quick look at ' + r.requestNumber"
-                          (click)="peek(r); $event.stopPropagation()">
-                    <mat-icon>visibility</mat-icon>
-                  </button>
-                  @if (r.hasOpenClarification) {
-                    <a class="action" [routerLink]="['/requests', r.id]"
-                       (click)="$event.stopPropagation()">Reply</a>
-                  }
-                </td>
-              </ng-container>
-
-              <ng-container matColumnDef="urgency">
-                <th mat-header-cell *matHeaderCellDef>
-                  <app-sort-header label="Urgency" column="urgency" [sort]="sort()"
-                                   (sortChange)="applySort($event)" />
-                </th>
-                <td mat-cell *matCellDef="let r">
-                  <app-chip [value]="r.requestedUrgency" kind="urgency" />
-                </td>
-              </ng-container>
-
-              <ng-container matColumnDef="requester">
-                <th mat-header-cell *matHeaderCellDef>
-                  <app-sort-header label="Requested by" column="requester" [sort]="sort()"
-                                   (sortChange)="applySort($event)" />
-                </th>
-                <td mat-cell *matCellDef="let r">{{ r.requestedByDisplayName }}</td>
-              </ng-container>
-
-              <ng-container matColumnDef="raised">
-                <th mat-header-cell *matHeaderCellDef>
-                  <app-sort-header label="Requested on" column="raised" [sort]="sort()"
-                                   (sortChange)="applySort($event)" />
-                </th>
-                <td mat-cell *matCellDef="let r" class="nowrap">
-                  {{ r.requestedAt | date: 'MMM d' }}
-                </td>
-              </ng-container>
-
-              <ng-container matColumnDef="task">
-                <th mat-header-cell *matHeaderCellDef>Task</th>
-                <td mat-cell *matCellDef="let r">
-                  @if (r.generatedTaskId) {
-                    <a class="link mono small" [routerLink]="['/tasks', r.generatedTaskId]">Open</a>
-                  } @else { <span class="muted">—</span> }
-                </td>
-              </ng-container>
-
-              <!--
-                The filter row. One cell per column in columns(), so it cannot fall out of step
-                with the header above it — a column added to the grid gets a filter if a spec names
-                it and an empty cell if not, rather than shifting everything one place left.
-              -->
-              @for (column of columns(); track column) {
-                <ng-container [matColumnDef]="column + '_filter'">
-                  <th mat-header-cell *matHeaderCellDef class="filter-cell">
-                    <app-column-filter [spec]="spec(column)" [value]="filters.value(column)"
-                                       (changed)="filters.set(spec(column), column, $event)" />
-                  </th>
-                </ng-container>
-              }
-
-              <tr mat-header-row *matHeaderRowDef="columns()"></tr>
-              <tr mat-header-row *matHeaderRowDef="filterRow()" class="filter-row"></tr>
-              <tr mat-row *matRowDef="let row; columns: columns()"
-                  class="clickable" tabindex="0"
-                  (click)="open(row)" (keydown.enter)="open(row)"></tr>
-            </table>
-          </div>
-          @if (page().items.length === 0) {
-            <app-no-matches message="No requests match those filters."
-                            (clear)="filters.clear()" />
-          } @else {
-            <mat-paginator [length]="page().totalCount" [pageSize]="page().pageSize"
-                           [pageIndex]="page().page - 1" [pageSizeOptions]="[25, 50]"
-                           (page)="onPage($event)" />
+        <ng-template gridCell="title" let-r>
+          <a class="grid-title" [routerLink]="['/requests', r.id]">{{ r.title }}</a>
+          @if (r.hasOpenClarification) {
+            <mat-icon class="flag" matTooltip="Waiting on a clarification">help</mat-icon>
           }
-        }
-      </div>
+        </ng-template>
+
+        <!--
+          The status shown is the one the server decided for this reader: for a requester that
+          follows the task their request generated, because after approval the request itself stops
+          moving and "Approved" would sit there for a fortnight while the work was being done.
+        -->
+        <ng-template gridCell="status" let-r>
+          <span class="chip" [class]="'tone-' + tone(r)">{{ r.viewLabel }}</span>
+        </ng-template>
+
+        <ng-template gridCell="client" let-r>
+          @if (r.clientName) {
+            <span class="truncate">{{ r.clientName }}</span>
+          } @else { <span class="muted small">Internal</span> }
+        </ng-template>
+
+        <ng-template gridCell="responsible" let-r>
+          @if (r.responsibleDisplayName) {
+            <span class="truncate">{{ r.responsibleDisplayName }}</span>
+          } @else { <span class="muted small">Nobody yet</span> }
+        </ng-template>
+
+        <ng-template gridCell="urgency" let-r>
+          <app-chip [value]="r.requestedUrgency" kind="urgency" />
+        </ng-template>
+
+        <!--
+          One action, the one that is actually waiting on this reader. Anything rarer is on the
+          detail screen rather than crowding every row.
+        -->
+        <ng-template gridCell="action" let-r>
+          <button matIconButton class="grid-peek" type="button" matTooltip="Quick look"
+                  [attr.aria-label]="'Quick look at ' + r.requestNumber"
+                  (click)="peek(r); $event.stopPropagation()">
+            <mat-icon>visibility</mat-icon>
+          </button>
+          @if (r.hasOpenClarification) {
+            <a class="grid-action" [routerLink]="['/requests', r.id]"
+               (click)="$event.stopPropagation()">Reply</a>
+          }
+        </ng-template>
+      </app-data-grid>
 
       <app-quick-view [target]="peeking()" (close)="peeking.set(null)" />
     </div>
   `,
   styles: `
-    /*
-     * A filter reload dims the *rows* rather than replacing the table — see the note on the loaded flag.
-     * Deliberately not the whole card and deliberately no pointer-events block: the filter row is
-     * what triggered the reload, and freezing it would stop the next keystroke landing.
-     */
-    .refreshing tbody { opacity: .45; transition: opacity .12s; }
-
     .batch-strip {
       display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 14px 0 -2px;
     }
@@ -271,28 +148,6 @@ const STATUSES: RequestStatus[] = [
       background: var(--surface-raised); color: inherit; text-decoration: none; font-size: 13px;
     }
     .batch-pill:hover { background: var(--surface-sunken); }
-    .action-cell { text-align: right; white-space: nowrap; }
-    .peek { margin-right: 2px; vertical-align: middle; }
-    .peek mat-icon { font-size: 18px; width: 18px; height: 18px; color: var(--text-muted); }
-    @media (max-width: 1100px) { .peek { display: none; } }
-    .filters { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
-    .filters mat-form-field { margin-bottom: -1.25em; }
-    .filters app-search-select { width: 200px; margin-bottom: -1.25em; }
-    .search { flex: 1 1 240px; }
-    tr.clickable { cursor: pointer; }
-    tr.clickable:hover { background: var(--surface-sunken); }
-    tr.clickable:focus-visible { outline: 2px solid #1d69d4; outline-offset: -2px; }
-    .action-cell { text-align: right; }
-    .action {
-      border: 1px solid var(--border-strong); background: var(--surface);
-      border-radius: 7px; padding: 4px 12px; font: inherit; font-size: 12.5px;
-      font-weight: 500; cursor: pointer; text-decoration: none; color: inherit;
-    }
-    .action:hover { background: var(--surface-sunken); }
-    .link { color: var(--text-muted); text-decoration: none; }
-    .link:hover { text-decoration: underline; }
-    .title { color: inherit; text-decoration: none; font-weight: 500; }
-    .title:hover { text-decoration: underline; }
     .flag {
       font-size: 15px; width: 15px; height: 15px;
       color: var(--tone-warn-fg); vertical-align: middle; margin-left: 5px;
@@ -309,17 +164,6 @@ export class RequestListComponent implements OnInit {
   readonly Perm = Perm;
   readonly statuses = STATUSES;
 
-  /**
-   * A requester is not shown the task their request generated. The request is their record of it,
-   * and the columns above already say who has it and how it is going — sending them to a second
-   * screen to learn "what happened after approval" is the thing this list exists to avoid.
-   *
-   * People who coordinate keep the intake-shaped grid: for them a request *is* an inbox item.
-   */
-  readonly columns = computed(() => this.auth.has(Perm.requestViewAll)
-    ? ['number', 'title', 'client', 'status', 'urgency', 'requester', 'raised', 'action']
-    : ['number', 'title', 'client', 'status', 'responsible', 'updated', 'action']);
-
   readonly view = signal<string | null>(null);
 
   /**
@@ -330,43 +174,81 @@ export class RequestListComponent implements OnInit {
    */
   readonly filters = columnFilters(() => { this.pageIndex = 0; this.reload(); });
 
-  /**
-   * What each column can be filtered by. Built as a signal because two of them are populated from
-   * the server (clients, people) and one depends on who is looking.
-   */
-  /** Which values each column can still be narrowed by, from the server. See the tasks grid. */
+  /** Which values each column can still be narrowed by, from the server. Merged in by the grid. */
   readonly options = signal<Record<string, string[]> | null>(null);
 
-  private availableFor(key: string): ReadonlySet<string> | undefined {
-    const all = this.options();
-    return all?.[key] ? new Set(all[key]) : undefined;
-  }
+  /**
+   * A requester is not shown the task their request generated. The request is their record of it,
+   * and the columns already say who has it and how it is going — sending them to a second screen
+   * to learn "what happened after approval" is the thing this list exists to avoid.
+   *
+   * People who coordinate keep the intake-shaped grid: for them a request *is* an inbox item.
+   */
+  readonly columns = computed<GridColumn<RequestSummaryDto>[]>(() => {
+    const number: GridColumn<RequestSummaryDto> = {
+      key: 'number', header: 'Request', sortable: true,
+      filter: { kind: 'text', placeholder: 'REQ-…' },
+    };
+    const title: GridColumn<RequestSummaryDto> = {
+      key: 'title', header: 'Title', sortable: true, minWidth: 260,
+      filter: { kind: 'text', placeholder: 'Title' },
+    };
+    const client: GridColumn<RequestSummaryDto> = {
+      key: 'client', header: 'Client', sortable: true,
+      filter: {
+        kind: 'select', placeholder: 'Any client',
+        options: this.clients().map((c) => ({ value: c.id, label: c.name })),
+      },
+    };
+    const status: GridColumn<RequestSummaryDto> = {
+      key: 'status', header: 'Status', sortable: true,
+    };
+    const action: GridColumn<RequestSummaryDto> = {
+      key: 'action', header: 'Actions', headerHidden: true, align: 'right', cellClass: 'nowrap',
+    };
 
-  readonly specs = computed<Record<string, ColumnFilterSpec>>(() => ({
-    number: { key: 'number', kind: 'text', placeholder: 'REQ-…' },
-    title: { key: 'title', kind: 'text', placeholder: 'Title', minWidth: 260 },
-    client: {
-      key: 'client', kind: 'select', placeholder: 'Any client',
-      options: this.clients().map((c) => ({ value: c.id, label: c.name })),
-      available: this.availableFor('client'),
-    },
-    urgency: {
-      key: 'urgency', kind: 'select', placeholder: 'Any',
-      options: URGENCIES.map((u) => ({ value: u, label: urgencyLabel(u) })),
-      available: this.availableFor('urgency'),
-    },
-    // Text, not a dropdown: the list of people is behind Task.Assign, which a reviewer need not
-    // hold, and a filter that 403s for half its users is worse than one that matches on the name
-    // already printed in the column.
-    requester: { key: 'requester', kind: 'text', placeholder: 'Name' },
-    responsible: { key: 'responsible', kind: 'text', placeholder: 'Name' },
-    raised: { key: 'raised', kind: 'date' },
-  }));
+    if (this.auth.has(Perm.requestViewAll)) {
+      return [
+        number, title, client, status,
+        {
+          key: 'urgency', header: 'Urgency', sortable: true,
+          filter: {
+            kind: 'select', placeholder: 'Any',
+            options: URGENCIES.map((u) => ({ value: u, label: urgencyLabel(u) })),
+          },
+        },
+        // Text, not a dropdown: the list of people is behind Task.Assign, which a reviewer need
+        // not hold, and a filter that 403s for half its users is worse than one that matches on
+        // the name already printed in the column.
+        {
+          key: 'requester', header: 'Requested by', sortable: true,
+          cell: (r) => r.requestedByDisplayName,
+          filter: { kind: 'text', placeholder: 'Name' },
+        },
+        {
+          key: 'raised', header: 'Requested on', sortable: true, cellClass: 'nowrap',
+          cell: (r) => formatDay(r.requestedAt),
+          filterValue: (r) => r.requestedAt,
+          filter: { kind: 'date' },
+        },
+        action,
+      ];
+    }
 
-  spec = (column: string): ColumnFilterSpec | undefined => this.specs()[column];
-
-  /** One filter cell per column, named so Material can pair the two header rows up. */
-  readonly filterRow = computed(() => this.columns().map((c) => `${c}_filter`));
+    return [
+      number, title, client, status,
+      // Who is doing it, once someone is. The requester's most-asked question.
+      {
+        key: 'responsible', header: 'Responsible person',
+        filter: { kind: 'text', placeholder: 'Name' },
+      },
+      {
+        key: 'updated', header: 'Updated', cellClass: 'nowrap',
+        cell: (r) => formatDay(r.updatedAt ?? r.requestedAt),
+      },
+      action,
+    ];
+  });
 
   readonly batches = signal<RequestBatchSummaryDto[]>([]);
   /** The row the drawer is showing, or null when it is closed. */
@@ -375,6 +257,7 @@ export class RequestListComponent implements OnInit {
   peek(request: { id: number }): void {
     this.peeking.set({ kind: 'request', id: request.id });
   }
+
   /**
    * True only until the first load lands.
    *
@@ -394,22 +277,16 @@ export class RequestListComponent implements OnInit {
   label = (value: string) => urgencyLabel(value as RequestedUrgency);
 
   ngOnInit(): void {
+    // The list opens on everything. It used to open a reviewer on "Submitted", which answered
+    // "what is waiting for me?" at the cost of hiding every other request they had a hand in —
+    // and a tile is one click away, whereas a view you did not choose is not obviously a filter
+    // at all. A `view` in the URL still wins, so a link lands where it points.
     const view = this.route.snapshot.queryParamMap.get('view');
-
-    // A reviewer opens this page to answer "what is waiting for me?", so that is what it opens on
-    // — the All list buries one actionable row under everything ever raised. Only for people who
-    // actually triage: a requester opening on "Submitted" would be shown the one part of their
-    // work that has *not* started yet and hidden everything in progress, which is the opposite of
-    // what they came for. A `view` in the URL always wins, so a link still lands where it points.
-    if (view) {
-      this.view.set(view);
-    } else if (this.auth.has(Perm.taskReview)) {
-      this.view.set('submitted');
-    }
+    if (view) this.view.set(view);
 
     this.api.clients().subscribe((c) => this.clients.set(c));
     this.reload();
-  
+
     // Re-fetch on the server's say-so; see syncOn for why it debounces and tears down.
     syncOn(
       [this.realtime.requestChanged],
@@ -428,7 +305,6 @@ export class RequestListComponent implements OnInit {
   readonly counts = signal<StatusCountDto[]>([]);
   readonly clients = signal<ClientOptionDto[]>([]);
 
-
   readonly totalAcross = computed(() => this.counts().reduce((sum, c) => sum + c.count, 0));
 
   /**
@@ -445,6 +321,11 @@ export class RequestListComponent implements OnInit {
       replaceUrl: true,
     });
     this.reload();
+  }
+
+  /** The grid's "clear filters" clears the tile too — both are narrowing the same list. */
+  clearView(): void {
+    if (this.view() !== null) this.pickView(null);
   }
 
   open(request: RequestSummaryDto): void {
@@ -486,7 +367,6 @@ export class RequestListComponent implements OnInit {
     this.api.requestStatusCounts({}).subscribe((c) => this.counts.set(c));
   }
 
-
   /** One place to leave a load, whether it succeeded or not. */
   private settle(): void {
     this.loaded = true;
@@ -523,4 +403,10 @@ export class RequestListComponent implements OnInit {
     this.pageSize = event.pageSize;
     this.reload();
   }
+}
+
+/** `MMM d`, matching the DatePipe the cell templates use elsewhere in the grid. */
+function formatDay(iso: string | null | undefined): string {
+  if (!iso) return '';
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }

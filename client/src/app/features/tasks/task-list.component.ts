@@ -1,28 +1,19 @@
 import { DestroyRef, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { RealtimeService } from '../../core/realtime.service';
 import { syncOn } from '../../core/realtime-sync';
-import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
-import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatInputModule } from '@angular/material/input';
-import { MatButtonModule } from '@angular/material/button';
-import { MatIconModule } from '@angular/material/icon';
-import { MatPaginatorModule, PageEvent } from '@angular/material/paginator';
-import { MatSlideToggleModule } from '@angular/material/slide-toggle';
+import { PageEvent } from '@angular/material/paginator';
 import { ApiService } from '../../core/api.service';
 import { StatusTilesComponent } from '../../shared/status-tiles.component';
 import { SortState } from '../../shared/sort-header.component';
 import {
   ClientOptionDto, PagedResult, Priority, StatusCountDto, TaskSummaryDto, WorkTaskStatus,
 } from '../../core/models';
-import { enumOptions, SearchSelectComponent } from '../../shared/search-select.component';
 import { taskView } from '../../shared/list-views';
-import { EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../shared/ui';
+import { PageHeaderComponent } from '../../shared/ui';
 import { TaskTableComponent } from '../../shared/task-table.component';
 import { QuickViewComponent, QuickViewTarget } from '../../shared/quick-view.component';
-import {
-  ColumnFilterSpec, FilterSummaryComponent, NoMatchesComponent, columnFilters,
-} from '../../shared/column-filter.component';
+import { ColumnFilterSpec, columnFilters } from '../../shared/column-filter.component';
 import { priorityLabel } from '../../core/labels';
 
 const STATUSES: WorkTaskStatus[] = [
@@ -35,13 +26,11 @@ const STATUSES: WorkTaskStatus[] = [
   selector: 'app-task-list',
   standalone: true,
   imports: [
-    MatPaginatorModule,
-    PageHeaderComponent, EmptyComponent, LoadingComponent, TaskTableComponent, QuickViewComponent,
-    StatusTilesComponent, NoMatchesComponent, FilterSummaryComponent,
+    PageHeaderComponent, TaskTableComponent, QuickViewComponent, StatusTilesComponent,
   ],
   template: `
     <div class="page">
-      <app-page-header title="Tasks" subtitle="Work you are part of, and work you oversee." />
+      <app-page-header title="Tasks" />
 
       <app-status-tiles
         [counts]="counts()"
@@ -49,50 +38,23 @@ const STATUSES: WorkTaskStatus[] = [
         [total]="totalAcross()"
         (pick)="pickView($event)" />
 
-      <app-filter-summary [count]="filters.activeCount()" (clear)="filters.clear()" />
-
-      <div class="card list" [class.refreshing]="refreshing()">
-        @if (loading()) {
-          <app-loading />
-        } @else if (page().items.length === 0 && !filters.any()) {
-          <!-- Genuinely nothing here. Only reachable with no filter set — otherwise the grid stays
-               up so the filter that emptied it is still reachable. -->
-          <app-empty message="No work matches" icon="search_off"
-                     hint="Pick a different status card above." />
-        } @else {
-          <app-task-table [tasks]="page().items" (action)="act($event)"
-                          [columns]="grid().columns.concat(grid().action ? ['action'] : [])"
-                          [actionLabel]="grid().action?.label ?? 'Open'"
-                          [actionWhen]="grid().action?.when ?? null"
-                          [sortable]="true" [sort]="sort()" (sortChange)="applySort($event)"
-                          [filters]="filters" [specs]="specs()"
-                          [showPreview]="true" (preview)="peek($event)"/>
-          @if (page().items.length === 0) {
-            <app-no-matches (clear)="filters.clear()" />
-          } @else {
-            <mat-paginator [length]="page().totalCount" [pageSize]="page().pageSize"
-                           [pageIndex]="page().page - 1" [pageSizeOptions]="[25, 50, 100]"
-                           (page)="onPage($event)" />
-          }
-        }
-      </div>
+      <app-task-table
+        [tasks]="page().items"
+        [columns]="gridColumns()"
+        [actionLabel]="grid().action?.label ?? 'Open'"
+        [actionWhen]="grid().action?.when ?? null"
+        [sortable]="true" [sort]="sort()" (sortChange)="applySort($event)"
+        [filters]="filters" [specs]="specs()" [filterOptions]="options()"
+        [externalFilter]="view() !== null"
+        [loading]="loading()" [refreshing]="refreshing()"
+        [total]="page().totalCount" [pageSize]="page().pageSize"
+        [pageIndex]="page().page - 1" (pageChange)="onPage($event)"
+        emptyMessage="No work matches" emptyIcon="search_off"
+        [showPreview]="true" (preview)="peek($event)" (action)="act($event)"
+        (clearedFilters)="clearView()" />
 
       <app-quick-view [target]="peeking()" (close)="peeking.set(null)" />
     </div>
-  `,
-  styles: `
-    /*
-     * A filter reload dims the *rows* rather than replacing the table — see the note on the loaded flag.
-     * Deliberately not the whole card and deliberately no pointer-events block: the filter row is
-     * what triggered the reload, and freezing it would stop the next keystroke landing.
-     */
-    .refreshing tbody { opacity: .45; transition: opacity .12s; }
-
-    .filters { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
-    .filters mat-form-field { margin-bottom: -1.25em; }
-    .filters app-search-select { width: 180px; margin-bottom: -1.25em; }
-    .search { flex: 1 1 260px; }
-    .list { overflow: hidden; }
   `,
 })
 export class TaskListComponent implements OnInit {
@@ -104,7 +66,6 @@ export class TaskListComponent implements OnInit {
 
   readonly statuses = STATUSES;
   readonly priorities: Priority[] = ['Critical', 'High', 'Normal', 'Low'];
-  readonly priorityOptions = enumOptions(this.priorities);
 
   /** The status group being looked at. A signal because the grid's shape is derived from it. */
   readonly view = signal<string | null>(null);
@@ -119,15 +80,10 @@ export class TaskListComponent implements OnInit {
   readonly filters = columnFilters(() => { this.pageIndex = 0; this.reload(); });
 
   /**
-   * Which values each column can still be narrowed by, from the server. Empty until the first
-   * answer arrives, and `available` is left undefined until then so nothing is hidden prematurely.
+   * Which values each column can still be narrowed by, given the *others*. Handed straight to the
+   * grid, which merges it into each column's filter — no screen works this out for itself.
    */
   readonly options = signal<Record<string, string[]> | null>(null);
-
-  private availableFor(key: string): ReadonlySet<string> | undefined {
-    const all = this.options();
-    return all?.[key] ? new Set(all[key]) : undefined;
-  }
 
   readonly specs = computed<Record<string, ColumnFilterSpec>>(() => ({
     number: { key: 'number', kind: 'text', placeholder: 'TSK-…' },
@@ -135,12 +91,10 @@ export class TaskListComponent implements OnInit {
     client: {
       key: 'client', kind: 'select', placeholder: 'Any client',
       options: this.clients().map((c) => ({ value: c.id, label: c.name })),
-      available: this.availableFor('client'),
     },
     priority: {
       key: 'priority', kind: 'select', placeholder: 'Any',
-      options: this.priorities.map((p) => ({ value: p, label: p })),
-      available: this.availableFor('priority'),
+      options: this.priorities.map((p) => ({ value: p, label: priorityLabel(p) })),
     },
     // "-" means nobody: unassigned work is what a coordinator scans this column for, and it has no
     // name to type.
@@ -154,6 +108,7 @@ export class TaskListComponent implements OnInit {
   peek(task: { id: number }): void {
     this.peeking.set({ kind: 'task', id: task.id });
   }
+
   /**
    * True only until the first load lands.
    *
@@ -169,8 +124,6 @@ export class TaskListComponent implements OnInit {
 
   private pageIndex = 0;
   private pageSize = 25;
-
-  label = (value: string) => priorityLabel(value as Priority);
 
   ngOnInit(): void {
     // A view in the URL wins over the default, so a bookmarked or shared queue opens on it.
@@ -196,8 +149,6 @@ export class TaskListComponent implements OnInit {
 
   readonly counts = signal<StatusCountDto[]>([]);
   readonly clients = signal<ClientOptionDto[]>([]);
-  readonly clientOptions = computed(() =>
-    this.clients().map((c) => ({ value: c.id, label: c.name })));
 
   readonly totalAcross = computed(() =>
     this.counts().reduce((sum, c) => sum + c.count, 0));
@@ -207,6 +158,11 @@ export class TaskListComponent implements OnInit {
    * one fixed shape.
    */
   readonly grid = computed(() => taskView(this.view()));
+
+  readonly gridColumns = computed(() => {
+    const view = this.grid();
+    return view.action ? [...view.columns, 'action'] : view.columns;
+  });
 
   /**
    * A tile is the filter; clicking the active one clears it. The choice goes into the URL so the
@@ -223,6 +179,11 @@ export class TaskListComponent implements OnInit {
       replaceUrl: true,
     });
     this.reload();
+  }
+
+  /** The grid's "clear filters" clears the tile too — both are narrowing the same list. */
+  clearView(): void {
+    if (this.view() !== null) this.pickView(null);
   }
 
   /** The row's primary action, which depends on which queue is being looked at. */
@@ -261,7 +222,6 @@ export class TaskListComponent implements OnInit {
   private loadCounts(): void {
     this.api.taskStatusCounts({ openOnly: true }).subscribe((c) => this.counts.set(c));
   }
-
 
   /** One place to leave a load, whether it succeeded or not. */
   private settle(): void {

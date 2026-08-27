@@ -30,7 +30,7 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
   ],
   template: `
     <div class="page">
-      <app-page-header title="My queue" subtitle="Work through these in order. Drag to change the order.">
+      <app-page-header title="My queue">
         <button matButton (click)="load()"><mat-icon>refresh</mat-icon> Refresh</button>
       </app-page-header>
 
@@ -38,14 +38,9 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
         <app-loading />
       } @else if (tasks().length === 0) {
         <div class="card">
-          <app-empty message="Nothing assigned to you" icon="task_alt"
-                     hint="Work appears here once a coordinator assigns it to you." />
+          <app-empty message="Nothing assigned to you" icon="task_alt" />
         </div>
       } @else {
-        <p class="muted small lead">
-          Start at the top. The rest are queued behind it — drag one up if it should come first.
-        </p>
-
         <div class="card" cdkDropList (cdkDropListDropped)="drop($event)">
           @for (task of tasks(); track task.id; let i = $index) {
             <div class="item" cdkDrag [class.later]="!isNext(task, i)">
@@ -84,7 +79,6 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
     </div>
   `,
   styles: `
-    .lead { margin: 0 0 10px; }
     /* Dimmed, not hidden: you can still see and open what is coming, it is just not the one to
        pick up now. Anything already running stays at full strength wherever it sits. */
     .item.later { opacity: .62; }

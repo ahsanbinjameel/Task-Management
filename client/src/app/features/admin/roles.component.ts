@@ -150,8 +150,7 @@ export class RoleDialog {
   ],
   template: `
     <div class="page narrow">
-      <app-page-header title="Roles"
-                       subtitle="Roles are bundles of permissions. Every check server-side is on a permission, never a role.">
+      <app-page-header title="Roles">
         @if (canEdit) {
           <button matButton="filled" (click)="addRole()">
             <mat-icon>add</mat-icon> Add a role

@@ -266,6 +266,70 @@ table.mat-mdc-table {
   letter-spacing: normal;
 }
 
+/*
+ * Grid cell furniture.
+ *
+ * Cell templates are projected into `app-data-grid`, so they are styled in the *screen's* scope,
+ * not the grid's — which is exactly why these live here instead of being repeated as local styles
+ * in every list. A screen writes `class="grid-title"` and gets the same link, the same truncation
+ * and the same row action as every other grid in the application.
+ */
+.mat-mdc-header-cell.right,
+.mat-mdc-cell.right { text-align: right; }
+
+.grid-title {
+  color: inherit;
+  text-decoration: none;
+  font-weight: 500;
+  display: inline-block;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.grid-title:hover { text-decoration: underline; }
+
+.grid-link {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 12.5px;
+}
+
+.grid-link:hover { text-decoration: underline; }
+
+.grid-action {
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  border-radius: 7px;
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+}
+
+.grid-action:hover { background: var(--surface-sunken); }
+
+/* A look without leaving the list. No room for a drawer beside a list on a narrow screen. */
+.grid-peek mat-icon { font-size: 18px; width: 18px; height: 18px; color: var(--text-muted); }
+
+@media (max-width: 1100px) {
+  .grid-peek { display: none; }
+}
+
+.grid-progress {
+  width: 74px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+}
+
+.grid-progress i { display: block; height: 100%; border-radius: 999px; background: #1d69d4; }
+
 @media (max-width: 900px) {
   .page { padding: 16px 14px 40px; }
 }

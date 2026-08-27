@@ -1,100 +1,47 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { DatePipe } from '@angular/common';
-import { FormsModule } from '@angular/forms';
-import { MatButtonModule } from '@angular/material/button';
-import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatIconModule } from '@angular/material/icon';
-import { MatInputModule } from '@angular/material/input';
-import { MatTableModule } from '@angular/material/table';
-import { MatPaginatorModule, PageEvent } from '@angular/material/paginator';
+import { PageEvent } from '@angular/material/paginator';
 import { ApiService } from '../../core/api.service';
 import { AuditLogDto, PagedResult } from '../../core/models';
-import { SearchSelectComponent } from '../../shared/search-select.component';
-import { EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../shared/ui';
+import { PageHeaderComponent } from '../../shared/ui';
+import { columnFilters } from '../../shared/column-filter.component';
+import { DataGridComponent, GridCellDirective, GridColumn } from '../../shared/data-grid.component';
 
 @Component({
   selector: 'app-audit',
   standalone: true,
-  imports: [
-    DatePipe, FormsModule, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule,
-    MatTableModule, MatPaginatorModule,
-    PageHeaderComponent, EmptyComponent, LoadingComponent, SearchSelectComponent,
-  ],
+  imports: [DatePipe, PageHeaderComponent, DataGridComponent, GridCellDirective],
   template: `
     <div class="page">
-      <app-page-header title="Audit log"
-                       subtitle="Append-only. Nothing here can be edited or deleted, by design." />
+      <app-page-header title="Audit log" />
 
-      <div class="card card-pad filters">
-        <app-search-select label="Action" nullLabel="Any" [options]="actionOptions()"
-                           [(ngModel)]="action" (valueChange)="reload()" />
+      <app-data-grid
+        [rows]="page().items" [columns]="columns()"
+        [loading]="loading()" [refreshing]="refreshing()" [filters]="filters"
+        [total]="page().totalCount" [pageSize]="page().pageSize"
+        [pageIndex]="page().page - 1" (pageChange)="onPage($event)"
+        emptyMessage="No audit entries yet" emptyIcon="policy"
+        noMatchesMessage="No audit entries match those filters.">
 
-        <mat-form-field>
-          <mat-label>Entity type</mat-label>
-          <input matInput [(ngModel)]="entityType" (keyup.enter)="reload()" placeholder="WorkTask" />
-        </mat-form-field>
+        <ng-template gridCell="when" let-a>
+          <span class="nowrap">{{ a.createdAt | date: 'MMM d, y HH:mm:ss' }}</span>
+        </ng-template>
 
-        <mat-form-field class="narrow-field">
-          <mat-label>Entity id</mat-label>
-          <input matInput type="number" [(ngModel)]="entityId" (keyup.enter)="reload()" />
-        </mat-form-field>
+        <ng-template gridCell="action" let-a>
+          <span class="chip tone-neutral">{{ a.action }}</span>
+        </ng-template>
 
-        <span class="spacer"></span>
-        <button matButton (click)="reload()"><mat-icon>refresh</mat-icon> Apply</button>
-      </div>
-
-      <div class="card">
-        @if (loading()) {
-          <app-loading />
-        } @else if (page().items.length === 0) {
-          <app-empty message="No audit entries match" icon="policy"
-                     hint="Widen the date range, or clear the action filter." />
-        } @else {
-          <div class="table-scroll">
-            <table mat-table [dataSource]="page().items">
-              <ng-container matColumnDef="when">
-                <th mat-header-cell *matHeaderCellDef>When</th>
-                <td mat-cell *matCellDef="let a" class="mono small nowrap">
-                  {{ a.createdAt | date: 'MMM d, y HH:mm:ss' }}
-                </td>
-              </ng-container>
-              <ng-container matColumnDef="action">
-                <th mat-header-cell *matHeaderCellDef>Action</th>
-                <td mat-cell *matCellDef="let a"><span class="chip tone-neutral">{{ a.action }}</span></td>
-              </ng-container>
-              <ng-container matColumnDef="actor">
-                <th mat-header-cell *matHeaderCellDef>Actor</th>
-                <td mat-cell *matCellDef="let a">{{ a.actorDisplayName ?? '—' }}</td>
-              </ng-container>
-              <ng-container matColumnDef="entity">
-                <th mat-header-cell *matHeaderCellDef>Entity</th>
-                <td mat-cell *matCellDef="let a" class="mono small">
-                  {{ a.entityType }}{{ a.entityId ? ' #' + a.entityId : '' }}
-                </td>
-              </ng-container>
-              <ng-container matColumnDef="changes">
-                <th mat-header-cell *matHeaderCellDef>Changes</th>
-                <td mat-cell *matCellDef="let a" class="mono small changes">
-                  {{ a.newValues }}
-                </td>
-              </ng-container>
-              <tr mat-header-row *matHeaderRowDef="columns"></tr>
-              <tr mat-row *matRowDef="let row; columns: columns"></tr>
-            </table>
-          </div>
-          <mat-paginator [length]="page().totalCount" [pageSize]="page().pageSize"
-                         [pageIndex]="page().page - 1" [pageSizeOptions]="[25, 50, 100]"
-                         (page)="onPage($event)" />
-        }
-      </div>
+        <ng-template gridCell="changes" let-a>
+          <span class="changes">{{ a.newValues }}</span>
+        </ng-template>
+      </app-data-grid>
     </div>
   `,
   styles: `
-    .filters { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
-    .filters mat-form-field { margin-bottom: -1.25em; }
-    .filters app-search-select { width: 200px; margin-bottom: -1.25em; }
-    .narrow-field { width: 120px; }
-    .changes { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .changes {
+      display: inline-block; max-width: 380px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
   `,
 })
 export class AuditComponent implements OnInit {
@@ -103,13 +50,35 @@ export class AuditComponent implements OnInit {
   readonly page = signal<PagedResult<AuditLogDto>>(
     { items: [], page: 1, pageSize: 50, totalCount: 0, totalPages: 0 });
   readonly actions = signal<string[]>([]);
-  readonly actionOptions = computed(() => this.actions().map((a) => ({ value: a, label: a })));
   readonly loading = signal(true);
-  readonly columns = ['when', 'action', 'actor', 'entity', 'changes'];
+  readonly refreshing = signal(false);
+  private loaded = false;
 
-  action: string | null = null;
-  entityType = '';
-  entityId: number | null = null;
+  /**
+   * The filter row replaced a card above the grid holding an action dropdown, an entity-type box
+   * and an entity-id box — three controls describing two of the columns below them.
+   */
+  readonly filters = columnFilters(() => { this.pageIndex = 0; this.reload(); });
+
+  readonly columns = computed<GridColumn<AuditLogDto>[]>(() => [
+    { key: 'when', header: 'When', cellClass: 'mono small', minWidth: 170 },
+    {
+      key: 'action', header: 'Action', minWidth: 190,
+      filter: {
+        kind: 'select', placeholder: 'Any action', singleOnly: true,
+        options: this.actions().map((a) => ({ value: a, label: a })),
+      },
+    },
+    { key: 'actor', header: 'Actor', cell: (a) => a.actorDisplayName },
+    {
+      // One box for both halves of the identity the endpoint understands: a type, or `#12` for a
+      // particular row. Two controls for one column would be two chances to filter by half of it.
+      key: 'entity', header: 'Entity', cellClass: 'mono small', minWidth: 150,
+      cell: (a) => `${a.entityType}${a.entityId ? ' #' + a.entityId : ''}`,
+      filter: { kind: 'text', placeholder: 'Type, or #12' },
+    },
+    { key: 'changes', header: 'Changes', cellClass: 'mono small', minWidth: 260 },
+  ]);
 
   private pageIndex = 0;
   private pageSize = 50;
@@ -120,17 +89,27 @@ export class AuditComponent implements OnInit {
   }
 
   reload(): void {
-    this.loading.set(true);
+    if (this.loaded) this.refreshing.set(true); else this.loading.set(true);
+
+    const entity = this.filters.value('entity').trim();
+    const id = entity.startsWith('#') ? Number(entity.slice(1)) : NaN;
+
     this.api.audit({
-      action: this.action ?? undefined,
-      entityType: this.entityType || undefined,
-      entityId: this.entityId ?? undefined,
+      action: this.filters.value('action') || undefined,
+      entityType: Number.isNaN(id) ? entity || undefined : undefined,
+      entityId: Number.isNaN(id) ? undefined : id,
       page: this.pageIndex + 1,
       pageSize: this.pageSize,
     }).subscribe({
-      next: (result) => { this.page.set(result); this.loading.set(false); },
-      error: () => this.loading.set(false),
+      next: (result) => { this.page.set(result); this.settle(); },
+      error: () => this.settle(),
     });
+  }
+
+  private settle(): void {
+    this.loaded = true;
+    this.loading.set(false);
+    this.refreshing.set(false);
   }
 
   onPage(event: PageEvent): void {

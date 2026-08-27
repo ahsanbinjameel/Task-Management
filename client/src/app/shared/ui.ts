@@ -38,7 +38,14 @@ export class ChipComponent {
   };
 }
 
-/** Page title, optional subtitle, and a slot for the actions that belong to the page. */
+/**
+ * Page title, optional subtitle, and a slot for the actions that belong to the page.
+ *
+ * The subtitle is for a *fact* about the thing on screen — its reference number, its target, the
+ * date being reported on. It is not for a sentence describing what the screen is: the title
+ * already says that, and a paraphrase of it under every heading is a line the reader learns to
+ * skip, which then hides the subtitles that do carry something.
+ */
 @Component({
   selector: 'app-page-header',
   standalone: true,
@@ -77,6 +84,10 @@ export class PageHeaderComponent {
 /**
  * What a list shows when it has nothing. Worth a component of its own: "no results" and "nothing
  * assigned to you yet" mean very different things, and a blank table says neither.
+ *
+ * One line and, where there is one, the single thing to do next. It used to carry a second
+ * explanatory line under the message; that line said in a sentence what the message already said
+ * in five words, on the screen with the least to read on it.
  */
 @Component({
   selector: 'app-empty',
@@ -86,7 +97,6 @@ export class PageHeaderComponent {
     <div class="empty">
       <mat-icon>{{ icon() }}</mat-icon>
       <p class="title">{{ message() }}</p>
-      @if (hint()) { <p class="muted small">{{ hint() }}</p> }
 
       @if (actionLabel() && actionRoute()) {
         <a matButton="filled" class="action" [routerLink]="actionRoute()">{{ actionLabel() }}</a>
@@ -107,13 +117,6 @@ export class PageHeaderComponent {
 })
 export class EmptyComponent {
   readonly message = input.required<string>();
-
-  /**
-   * Why the list is empty and what fills it. A blank space is ambiguous in a way that matters:
-   * "nothing is assigned to you" and "the filter matched nothing" look identical, and only one of
-   * them means you should change what you just did.
-   */
-  readonly hint = input<string>();
   readonly icon = input('inbox');
 
   /**

@@ -3,7 +3,6 @@ import { DatePipe } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
-import { MatTableModule } from '@angular/material/table';
 import { MatDialog } from '@angular/material/dialog';
 import { ApiService } from '../../core/api.service';
 import { AuthService } from '../../core/auth.service';
@@ -17,45 +16,51 @@ import {
 } from '../../core/models';
 import { sinceLabel } from '../../core/format';
 import { priorityLabel, verificationResultLabel, verificationStatusLabel } from '../../core/labels';
-import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../shared/ui';
+import { ChipComponent, PageHeaderComponent } from '../../shared/ui';
 import { StatusTilesComponent } from '../../shared/status-tiles.component';
-import { SortHeaderComponent, SortState } from '../../shared/sort-header.component';
-import {
-  ColumnFilterComponent, ColumnFilterSpec, FilterSummaryComponent, NoMatchesComponent,
-  columnFilters,
-} from '../../shared/column-filter.component';
+import { SortState } from '../../shared/sort-header.component';
+import { columnFilters } from '../../shared/column-filter.component';
+import { DataGridComponent, GridCellDirective, GridColumn } from '../../shared/data-grid.component';
 import { VerificationCreateDialog } from './verification-create-dialog.component';
 import { VerificationAssignDialog } from './verification-assign-dialog.component';
 
-/** Several values for one column travel pipe-separated. Mirrors `ColumnFilters.Many` server-side. */
-const SEPARATOR = '|';
+const PRIORITIES: Priority[] = ['Critical', 'High', 'Normal', 'Low'];
+
+const STATUSES: VerificationStatus[] = [
+  'Requested', 'Assigned', 'InProgress', 'Completed', 'Cancelled',
+];
+
+const RESULTS: VerificationResult[] = [
+  'IssueConfirmed', 'WorkingCorrectly', 'ConfigurationOrDataIssue', 'NeedsClarification',
+  'Inconclusive',
+];
+
+/** By urgency, not alphabetically: Critical must sort above High. */
+const PRIORITY_ORDER: Record<Priority, number> = { Critical: 0, High: 1, Normal: 2, Low: 3 };
+
+/** By where it has got to, so a queue reads in the order it moves through. */
+const STATUS_ORDER: Record<VerificationStatus, number> = {
+  Requested: 0, Assigned: 1, InProgress: 2, Completed: 3, Cancelled: 4,
+};
 
 /**
  * Checks: assigned investigation into whether something is actually broken.
  *
- * A standard grid — tiles, a filter row generated from the grid's own columns, sortable headings,
- * and the table kept on screen when a filter matches nothing. The one departure from the paged
- * grids is that the filtering and sorting happen **here** rather than on the server, and that is
- * correct for the same reason it is on the daily report: the whole set is loaded in one call, so
- * narrowing it locally cannot misreport a total. A check is only ever raised for a request somebody
- * could not decide, so this is tens of rows.
- *
- * That also means the tiles and the list are counted from the same array and cannot disagree — the
- * failure mode the "column filters never touch the tile counts" rule exists to prevent server-side.
+ * The one departure from the paged grids is `mode="local"` — filtering and sorting happen in the
+ * grid rather than on the server, and that is correct for the same reason it is on the daily
+ * report: the whole set arrives in one call, so narrowing it locally cannot misreport a total. A
+ * check is only ever raised for a request somebody could not decide, so this is tens of rows.
  */
 @Component({
   selector: 'app-verification-list',
   standalone: true,
   imports: [
-    DatePipe, RouterLink, MatButtonModule, MatIconModule, MatTableModule, PageHeaderComponent,
-    EmptyComponent, LoadingComponent, ChipComponent, StatusTilesComponent, SortHeaderComponent,
-    ColumnFilterComponent, FilterSummaryComponent, NoMatchesComponent,
+    DatePipe, RouterLink, MatButtonModule, MatIconModule, PageHeaderComponent,
+    ChipComponent, StatusTilesComponent, DataGridComponent, GridCellDirective,
   ],
   template: `
     <div class="page">
-      <app-page-header
-        title="Checks"
-        subtitle="Investigations into whether something is actually broken. A check never creates work by itself.">
+      <app-page-header title="Checks">
         @if (canCreate()) {
           <button matButton="filled" (click)="raise()">
             <mat-icon>add</mat-icon> Raise a check
@@ -70,152 +75,72 @@ const SEPARATOR = '|';
         [total]="all().length"
         (pick)="setView($event)" />
 
-      <app-filter-summary [count]="filters.activeCount()" (clear)="filters.clear()" />
+      <app-data-grid
+        mode="local"
+        [rows]="inView()" [columns]="columns"
+        [loading]="loading()"
+        [filters]="filters" [externalFilter]="view() !== null"
+        [sort]="sort()" (sortChange)="sort.set($event)"
+        emptyMessage="Nothing has been sent for checking" emptyIcon="fact_check"
+        noMatchesMessage="No checks match those filters."
+        [clickable]="true" (rowClick)="open($event)" (clearedFilters)="view.set(null)">
 
-      <div class="card">
-        @if (loading()) {
-          <app-loading />
-        } @else if (all().length === 0) {
-          <app-empty
-            message="Nothing has been sent for checking"
-            icon="fact_check"
-            hint="A reviewer who cannot tell whether a request is a real problem can send it here instead of guessing." />
-        } @else {
-          <div class="table-scroll">
-            <table mat-table [dataSource]="rows()">
-              <ng-container matColumnDef="number">
-                <th mat-header-cell *matHeaderCellDef>
-                  <app-sort-header label="Number" column="number" [sort]="sort()"
-                                   (sortChange)="sort.set($event)" />
-                </th>
-                <td mat-cell *matCellDef="let v" class="mono nowrap">
-                  <a [routerLink]="['/verifications', v.id]">{{ v.verificationNumber }}</a>
-                </td>
-              </ng-container>
+        <ng-template gridCell="number" let-v>
+          <a class="grid-link mono" [routerLink]="['/verifications', v.id]">
+            {{ v.verificationNumber }}
+          </a>
+        </ng-template>
 
-              <ng-container matColumnDef="target">
-                <th mat-header-cell *matHeaderCellDef>
-                  <app-sort-header label="What is being checked" column="target" [sort]="sort()"
-                                   (sortChange)="sort.set($event)" />
-                </th>
-                <td mat-cell *matCellDef="let v">
-                  <a [routerLink]="['/verifications', v.id]">{{ v.title }}</a>
-                  @if (v.targetSummary && v.targetSummary !== v.title) {
-                    <div class="muted small">{{ v.targetSummary }}</div>
-                  }
-                </td>
-              </ng-container>
-
-              <ng-container matColumnDef="priority">
-                <th mat-header-cell *matHeaderCellDef>
-                  <app-sort-header label="Priority" column="priority" [sort]="sort()"
-                                   (sortChange)="sort.set($event)" />
-                </th>
-                <td mat-cell *matCellDef="let v"><app-chip [value]="v.priority" kind="priority" /></td>
-              </ng-container>
-
-              <ng-container matColumnDef="status">
-                <th mat-header-cell *matHeaderCellDef>
-                  <app-sort-header label="Status" column="status" [sort]="sort()"
-                                   (sortChange)="sort.set($event)" />
-                </th>
-                <td mat-cell *matCellDef="let v" class="nowrap">
-                  <app-chip [value]="v.status" kind="verificationStatus" />
-                </td>
-              </ng-container>
-
-              <!--
-                A name, not a dropdown of people — the same rule the task grid follows. "-" means
-                nobody has it, which is the one answer with no name to type and the one worth
-                looking for most.
-              -->
-              <ng-container matColumnDef="checker">
-                <th mat-header-cell *matHeaderCellDef>
-                  <app-sort-header label="Checker" column="checker" [sort]="sort()"
-                                   (sortChange)="sort.set($event)" />
-                </th>
-                <td mat-cell *matCellDef="let v" class="nowrap">
-                  @if (v.assignedToDisplayName) {
-                    <span class="truncate">{{ v.assignedToDisplayName }}</span>
-                  } @else { <span class="muted">—</span> }
-                </td>
-              </ng-container>
-
-              <ng-container matColumnDef="raised">
-                <th mat-header-cell *matHeaderCellDef>
-                  <app-sort-header label="Raised" column="raised" [sort]="sort()"
-                                   (sortChange)="sort.set($event)" />
-                </th>
-                <td mat-cell *matCellDef="let v" class="nowrap"
-                    [title]="v.requestedAt | date: 'MMM d, y HH:mm'">
-                  {{ since(v.requestedAt) }}
-                </td>
-              </ng-container>
-
-              <ng-container matColumnDef="outcome">
-                <th mat-header-cell *matHeaderCellDef>
-                  <app-sort-header label="Outcome" column="outcome" [sort]="sort()"
-                                   (sortChange)="sort.set($event)" />
-                </th>
-                <td mat-cell *matCellDef="let v">
-                  @if (v.result) {
-                    <app-chip [value]="v.result" kind="verificationResult" />
-                  } @else { <span class="muted">—</span> }
-                </td>
-              </ng-container>
-
-              <ng-container matColumnDef="action">
-                <th mat-header-cell *matHeaderCellDef aria-label="Actions"></th>
-                <td mat-cell *matCellDef="let v" class="nowrap">
-                  @if (v.status === 'Requested' && canWork()) {
-                    <button matButton (click)="claim(v); $event.stopPropagation()">Take it</button>
-                  } @else if (v.status === 'Requested' && canCreate()) {
-                    <button matButton (click)="assign(v); $event.stopPropagation()">Assign</button>
-                  } @else if (v.assignedToUserId === myId() && !isFinished(v)) {
-                    <a matButton [routerLink]="['/verifications', v.id]"
-                       (click)="$event.stopPropagation()">Open</a>
-                  }
-                </td>
-              </ng-container>
-
-              <!--
-                The filter row. One cell per column, generated from the same list the header uses,
-                so it cannot fall out of step with it — a column added here gets a filter if a spec
-                names it and an empty cell if not, rather than shifting everything one place left.
-              -->
-              @for (column of columns; track column) {
-                <ng-container [matColumnDef]="column + '_filter'">
-                  <th mat-header-cell *matHeaderCellDef class="filter-cell">
-                    <app-column-filter [spec]="spec(column)" [value]="filters.value(column)"
-                                       (changed)="filters.set(spec(column), column, $event)" />
-                  </th>
-                </ng-container>
-              }
-
-              <tr mat-header-row *matHeaderRowDef="columns"></tr>
-              <tr mat-header-row *matHeaderRowDef="filterRow" class="filter-row"></tr>
-              <tr mat-row *matRowDef="let row; columns: columns"
-                  class="clickable" tabindex="0"
-                  (click)="open(row)" (keydown.enter)="open(row)"></tr>
-            </table>
-          </div>
-
-          <!--
-            The table stays put when nothing matches. Taking it away would take the filter row with
-            it, removing the only control that can undo the problem.
-          -->
-          @if (rows().length === 0) {
-            <app-no-matches message="No checks match those filters."
-                            (clear)="clearEverything()" />
+        <ng-template gridCell="target" let-v>
+          <a class="grid-title" [routerLink]="['/verifications', v.id]">{{ v.title }}</a>
+          @if (v.targetSummary && v.targetSummary !== v.title) {
+            <div class="muted small truncate">{{ v.targetSummary }}</div>
           }
-        }
-      </div>
+        </ng-template>
+
+        <ng-template gridCell="priority" let-v>
+          <app-chip [value]="v.priority" kind="priority" />
+        </ng-template>
+
+        <ng-template gridCell="status" let-v>
+          <app-chip [value]="v.status" kind="verificationStatus" />
+        </ng-template>
+
+        <!--
+          A name, not a dropdown of people — the same rule the task grid follows. "-" means nobody
+          has it, which is the one answer with no name to type and the one worth looking for most.
+        -->
+        <ng-template gridCell="checker" let-v>
+          @if (v.assignedToDisplayName) {
+            <span class="truncate">{{ v.assignedToDisplayName }}</span>
+          } @else { <span class="muted">—</span> }
+        </ng-template>
+
+        <ng-template gridCell="raised" let-v>
+          <span [title]="v.requestedAt | date: 'MMM d, y HH:mm'">{{ since(v.requestedAt) }}</span>
+        </ng-template>
+
+        <ng-template gridCell="outcome" let-v>
+          @if (v.result) {
+            <app-chip [value]="v.result" kind="verificationResult" />
+          } @else { <span class="muted">—</span> }
+        </ng-template>
+
+        <ng-template gridCell="action" let-v>
+          @if (v.status === 'Requested' && canWork()) {
+            <button class="grid-action" (click)="claim(v); $event.stopPropagation()">Take it</button>
+          } @else if (v.status === 'Requested' && canCreate()) {
+            <button class="grid-action" (click)="assign(v); $event.stopPropagation()">Assign</button>
+          } @else if (v.assignedToUserId === myId() && !isFinished(v)) {
+            <a class="grid-action" [routerLink]="['/verifications', v.id]"
+               (click)="$event.stopPropagation()">Open</a>
+          }
+        </ng-template>
+      </app-data-grid>
     </div>
   `,
   styles: `
-    table { width: 100%; }
-    .mono { font-variant-numeric: tabular-nums; }
-    .truncate { display: inline-block; max-width: 180px; }
+    .truncate { display: inline-block; max-width: 240px; }
   `,
 })
 export class VerificationListComponent implements OnInit {
@@ -226,11 +151,6 @@ export class VerificationListComponent implements OnInit {
   private readonly toast = inject(ToastService);
   private readonly dialog = inject(MatDialog);
   private readonly realtime = inject(RealtimeService);
-
-  readonly columns = [
-    'number', 'target', 'priority', 'status', 'checker', 'raised', 'outcome', 'action',
-  ];
-  readonly filterRow = this.columns.map((c) => `${c}_filter`);
 
   readonly loading = signal(true);
   readonly sort = signal<SortState>({ by: null, descending: true });
@@ -243,7 +163,7 @@ export class VerificationListComponent implements OnInit {
 
   /**
    * Nothing to re-fetch: the rows are already here, so the filter row only has to invalidate the
-   * computed. Passing a no-op keeps the debounce-on-typing behaviour every other grid has.
+   * grid's computed. Passing a no-op keeps the debounce-on-typing behaviour every other grid has.
    */
   readonly filters = columnFilters(() => undefined);
 
@@ -251,33 +171,57 @@ export class VerificationListComponent implements OnInit {
   readonly canWork = computed(() => this.auth.has(Perm.verificationWork));
   readonly myId = computed(() => this.auth.user()?.id ?? -1);
 
-  private readonly specs: Record<string, ColumnFilterSpec> = {
-    number: { key: 'number', kind: 'text', placeholder: 'VER-', minWidth: 120 },
-    target: { key: 'target', kind: 'text', placeholder: 'Contains…', minWidth: 220 },
-    priority: {
-      key: 'priority', kind: 'select', placeholder: 'Any',
-      options: (['Critical', 'High', 'Normal', 'Low'] as Priority[])
-        .map((p) => ({ value: p, label: priorityLabel(p) })),
+  readonly columns: GridColumn<VerificationSummaryDto>[] = [
+    {
+      key: 'number', header: 'Number', sortable: true, minWidth: 120, cellClass: 'mono nowrap',
+      cell: (v) => v.verificationNumber,
+      filter: { kind: 'text', placeholder: 'VER-' },
     },
-    status: {
-      key: 'status', kind: 'select', placeholder: 'Any', minWidth: 150,
-      options: (['Requested', 'Assigned', 'InProgress', 'Completed', 'Cancelled'] as VerificationStatus[])
-        .map((s) => ({ value: s, label: verificationStatusLabel(s) })),
+    {
+      key: 'target', header: 'What is being checked', sortable: true, minWidth: 220,
+      cell: (v) => v.title,
+      // Matched against both lines the cell prints, so searching for either finds the row.
+      filterValue: (v) => `${v.title} ${v.targetSummary ?? ''}`,
+      filter: { kind: 'text', placeholder: 'Contains…' },
     },
-    // A name rather than a people dropdown: the assignable-checkers endpoint is behind
-    // Verification.Create, which a checker reading their own list need not hold.
-    checker: { key: 'checker', kind: 'text', placeholder: 'Name, or -', minWidth: 130 },
-    raised: { key: 'raised', kind: 'date' },
-    outcome: {
-      key: 'outcome', kind: 'select', placeholder: 'Any', minWidth: 170,
-      options: ([
-        'IssueConfirmed', 'WorkingCorrectly', 'ConfigurationOrDataIssue', 'NeedsClarification',
-        'Inconclusive',
-      ] as VerificationResult[]).map((r) => ({ value: r, label: verificationResultLabel(r) })),
+    {
+      key: 'priority', header: 'Priority', sortable: true,
+      cell: (v) => v.priority, sortValue: (v) => PRIORITY_ORDER[v.priority],
+      filter: {
+        kind: 'select', placeholder: 'Any',
+        options: PRIORITIES.map((p) => ({ value: p, label: priorityLabel(p) })),
+      },
     },
-  };
-
-  spec = (column: string): ColumnFilterSpec | undefined => this.specs[column];
+    {
+      key: 'status', header: 'Status', sortable: true, minWidth: 150, cellClass: 'nowrap',
+      cell: (v) => v.status, sortValue: (v) => STATUS_ORDER[v.status],
+      filter: {
+        kind: 'select', placeholder: 'Any',
+        options: STATUSES.map((s) => ({ value: s, label: verificationStatusLabel(s) })),
+      },
+    },
+    {
+      // A name rather than a people dropdown: the assignable-checkers endpoint is behind
+      // Verification.Create, which a checker reading their own list need not hold.
+      key: 'checker', header: 'Checker', sortable: true, minWidth: 130, cellClass: 'nowrap',
+      cell: (v) => v.assignedToDisplayName,
+      filter: { kind: 'text', placeholder: 'Name, or -' },
+    },
+    {
+      key: 'raised', header: 'Raised', sortable: true, cellClass: 'nowrap',
+      cell: (v) => v.requestedAt,
+      filter: { kind: 'date' },
+    },
+    {
+      key: 'outcome', header: 'Outcome', sortable: true, minWidth: 170,
+      cell: (v) => v.result,
+      filter: {
+        kind: 'select', placeholder: 'Any',
+        options: RESULTS.map((r) => ({ value: r, label: verificationResultLabel(r) })),
+      },
+    },
+    { key: 'action', header: 'Actions', headerHidden: true, align: 'right', cellClass: 'nowrap' },
+  ];
 
   /**
    * Every tile is always present, even at zero, so its position can be learned.
@@ -299,24 +243,10 @@ export class VerificationListComponent implements OnInit {
     ];
   });
 
-  readonly rows = computed(() => {
+  /** The tile's own narrowing. The column filters and the ordering are the grid's job. */
+  readonly inView = computed(() => {
     const status = this.view();
-    const values = this.filters.current();
-    const { by, descending } = this.sort();
-
-    let rows = this.all();
-    if (status) rows = rows.filter((v) => v.status === status);
-
-    for (const [key, raw] of Object.entries(values)) {
-      if (!raw) continue;
-      rows = rows.filter((v) => this.matches(v, key, raw));
-    }
-
-    if (!by) return rows;
-
-    const direction = descending ? -1 : 1;
-    // Copied before sorting: the array is a signal's value and sorting in place would mutate it.
-    return [...rows].sort((a, b) => direction * this.compare(a, b, by));
+    return status ? this.all().filter((v) => v.status === status) : this.all();
   });
 
   ngOnInit(): void {
@@ -336,12 +266,6 @@ export class VerificationListComponent implements OnInit {
 
   setView(key: string | null): void {
     this.view.set(key as VerificationStatus | null);
-  }
-
-  /** The empty-state button clears the tile as well as the columns — both are narrowing the list. */
-  clearEverything(): void {
-    this.view.set(null);
-    this.filters.clear();
   }
 
   open(v: VerificationSummaryDto): void {
@@ -381,73 +305,4 @@ export class VerificationListComponent implements OnInit {
     v.status === 'Completed' || v.status === 'Cancelled';
 
   since = (iso: string) => sinceLabel(iso);
-
-  // --- filtering ---------------------------------------------------------------------------
-
-  /**
-   * One column's filter against one row. Within a column several values are OR'd; across columns
-   * they are AND'd, which is the rule the server applies and the one people expect.
-   */
-  private matches(v: VerificationSummaryDto, key: string, raw: string): boolean {
-    // Free text is never split, so a search term may legitimately contain a pipe.
-    const anyOf = (value: string | null | undefined) =>
-      raw.split(SEPARATOR).some((wanted) => wanted === value);
-
-    switch (key) {
-      case 'number': return contains(v.verificationNumber, raw);
-      case 'target': return contains(v.title, raw) || contains(v.targetSummary, raw);
-      case 'priority': return anyOf(v.priority);
-      case 'status': return anyOf(v.status);
-      case 'outcome': return anyOf(v.result ?? null);
-
-      // "-" is how you ask for the ones nobody has, matching the task grid's assignee column.
-      case 'checker':
-        return raw.trim() === '-'
-          ? !v.assignedToDisplayName
-          : contains(v.assignedToDisplayName, raw);
-
-      // Local, not UTC. The column prints a local date, so filtering by a different day boundary
-      // than the one on screen is the mismatch the business-calendar rule exists to avoid — and on
-      // the client the browser's zone is the closest thing to the business day.
-      case 'raised': return localDay(v.requestedAt) === raw;
-
-      // A key nobody handles filters nothing, rather than emptying the grid.
-      default: return true;
-    }
-  }
-
-  private compare(a: VerificationSummaryDto, b: VerificationSummaryDto, by: string): number {
-    switch (by) {
-      case 'number': return a.verificationNumber.localeCompare(b.verificationNumber);
-      case 'target': return a.title.localeCompare(b.title);
-      // By urgency, not alphabetically: Critical must sort above High.
-      case 'priority': return PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority];
-      // By where it has got to, so a queue reads in the order it moves through.
-      case 'status': return STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
-      case 'checker':
-        return (a.assignedToDisplayName ?? '').localeCompare(b.assignedToDisplayName ?? '');
-      case 'outcome': return (a.result ?? '').localeCompare(b.result ?? '');
-      case 'raised':
-      default: return a.requestedAt.localeCompare(b.requestedAt);
-    }
-  }
-}
-
-const PRIORITY_ORDER: Record<Priority, number> = {
-  Critical: 0, High: 1, Normal: 2, Low: 3,
-};
-
-const STATUS_ORDER: Record<VerificationStatus, number> = {
-  Requested: 0, Assigned: 1, InProgress: 2, Completed: 3, Cancelled: 4,
-};
-
-function contains(value: string | null | undefined, term: string): boolean {
-  return (value ?? '').toLowerCase().includes(term.trim().toLowerCase());
-}
-
-/** `yyyy-MM-dd` in the browser's zone — the same day the column prints. */
-function localDay(iso: string): string {
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }

@@ -94,7 +94,7 @@ const fromMet = (met: boolean | null | undefined): Answer =>
                 @if (v.answer === 'fail') {
                   <input
                     class="note"
-                    placeholder="What is wrong with this one?"
+                    placeholder="Why it failed"
                     [ngModel]="v.note"
                     (ngModelChange)="setNote(v.index, $event)" />
                 }
@@ -133,7 +133,7 @@ const fromMet = (met: boolean | null | undefined): Answer =>
           <div class="row row-wrap">
             <mat-form-field class="grow">
               <mat-label>Where you checked it (optional)</mat-label>
-              <input matInput [ngModel]="environment()" (ngModelChange)="environment.set($event)" placeholder="e.g. Staging" />
+              <input matInput [ngModel]="environment()" (ngModelChange)="environment.set($event)" />
             </mat-form-field>
             <mat-form-field class="grow">
               <mat-label>Version (optional)</mat-label>
@@ -175,8 +175,7 @@ const fromMet = (met: boolean | null | undefined): Answer =>
       <div class="card">
         <div class="card-pad"><h2 class="card-title" style="margin:0">Previous checks</h2></div>
         @if (history().length === 0) {
-          <app-empty message="This task has not been checked yet" icon="verified"
-                     hint="A quality check starts once the work is marked finished." />
+          <app-empty message="This task has not been checked yet" icon="verified" />
         } @else {
           @for (review of history(); track review.id) {
             <div class="attempt">

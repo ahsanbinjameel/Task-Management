@@ -256,17 +256,13 @@ export class PauseReasonDialog {
   ],
   template: `
     <div class="page">
-      <app-page-header title="Setup data"
-                       subtitle="The lists the rest of the application picks from." />
+      <app-page-header title="Setup data" />
 
       <mat-tab-group animationDuration="0ms">
         <!-- --- clients ------------------------------------------------------------------- -->
         <mat-tab label="Clients">
           <div class="tab">
             <div class="row bar">
-              <p class="muted small">
-                Who the work is for. Shown on requests and used to filter every list.
-              </p>
               <span class="spacer"></span>
               <button matButton="filled" (click)="addClient()">
                 <mat-icon>add</mat-icon> Add a client
@@ -276,8 +272,7 @@ export class PauseReasonDialog {
             @if (loading()) {
               <app-loading />
             } @else if (clients().length === 0) {
-              <app-empty message="No clients yet" icon="apartment"
-                         hint="Add one before raising a request — the client field picks from this list." />
+              <app-empty message="No clients yet" icon="apartment" />
             } @else {
               <div class="card rows">
                 @for (c of clients(); track c.id) {
@@ -304,10 +299,6 @@ export class PauseReasonDialog {
         <mat-tab label="Pause reasons">
           <div class="tab">
             <div class="row bar">
-              <p class="muted small">
-                Why work stops. These decide whether a task counts as stuck and whether the person
-                goes off the floor.
-              </p>
               <span class="spacer"></span>
               <button matButton="filled" (click)="addPauseReason()">
                 <mat-icon>add</mat-icon> Add a reason
@@ -349,7 +340,6 @@ export class PauseReasonDialog {
         <mat-tab label="Departments">
           <div class="tab">
             <div class="row bar">
-              <p class="muted small">How the organisation is divided. Teams belong to these.</p>
               <span class="spacer"></span>
               <button matButton="filled" (click)="addDepartment()">
                 <mat-icon>add</mat-icon> Add a department
@@ -359,8 +349,7 @@ export class PauseReasonDialog {
             @if (loading()) {
               <app-loading />
             } @else if (departments().length === 0) {
-              <app-empty message="No departments yet" icon="corporate_fare"
-                         hint="Optional — add them if you want to group teams." />
+              <app-empty message="No departments yet" icon="corporate_fare" />
             } @else {
               <div class="card rows">
                 @for (d of departments(); track d.id) {
@@ -385,7 +374,6 @@ export class PauseReasonDialog {
         <mat-tab label="Teams">
           <div class="tab">
             <div class="row bar">
-              <p class="muted small">Who people belong to, for reporting.</p>
               <span class="spacer"></span>
               <button matButton="filled" (click)="addTeam()">
                 <mat-icon>add</mat-icon> Add a team
@@ -395,8 +383,7 @@ export class PauseReasonDialog {
             @if (loading()) {
               <app-loading />
             } @else if (teams().length === 0) {
-              <app-empty message="No teams yet" icon="groups"
-                         hint="Optional — add them if you report on people by team." />
+              <app-empty message="No teams yet" icon="groups" />
             } @else {
               <div class="card rows">
                 @for (t of teams(); track t.id) {

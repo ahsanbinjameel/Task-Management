@@ -13,7 +13,6 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatMenuModule } from '@angular/material/menu';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
-import { MatTableModule } from '@angular/material/table';
 import { ApiService } from '../../core/api.service';
 import { SubmitFailure, describeFailure, handledLocally } from '../../core/form-errors';
 import { FormSubmit } from '../../core/form-submit';
@@ -27,17 +26,12 @@ const WORKFORCE_STATES: WorkforceState[] = [
 ];
 import { roleLabel, workforceStateLabel } from '../../core/labels';
 import { SearchSelectComponent } from '../../shared/search-select.component';
-import {
-  ChipComponent,
-  EmptyComponent,
-  LoadingComponent,
-  PageHeaderComponent,
-} from '../../shared/ui';
+import { ChipComponent, PageHeaderComponent } from '../../shared/ui';
 import { ConfirmDialog, ConfirmData } from '../../shared/dialogs';
+import { columnFilters } from '../../shared/column-filter.component';
 import {
-  ColumnFilterComponent, ColumnFilterSpec, FilterSummaryComponent, NoMatchesComponent,
-  columnFilters,
-} from '../../shared/column-filter.component';
+  DataGridComponent, GridCellDirective, GridColumn,
+} from '../../shared/data-grid.component';
 
 /**
  * Everything about one account, in one place.
@@ -72,7 +66,6 @@ import {
         <mat-label>Username</mat-label>
         <input matInput name="userName" [(ngModel)]="userName" cdkFocusInitial maxlength="100"
                autocomplete="off" />
-        <mat-hint>What they type to sign in.</mat-hint>
         @if (form.fieldError('userName'); as e) { <mat-error>{{ e }}</mat-error> }
       </mat-form-field>
 
@@ -89,11 +82,6 @@ import {
       </mat-form-field>
 
       <h3 class="section">Password</h3>
-      <p class="muted small note">
-        Existing passwords cannot be shown - they are stored as one-way hashes, so nobody, including
-        an administrator, can read one back. Leave this blank to keep theirs as it is.
-      </p>
-
       <mat-form-field class="full">
         <mat-label>Set a new password</mat-label>
         <input matInput name="newPassword" [type]="reveal() ? 'text' : 'password'"
@@ -209,11 +197,6 @@ export class EditUserDialog {
   template: `
     <h2 mat-dialog-title>What {{ data.user.displayName }} can do</h2>
     <mat-dialog-content>
-      <p class="muted small note">
-        A change only takes effect the next time they sign in — permissions travel on the access
-        token.
-      </p>
-
       @if (form.message(); as m) {
         <div class="form-error" role="alert">
           <mat-icon>error_outline</mat-icon><span>{{ m }}</span>
@@ -503,138 +486,67 @@ export class UserDialog {
   selector: 'app-users',
   standalone: true,
   imports: [
-    FormsModule,
     MatButtonModule,
-    MatCheckboxModule,
-    MatFormFieldModule,
     MatIconModule,
-    MatInputModule,
     MatMenuModule,
     MatSlideToggleModule,
-    MatTableModule,
     PageHeaderComponent,
     ChipComponent,
-    EmptyComponent,
-    LoadingComponent,
-    ColumnFilterComponent,
-    NoMatchesComponent,
-    FilterSummaryComponent,
+    DataGridComponent,
+    GridCellDirective,
   ],
   template: `
     <div class="page">
-      <app-page-header title="Users" subtitle="Accounts, roles and access.">
+      <app-page-header title="Users">
         <button matButton="filled" (click)="create()">
           <mat-icon>person_add</mat-icon> New user
         </button>
       </app-page-header>
 
-      <app-filter-summary [count]="filters.activeCount()" (clear)="filters.clear()" />
+      <app-data-grid
+        [rows]="users()" [columns]="columns()"
+        [loading]="loading()" [filters]="filters"
+        emptyMessage="No accounts yet" emptyIcon="group"
+        noMatchesMessage="No accounts match those filters.">
 
-      <div class="card">
-        @if (loading()) {
-          <app-loading />
-        } @else if (users().length === 0 && !filters.any()) {
-          <!-- Only when there really are none. With a filter set the grid stays up: this message
-               once claimed "No accounts yet" while eight accounts existed and one filter was on. -->
-          <app-empty message="No accounts yet" icon="group"
-                     hint="Add someone before they can raise a request or be given work." />
-        } @else {
-          <div class="table-scroll">
-            <table mat-table [dataSource]="users()">
-              <ng-container matColumnDef="name">
-                <th mat-header-cell *matHeaderCellDef>Name</th>
-                <td mat-cell *matCellDef="let u">
-                  <strong>{{ u.displayName }}</strong>
-                  <div class="muted small">
-                    {{ u.userName }}{{ u.email ? ' · ' + u.email : '' }}
-                  </div>
-                </td>
-              </ng-container>
+        <ng-template gridCell="name" let-u>
+          <strong>{{ u.displayName }}</strong>
+          <div class="muted small">{{ u.userName }}{{ u.email ? ' · ' + u.email : '' }}</div>
+        </ng-template>
 
-              <ng-container matColumnDef="roles">
-                <th mat-header-cell *matHeaderCellDef>Roles</th>
-                <td mat-cell *matCellDef="let u">
-                  <div class="row row-wrap" style="gap:5px">
-                    @for (role of u.roles; track role) {
-                      <span class="chip tone-neutral">{{ roleLabel(role) }}</span>
-                    } @empty {
-                      <span class="muted small">None</span>
-                    }
-                  </div>
-                </td>
-              </ng-container>
-
-              <ng-container matColumnDef="state">
-                <th mat-header-cell *matHeaderCellDef>Availability</th>
-                <td mat-cell *matCellDef="let u">
-                  <app-chip [value]="u.workforceState" kind="workforce" [dot]="true" />
-                </td>
-              </ng-container>
-
-              <ng-container matColumnDef="active">
-                <th mat-header-cell *matHeaderCellDef>Active</th>
-                <td mat-cell *matCellDef="let u">
-                  <mat-slide-toggle
-                    [checked]="u.isActive"
-                    (change)="setActive(u, $event.checked)"
-                  />
-                </td>
-              </ng-container>
-
-              <ng-container matColumnDef="actions">
-                <th mat-header-cell *matHeaderCellDef></th>
-                <td mat-cell *matCellDef="let u" class="right">
-                  <button matIconButton [matMenuTriggerFor]="menu">
-                    <mat-icon>more_vert</mat-icon>
-                  </button>
-                  <mat-menu #menu="matMenu">
-                    <button mat-menu-item (click)="editUser(u)">
-                      <mat-icon>edit</mat-icon><span>Edit account</span>
-                    </button>
-                    <button mat-menu-item (click)="editRoles(u)">
-                      <mat-icon>badge</mat-icon><span>Change roles</span>
-                    </button>
-                  </mat-menu>
-                </td>
-              </ng-container>
-
-              <!-- The filter row, generated from the same column list as the header above it. -->
-              @for (column of columns; track column) {
-                <ng-container [matColumnDef]="column + '_filter'">
-                  <th mat-header-cell *matHeaderCellDef class="filter-cell">
-                    <app-column-filter [spec]="specs()[column]" [value]="filters.value(column)"
-                                       (changed)="filters.set(specs()[column], column, $event)" />
-                  </th>
-                </ng-container>
-              }
-
-              <tr mat-header-row *matHeaderRowDef="columns"></tr>
-              <tr mat-header-row *matHeaderRowDef="filterRow" class="filter-row"></tr>
-              <tr mat-row *matRowDef="let row; columns: columns"></tr>
-            </table>
+        <ng-template gridCell="roles" let-u>
+          <div class="row row-wrap" style="gap:5px">
+            @for (role of u.roles; track role) {
+              <span class="chip tone-neutral">{{ roleLabel(role) }}</span>
+            } @empty {
+              <span class="muted small">None</span>
+            }
           </div>
+        </ng-template>
 
-          @if (users().length === 0) {
-            <app-no-matches message="No accounts match those filters."
-                            (clear)="filters.clear()" />
-          }
-        }
-      </div>
+        <ng-template gridCell="state" let-u>
+          <app-chip [value]="u.workforceState" kind="workforce" [dot]="true" />
+        </ng-template>
 
+        <ng-template gridCell="active" let-u>
+          <mat-slide-toggle [checked]="u.isActive" (change)="setActive(u, $event.checked)" />
+        </ng-template>
+
+        <ng-template gridCell="actions" let-u>
+          <button matIconButton [matMenuTriggerFor]="menu">
+            <mat-icon>more_vert</mat-icon>
+          </button>
+          <mat-menu #menu="matMenu">
+            <button mat-menu-item (click)="editUser(u)">
+              <mat-icon>edit</mat-icon><span>Edit account</span>
+            </button>
+            <button mat-menu-item (click)="editRoles(u)">
+              <mat-icon>badge</mat-icon><span>Change roles</span>
+            </button>
+          </mat-menu>
+        </ng-template>
+      </app-data-grid>
     </div>
-  `,
-  styles: `
-    .right {
-      text-align: right;
-    }
-    .top-gap {
-      margin-top: 18px;
-    }
-    .roles {
-      display: grid;
-      gap: 6px;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    }
   `,
 })
 export class UsersComponent implements OnInit {
@@ -649,9 +561,6 @@ export class UsersComponent implements OnInit {
   readonly roles = signal<RoleDto[]>([]);
   readonly loading = signal(true);
 
-  readonly columns = ['name', 'roles', 'state', 'active', 'actions'];
-  readonly filterRow = this.columns.map((c) => c + '_filter');
-
   /**
    * The people grid had no filtering at all — fine at seven accounts, unusable at two hundred.
    * Roles and state are exact matches because both come from short, known lists; the name is a
@@ -659,23 +568,36 @@ export class UsersComponent implements OnInit {
    */
   readonly filters = columnFilters(() => this.load());
 
-  readonly specs = computed<Record<string, ColumnFilterSpec>>(() => ({
-    name: { key: 'name', kind: 'text', placeholder: 'Name or username' },
-    // By id, not name: a role is administrator-named and could contain a comma, which is the one
-    // character the multi-value format cannot carry.
-    roles: {
-      key: 'roles', kind: 'select', placeholder: 'Any role',
-      options: this.roles().map((r) => ({ value: r.id, label: roleLabel(r.name) })),
+  readonly columns = computed<GridColumn<UserDto>[]>(() => [
+    {
+      key: 'name', header: 'Name', minWidth: 220,
+      filter: { kind: 'text', placeholder: 'Name or username' },
     },
-    state: {
-      key: 'state', kind: 'select', placeholder: 'Any',
-      options: WORKFORCE_STATES.map((v) => ({ value: v, label: workforceStateLabel(v) })),
+    {
+      // By id, not name: a role is administrator-named and could contain a comma, which is the one
+      // character the multi-value format cannot carry.
+      key: 'roles', header: 'Roles',
+      filter: {
+        kind: 'select', placeholder: 'Any role',
+        options: this.roles().map((r) => ({ value: r.id, label: roleLabel(r.name) })),
+      },
     },
-    active: {
-      key: 'active', kind: 'select', placeholder: 'Any',
-      options: [{ value: 'true', label: 'Active' }, { value: 'false', label: 'Turned off' }],
+    {
+      key: 'state', header: 'Availability',
+      filter: {
+        kind: 'select', placeholder: 'Any',
+        options: WORKFORCE_STATES.map((v) => ({ value: v, label: workforceStateLabel(v) })),
+      },
     },
-  }));
+    {
+      key: 'active', header: 'Active',
+      filter: {
+        kind: 'select', placeholder: 'Any',
+        options: [{ value: 'true', label: 'Active' }, { value: 'false', label: 'Turned off' }],
+      },
+    },
+    { key: 'actions', header: 'Actions', headerHidden: true, align: 'right' },
+  ]);
 
   ngOnInit(): void {
     this.load();

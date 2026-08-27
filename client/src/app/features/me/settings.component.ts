@@ -40,7 +40,7 @@ const matching = (group: AbstractControl): ValidationErrors | null =>
   ],
   template: `
     <div class="page narrow">
-      <app-page-header title="Settings" subtitle="Your account and how this app behaves for you." />
+      <app-page-header title="Settings" />
 
       <!-- --- who you are ------------------------------------------------------------------ -->
       <section class="card card-pad">
@@ -50,7 +50,6 @@ const matching = (group: AbstractControl): ValidationErrors | null =>
           <mat-form-field class="full">
             <mat-label>Full name</mat-label>
             <input matInput formControlName="displayName" maxlength="200" />
-            <mat-hint>How colleagues see you on requests, tasks and reports.</mat-hint>
           </mat-form-field>
 
           <mat-form-field class="full">
@@ -78,10 +77,6 @@ const matching = (group: AbstractControl): ValidationErrors | null =>
           </div>
         </div>
 
-        <p class="muted small note">
-          Your username and what you can do are set by an administrator - ask one of them if either
-          is wrong. Your own name and email are yours to change.
-        </p>
       </section>
 
       <!-- --- password --------------------------------------------------------------------- -->
@@ -125,10 +120,6 @@ const matching = (group: AbstractControl): ValidationErrors | null =>
         <mat-slide-toggle [checked]="rail()" (change)="setRail($event.checked)">
           Keep the sidebar collapsed
         </mat-slide-toggle>
-        <p class="muted small note">
-          Shows the menu as icons only, for more room on the page.
-        </p>
-
         <p class="muted small browser">
           <mat-icon>info_outline</mat-icon>
           Preferences are remembered in this browser only — signing in somewhere else starts from
@@ -140,10 +131,6 @@ const matching = (group: AbstractControl): ValidationErrors | null =>
       @if (canAdminister()) {
         <section class="card card-pad">
           <h2 class="card-title">System configuration</h2>
-          <p class="muted small note">
-            These change the system for everyone, not just for you.
-          </p>
-
           <div class="links">
             @if (auth.has(Perm.adminManageUsers)) {
               <a class="link-row" routerLink="/admin/users">

@@ -32,8 +32,7 @@ const VISIBLE_BY_DEFAULT: CommentCategory[] = [
       <div class="card card-pad">
         <mat-form-field class="full">
           <mat-label>Add a comment</mat-label>
-          <textarea matInput rows="3" [(ngModel)]="body"
-                    placeholder="What should the next person to open this know?"></textarea>
+          <textarea matInput rows="3" [(ngModel)]="body"></textarea>
         </mat-form-field>
 
         <div class="row row-wrap">
@@ -54,8 +53,7 @@ const VISIBLE_BY_DEFAULT: CommentCategory[] = [
 
       <div class="card">
         @if (comments().length === 0) {
-          <app-empty message="No comments yet" icon="forum"
-                     hint="Notes here are permanent — nothing is ever edited or deleted." />
+          <app-empty message="No comments yet" icon="forum" />
         } @else {
           @for (comment of comments(); track comment.id) {
             <div class="comment">

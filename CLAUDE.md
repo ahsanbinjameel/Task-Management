@@ -369,19 +369,21 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | `src/app/core/guards.ts` | `authGuard`, `requirePermission(...)` |
 | `src/app/core/labels.ts` | **The words users see, in one place.** Mirrors `StatusLabels` server-side; also roles, actions, categories, dependency and pause types |
 | `src/app/core/format.ts` | TimeSpan parsing, `sinceLabel` ("3 days"), status→tone mapping, CSV/blob download |
-| `src/app/shared/` | Chips, stats, empty/loading states, the shared task table, confirm + reason dialogs |
+| `src/app/shared/` | Chips, stats, empty/loading states, the standard grid, the shared task table, confirm + reason dialogs |
 | `src/app/shared/search-select.component.ts` | `app-search-select` — **the** dropdown. Type-to-filter, single or multi (chips). Works with `ngModel` and `formControlName`; `enumOptions()` builds the options for enum lists |
+| `src/app/shared/data-grid.component.ts` | **`app-data-grid` — the one grid.** Every list in the app is one of these. Owns the card, the scroll wrapper, the header, the generated filter row, the sortable headings, the dimmed reload, the empty state, the "nothing matches" strip and the paginator. A screen declares `GridColumn[]` and, for anything richer than text, an `<ng-template gridCell="key">`. `mode="local"` filters and sorts in place for a grid that arrived whole |
 | `src/app/shared/list-views.ts` | Columns + primary action per status view. The server says which statuses a view covers; this says what is worth showing once you are in it |
+| `src/app/shared/task-table.component.ts` | `app-task-table` — the task **column catalogue** (what `number`, `waitingSince`, `checkNotes` … mean) over `app-data-grid`. It knows what a task column is and nothing else; the table itself is the grid's |
 | `src/app/shared/attachments.component.ts` | `app-attachments` (thumbnails, file rows) and the image viewer dialog — zoom, pan, next/previous. Download is secondary |
 | `src/app/shared/pdf-viewer.component.ts` | `PdfViewerDialog` + `openPdf(dialog, …)` — the one way a PDF is opened. Fetches with the bearer token, frames the blob, keeps Download as a button |
-| `src/app/shared/column-filter.component.ts` | `app-column-filter` (one filter cell — text, date, or a **multi-value** dropdown), `ColumnFilterSpec`, `ColumnFilterState`/`columnFilters()`. Debounces typing, not choices; `asObject()` produces the `col[key]` query bag |
+| `src/app/shared/column-filter.component.ts` | `app-column-filter` (one filter cell — text, date, or a **multi-value** dropdown), `ColumnFilterSpec`, `ColumnFilterState`/`columnFilters()`. Debounces typing, not choices; `asObject()` produces the `col[key]` query bag. Screens no longer place these by hand — `app-data-grid` builds the row from each column's `filter` |
 | | Also `app-no-matches` (the strip shown *under* a still-visible table when filters match nothing) and `app-filter-summary` (the "N filters applied · Clear all" bar above the grid) |
 | `src/app/shared/file-drop.component.ts` | `app-file-drop` — choose / drag / **paste** (Win+Shift+S → Ctrl+V), with previews before anything is submitted |
 | `src/app/shared/attachment-upload.component.ts` | `app-attachment-upload` — the same three ways in, but straight onto a record that already exists. Carries the `kind`, and takes **exactly one** of `taskId`/`verificationId`, mirroring the server's owner rule |
 | `src/app/layout/` | Shell, permission-filtered nav, notification bell, shift widget, quick-work widget (live clock) |
 | `src/app/layout/nav-preference.ts` | The sidebar-rail preference. Shared, because both the rail's toggle and the Settings page write it |
 | `src/app/features/` | One folder per area: dashboard, tasks (+ `panels/`), requests (incl. `batch-detail`), qc, verifications, workforce, reports, admin, me |
-| `src/app/features/verifications/` | The checks list — a standard grid: tiles, a generated filter row, sortable headings, and the table kept on screen when nothing matches. Filtering and sorting run **client-side**, which is correct here because the whole set is loaded in one call. Plus the detail where a checker takes it and reports, and the dialogs that raise and assign |
+| `src/app/features/verifications/` | The checks list — `app-data-grid` in `mode="local"`, which is correct here because the whole set is loaded in one call. Plus the detail where a checker takes it and reports, and the dialogs that raise and assign |
 | `src/app/features/me/settings.component.ts` | **The one door out of the profile menu.** Account facts, change password, per-browser preferences, and (for people who run the system) links to the configuration screens |
 | `src/app/features/admin/setup.component.ts` | The setup screen — tabs for clients, pause reasons, departments, teams. Every row shows what points at it and offers retire, not delete |
 | `src/app/features/admin/roles.component.ts` | The role map, and its editor for anyone holding `Admin.ManageRoles`. Permission grid grouped from the key prefixes, so a new server-side permission appears with no second edit |
@@ -593,6 +595,45 @@ running the API instead (`--launch-profile Development`), which does load user-s
 - **Filter cells have a real minimum width.** With `min-width: 0` the browser met the table's
   `width: 100%` by crushing columns instead of scrolling — "TSK-000003" wrapped onto two lines and
   the priority filter rendered as "An". Columns that do not fit make `.table-scroll` scroll.
+- **There is one grid, `app-data-grid`, and every list is one.** Seven screens had independently
+  grown the same table — a `.card`, a `.table-scroll`, a header row, a hand-placed filter row, a
+  hand-placed `app-sort-header` per column, a `.refreshing tbody` rule, a `@for` generating
+  `matColumnDef`s for the filter cells, an `app-empty`, an `app-no-matches`, an
+  `app-filter-summary` and a `mat-paginator` — each with its own copy of the CSS and its own
+  chance to drift. Adding a column meant editing a `columns` array, a header `<th>`, a body
+  `<td>`, a `specs` record and often a local stylesheet. It is now one component: a screen
+  declares `GridColumn[]` and, where a cell needs more than text, an
+  `<ng-template gridCell="key">`. Columns stay **fully dynamic** — `columns` is a signal input, so
+  a grid whose shape depends on the view or on the reader's permissions just recomputes the array.
+  What moved into the grid is everything that was identical: the filter row is built from each
+  column's own `filter`, `filterOptions` is merged in for it, the sort control appears on any
+  column marked `sortable`, and the empty / nothing-matches / paginator decisions are made once.
+  Cell templates are projected, so they are styled in the *screen's* scope — which is why
+  `.grid-title`, `.grid-link`, `.grid-action`, `.grid-peek` and `.grid-progress` live in
+  `styles.scss` rather than being repeated as local styles in every list.
+- **`mode="local"` is for a grid that arrived whole, and only then.** The default is `server`:
+  filtering, sorting and paging belong to the API, because narrowing the page you happen to be on
+  would report "2 matches" out of thirty. `local` does both in the grid, which is right for the
+  checks list, the workload screen and the daily report — all unpaged, single-call responses where
+  narrowing locally cannot misreport a total. It replaced ~150 lines of hand-written `matches`/
+  `compare` switch statements on the checks list alone; a column now says how it is read
+  (`filterValue`) and how it is ordered (`sortValue`, which returns a number where rank matters —
+  Critical must sort above High).
+- **The Requests page opens on everything.** It used to open anyone holding `Task.Review` on the
+  "Submitted" tile, on the grounds that a reviewer comes to the screen asking "what is waiting for
+  me?". That answered one question by hiding every other request the reader had a hand in, and a
+  view nobody chose does not read as a filter at all — a reviewer wondering where a request went
+  had no reason to suspect the page had already narrowed itself. The tile is one click away. A
+  `view` in the URL still wins, so every existing link lands where it points.
+- **A screen says what it is once.** Page headers carried a sentence under the title paraphrasing
+  the title; empty states carried a second line explaining the first; dialogs and panels opened
+  with a paragraph of guidance; labelled fields carried a placeholder restating the label. All of
+  it is removed. Explanatory text under every heading is a line the reader learns to skip, and
+  once they do, it hides the ones that carry something. What stays is the text that is doing work:
+  a `subtitle` holding a *fact* (a reference number, the date being reported on, a check's
+  target), a consequence a confirmation has to state, and a placeholder on the one control in the
+  app with no label of its own. `EmptyComponent.hint` is gone as an input, so it cannot come back
+  by habit.
 - **Filtering lives in the column, not in a card above the grid.** Every grid had a card holding a
   search box and two or three dropdowns, each of which described one column below it — so the
   reader had to map "Client: Any" onto the Client column themselves, and the card grew a control

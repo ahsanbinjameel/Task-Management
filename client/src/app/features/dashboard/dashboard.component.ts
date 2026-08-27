@@ -54,8 +54,7 @@ import { ChipComponent, EmptyComponent, PageHeaderComponent, StatComponent } fro
             </div>
 
             @if (h.needsAttention.length === 0) {
-              <app-empty message="Nothing is waiting on you" icon="task_alt"
-                         hint="Anything that needs a decision or a pair of hands will appear here." />
+              <app-empty message="Nothing is waiting on you" icon="task_alt" />
             } @else {
               @for (item of h.needsAttention; track item.subject + '-' + item.id) {
                 <a class="item attention" [routerLink]="routeFor(item)">
@@ -86,8 +85,7 @@ import { ChipComponent, EmptyComponent, PageHeaderComponent, StatComponent } fro
               <h2 class="card-title" style="margin:0">Recent activity</h2>
             </div>
             @if (h.recentActivity.length === 0) {
-              <app-empty message="Nothing has happened yet" icon="history"
-                         hint="Updates to work you are part of show up here." />
+              <app-empty message="Nothing has happened yet" icon="history" />
             } @else {
               @for (entry of h.recentActivity; track entry.subject + '-' + entry.id + '-' + entry.at) {
                 <a class="item activity" [routerLink]="routeFor(entry)">
@@ -109,7 +107,6 @@ import { ChipComponent, EmptyComponent, PageHeaderComponent, StatComponent } fro
               <mat-icon>bolt</mat-icon>
               <div>
                 <strong>Currently working on {{ w.activeTaskNumber }}</strong>
-                <div class="muted small">The timer is running. Open the task to pause or finish.</div>
               </div>
               <span class="spacer"></span>
               <mat-icon>chevron_right</mat-icon>
@@ -119,9 +116,6 @@ import { ChipComponent, EmptyComponent, PageHeaderComponent, StatComponent } fro
               <mat-icon>schedule</mat-icon>
               <div>
                 <strong>You are not on shift</strong>
-                <div class="muted small">
-                  Start your shift from the top bar before picking up work.
-                </div>
               </div>
             </div>
           }
@@ -164,8 +158,7 @@ import { ChipComponent, EmptyComponent, PageHeaderComponent, StatComponent } fro
                 <a matButton routerLink="/assignment">Assign</a>
               </div>
               @if (c.unassigned.length === 0) {
-                <app-empty message="Everything is assigned" icon="done_all"
-                           hint="Approved work with nobody on it would appear here." />
+                <app-empty message="Everything is assigned" icon="done_all" />
               } @else {
                 @for (item of c.unassigned; track item.id) {
                   <a class="item" [routerLink]="['/tasks', item.id]">
@@ -181,8 +174,7 @@ import { ChipComponent, EmptyComponent, PageHeaderComponent, StatComponent } fro
             <div class="card">
               <div class="card-pad"><h2 class="card-title" style="margin:0">Overdue</h2></div>
               @if (c.overdue.length === 0) {
-                <app-empty message="Nothing is late" icon="schedule"
-                           hint="Work past its due date would appear here." />
+                <app-empty message="Nothing is late" icon="schedule" />
               } @else {
                 @for (item of c.overdue; track item.id) {
                   <a class="item" [routerLink]="['/tasks', item.id]">
@@ -268,7 +260,6 @@ import { ChipComponent, EmptyComponent, PageHeaderComponent, StatComponent } fro
             </div>
             @if (r.recent.length === 0) {
               <app-empty message="You have not raised anything yet" icon="inbox"
-                         hint="Anything you ask for shows up here, with its progress."
                          actionLabel="Raise a request" actionRoute="/requests/new" />
             } @else {
               @for (item of r.recent; track item.id) {

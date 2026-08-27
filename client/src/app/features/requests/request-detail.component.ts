@@ -286,8 +286,7 @@ import {
 
                     <mat-form-field class="full">
                       <mat-label>Acceptance criteria — one per line</mat-label>
-                      <textarea matInput rows="4" [(ngModel)]="criteria"
-                                placeholder="One per line — QC has to tick every one."></textarea>
+                      <textarea matInput rows="4" [(ngModel)]="criteria"></textarea>
                     </mat-form-field>
                   </div>
                 } @else {
@@ -318,8 +317,7 @@ import {
 
                     <mat-form-field class="full">
                       <mat-label>What should they look at? (optional)</mat-label>
-                      <textarea matInput rows="3" [(ngModel)]="verifyInstructions"
-                                placeholder="Reproduce it on the higher tax band and say whether the rate table has a row for it."></textarea>
+                      <textarea matInput rows="3" [(ngModel)]="verifyInstructions"></textarea>
                     </mat-form-field>
                   </div>
                 }

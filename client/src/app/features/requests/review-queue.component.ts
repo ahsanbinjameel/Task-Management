@@ -23,8 +23,7 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
   ],
   template: `
     <div class="page">
-      <app-page-header title="Review queue"
-                       subtitle="Most urgent first, then oldest. Five of the six outcomes create no work at all.">
+      <app-page-header title="Review queue">
         <button matButton (click)="load()"><mat-icon>refresh</mat-icon> Refresh</button>
       </app-page-header>
 
@@ -75,8 +74,7 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
         @if (loading()) {
           <app-loading />
         } @else if (page().items.length === 0) {
-          <app-empty message="Nothing waiting for review" icon="rate_review"
-                     hint="New requests land here as soon as they are submitted." />
+          <app-empty message="Nothing waiting for review" icon="rate_review" />
         } @else {
           @for (request of page().items; track request.id) {
             <div class="item">

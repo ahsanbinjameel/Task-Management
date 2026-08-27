@@ -31,7 +31,7 @@ import {
   ],
   template: `
     <div class="page">
-      <app-page-header title="My day" subtitle="Your shift, your availability, and where the time went.">
+      <app-page-header title="My day">
         <mat-form-field class="date">
           <mat-label>Date</mat-label>
           <input matInput type="date" [(ngModel)]="date" (change)="load()" />
@@ -63,8 +63,7 @@ import {
           <div class="card">
             <div class="card-pad"><h2 class="card-title" style="margin:0">Timeline</h2></div>
             @if (!timeline() || timeline()!.entries.length === 0) {
-              <app-empty message="Nothing recorded today" icon="schedule"
-                         hint="Start your shift from the top bar, and your day is tracked from there." />
+              <app-empty message="Nothing recorded today" icon="schedule" />
             } @else {
               @for (entry of timeline()!.entries; track $index) {
                 <div class="entry">
@@ -83,7 +82,6 @@ import {
             <div class="card-pad"><h2 class="card-title" style="margin:0">My tasks</h2></div>
             @if (!report() || report()!.ownedWork.length === 0) {
               <app-empty message="You have not logged time on your own tasks today" icon="timer_off"
-                         hint="Time is recorded when you start the timer on a task."
                          actionLabel="Open my queue" actionRoute="/my-queue" />
             } @else {
               @for (line of report()!.ownedWork; track line.taskId) {

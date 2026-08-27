@@ -58,7 +58,6 @@ export interface AssignVerificationData {
         class="full"
         label="Checker"
         name="assignToUserId"
-        placeholder="Type to find someone"
         [options]="checkerOptions()"
         [(ngModel)]="assignToUserId" />
 
@@ -66,7 +65,6 @@ export interface AssignVerificationData {
         <mat-form-field class="full">
           <mat-label>Why is it moving?</mat-label>
           <textarea matInput rows="3" name="reason" [(ngModel)]="reason" maxlength="2000"
-                    placeholder="Quentin is on leave."
                     (input)="form.clearField('reason')"></textarea>
           @if (form.fieldError('reason'); as e) { <mat-error>{{ e }}</mat-error> }
         </mat-form-field>

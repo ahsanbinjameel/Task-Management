@@ -7,7 +7,7 @@ import { ApiService } from '../../core/api.service';
 import { ToastService } from '../../core/toast.service';
 import { RealtimeService } from '../../core/realtime.service';
 import { PagedResult, TaskSummaryDto } from '../../core/models';
-import { EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../shared/ui';
+import { PageHeaderComponent } from '../../shared/ui';
 import { TaskTableComponent } from '../../shared/task-table.component';
 
 /**
@@ -18,29 +18,21 @@ import { TaskTableComponent } from '../../shared/task-table.component';
   selector: 'app-qc-queue',
   standalone: true,
   imports: [
-    MatButtonModule, MatIconModule, PageHeaderComponent, EmptyComponent, LoadingComponent,
-    TaskTableComponent,
+    MatButtonModule, MatIconModule, PageHeaderComponent, TaskTableComponent,
   ],
   template: `
     <div class="page">
-      <app-page-header title="Quality checks" subtitle="Completed work waiting for review.">
+      <app-page-header title="Quality checks">
         <button matButton (click)="load()"><mat-icon>refresh</mat-icon> Refresh</button>
       </app-page-header>
 
-      <div class="card">
-        @if (loading()) {
-          <app-loading />
-        } @else if (page().items.length === 0) {
-          <app-empty message="Nothing waiting for QC" icon="verified"
-                     hint="Tasks arrive here when an assignee marks them complete." />
-        } @else {
-          <app-task-table
-            [tasks]="page().items"
-            [columns]="['number', 'title', 'priority', 'assignee', 'worked', 'action']"
-            actionLabel="Start review"
-            (action)="startReview($event)" />
-        }
-      </div>
+      <app-task-table
+        [tasks]="page().items"
+        [columns]="['number', 'title', 'priority', 'assignee', 'worked', 'action']"
+        actionLabel="Start review"
+        [loading]="loading()"
+        emptyMessage="Nothing waiting for QC" emptyIcon="verified"
+        (action)="startReview($event)" />
     </div>
   `,
 })

@@ -7,7 +7,7 @@ import { ApiService } from '../../core/api.service';
 import { ToastService } from '../../core/toast.service';
 import { RealtimeService } from '../../core/realtime.service';
 import { PagedResult, TaskSummaryDto, WorkloadDto } from '../../core/models';
-import { EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../shared/ui';
+import { PageHeaderComponent } from '../../shared/ui';
 import { TaskTableComponent } from '../../shared/task-table.component';
 import { AssignDialogComponent, AssignDialogResult } from './assign-dialog.component';
 
@@ -19,30 +19,22 @@ import { AssignDialogComponent, AssignDialogResult } from './assign-dialog.compo
   selector: 'app-assignment-queue',
   standalone: true,
   imports: [
-    MatButtonModule, MatIconModule, PageHeaderComponent, EmptyComponent, LoadingComponent,
-    TaskTableComponent,
+    MatButtonModule, MatIconModule, PageHeaderComponent, TaskTableComponent,
   ],
   template: `
     <div class="page">
-      <app-page-header title="Assignment queue" subtitle="Approved work waiting for an owner.">
+      <app-page-header title="Assignment queue">
         <button matButton (click)="load()"><mat-icon>refresh</mat-icon> Refresh</button>
       </app-page-header>
 
       <div class="layout">
-        <div class="card">
-          @if (loading()) {
-            <app-loading />
-          } @else if (page().items.length === 0) {
-            <app-empty message="Everything is assigned" icon="done_all"
-                       hint="Newly approved work will appear here." />
-          } @else {
-            <app-task-table
-              [tasks]="page().items"
-              [columns]="['number', 'title', 'priority', 'due', 'action']"
-              actionLabel="Assign"
-              (action)="assign($event)" />
-          }
-        </div>
+        <app-task-table
+          [tasks]="page().items"
+          [columns]="['number', 'title', 'priority', 'due', 'action']"
+          actionLabel="Assign"
+          [loading]="loading()"
+          emptyMessage="Everything is assigned" emptyIcon="done_all"
+          (action)="assign($event)" />
 
         <aside class="card card-pad">
           <h2 class="card-title">Who has capacity</h2>

@@ -45,8 +45,7 @@ import { ChipComponent, EmptyComponent } from '../../../shared/ui';
             <div class="row row-wrap">
               <mat-form-field class="grow">
                 <mat-label>Find a task</mat-label>
-                <input matInput [(ngModel)]="search" (keyup.enter)="find()"
-                       placeholder="Task number or title" />
+                <input matInput [(ngModel)]="search" (keyup.enter)="find()" />
                 <mat-icon matSuffix>search</mat-icon>
               </mat-form-field>
 
@@ -70,8 +69,7 @@ import { ChipComponent, EmptyComponent } from '../../../shared/ui';
         <div class="card">
           <div class="card-pad"><h2 class="card-title" style="margin:0">This task…</h2></div>
           @if (g.outgoing.length === 0) {
-            <app-empty message="Nothing is linked to this task" icon="link"
-                       hint="Link work that has to happen first, or that this one holds up." />
+            <app-empty message="Nothing is linked to this task" icon="link" />
           } @else {
             @for (dep of g.outgoing; track dep.id) {
               <div class="dep">
