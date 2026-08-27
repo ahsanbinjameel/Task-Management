@@ -13,7 +13,7 @@ public class NumberSequenceConfig : IEntityTypeConfiguration<NumberSequence>
         b.Property(s => s.Key).HasMaxLength(50);
 
         // A plain integer token rather than ROWVERSION, so the concurrency guard behaves the same
-        // on SQL Server, SQLite and the InMemory provider used by tests.
+        // on SQL Server and on the InMemory provider used by tests.
         b.Property(s => s.Version).IsConcurrencyToken();
     }
 }

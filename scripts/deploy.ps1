@@ -70,9 +70,6 @@ if (Test-Path $devSettings) {
     Write-Host "Removed appsettings.Development.json from the publish output."
 }
 
-$demoSettings = Join-Path $Output "appsettings.Demo.json"
-if (Test-Path $demoSettings) { Remove-Item $demoSettings -Force }
-
 Step "Generating the idempotent migration script"
 $scriptPath = Join-Path $root "scripts/sql/release.sql"
 

@@ -10,25 +10,27 @@ SignalR · IIS. The client builds into the API's `wwwroot`, so a deployment is a
 
 ## Which of these are you trying to do?
 
-| Goal                                                | Go to                                                  |
-| --------------------------------------------------- | ------------------------------------------------------ |
-| See it working in 2 minutes, no database to install | [A. Demo mode](#a-demo-mode--no-sql-server-needed)     |
-| Develop against a real SQL Server                   | [B. Dev server](#b-dev-server--sql-server)             |
-| Work on the Angular front end                       | [B4. Front-end development](#b4-front-end-development) |
-| Deploy to IIS                                       | [C. IIS deployment](#c-iis-deployment)                 |
-| Something broke                                     | [Troubleshooting](#troubleshooting)                    |
+| Goal                              | Go to                                                  |
+| --------------------------------- | ------------------------------------------------------ |
+| Develop against a real SQL Server | [A. Dev server](#a-dev-server--sql-server)             |
+| Work on the Angular front end     | [A4. Front-end development](#a4-front-end-development) |
+| Deploy to IIS                     | [B. IIS deployment](#b-iis-deployment)                 |
+| Something broke                   | [Troubleshooting](#troubleshooting)                    |
+
+> **SQL Server is required.** There is no lighter mode to evaluate against — see
+> [Why there is no demo mode](#why-there-is-no-demo-mode).
 
 ---
 
 ## Prerequisites
 
-|                                   | Demo |   Dev    |        IIS         |
-| --------------------------------- | :--: | :------: | :----------------: |
-| .NET 8 SDK                        |  ✅  |    ✅    | build machine only |
-| **Node.js 20+ and npm**           |  —   |    ✅    | build machine only |
-| SQL Server 2019+                  |  —   |    ✅    |         ✅         |
-| ASP.NET Core 8 **Hosting Bundle** |  —   |    —     |    ✅ (server)     |
-| `dotnet-ef` global tool           |  —   | optional |      optional      |
+|                                   |   Dev    |        IIS         |
+| --------------------------------- | :------: | :----------------: |
+| .NET 8 SDK                        |    ✅    | build machine only |
+| **Node.js 20+ and npm**           |    ✅    | build machine only |
+| SQL Server 2019+                  |    ✅    |         ✅         |
+| ASP.NET Core 8 **Hosting Bundle** |    —     |    ✅ (server)     |
+| `dotnet-ef` global tool           | optional |      optional      |
 
 Check what you have:
 
@@ -46,54 +48,14 @@ dotnet tool install --global dotnet-ef --version 8.*
 
 ---
 
-## A. Demo mode — no SQL Server needed
-
-The fastest way to see the whole pipeline. Runs against a local SQLite file and seeds sample
-people and a populated pipeline.
-
-```bash
-git clone <repo> && cd Task-Management
-dotnet run --project src/WorkflowApp.Api --launch-profile Demo
-```
-
-Open **<http://localhost:5099>** — the full Angular client. Swagger is at `/swagger`.
-
-> The client is served from `wwwroot`, which is **build output and gitignored**. On a fresh clone
-> run `cd client && npm ci && npm run build` once, or the API will serve nothing.
-
-Sign in with any of these, password `Demo!Pass123`:
-
-| User          | Role                   | Can do                      |
-| ------------- | ---------------------- | --------------------------- |
-| `rachel`      | Requester              | Raise requests              |
-| `victor`      | Reviewer               | Triage, approve, reopen     |
-| `amara`       | Assignment coordinator | Assign work, see workload   |
-| `wu`, `priya` | Workers                | Run the timer, track shifts |
-| `quentin`     | QC                     | Review and close            |
-| `morgan`      | Management             | Dashboards and reports      |
-
-Plus `admin` / `ChangeMe!2024` for everything.
-
-**A five-minute tour:** sign in as `rachel` → raise a request → sign in as `victor` → review queue →
-approve → as `amara` assign it to `wu` → as `wu` start a shift, start the task, complete it → as
-`quentin` QC it and close it.
-
-> ⚠️ **Demo mode is for local evaluation only.** SQLite, a shared well-known password, and
-> `EnsureCreated()` instead of migrations. SQLite has no `ROWVERSION`, so the concurrency guards run
-> as code but are not enforced by the database. Never run anything that matters on it.
-
-To reset: stop the app and delete `workflowapp-demo.db`.
-
----
-
-## B. Dev server — SQL Server
+## A. Dev server — SQL Server
 
 ### 1. Build and test
 
 ```bash
 dotnet restore
 dotnet build
-dotnet test          # 258 tests; none of them need SQL Server
+dotnet test          # 397 tests; none of them need SQL Server
 ```
 
 ### 2. Point at your SQL Server
@@ -107,6 +69,9 @@ dotnet test          # 258 tests; none of them need SQL Server
 Change `Server=` if your instance is elsewhere (e.g. `.\SQLEXPRESS`, or `(localdb)\MSSQLLocalDB`).
 
 ### 3. Build the client, once
+
+The client is served from `wwwroot`, which is **build output and gitignored**. On a fresh clone this
+step is not optional — without it the API serves nothing at the root.
 
 ```bash
 cd client
@@ -147,7 +112,7 @@ sqlcmd -S localhost -E -I -d WorkflowApp_Dev -i scripts/sql/001-InitialCreate.id
 `sqlcmd` defaults it **off** and the script will fail partway with error 1934, leaving a
 half-created database. SSMS sets it on by default, so this only bites from the command line.
 
-### B4. Front-end development
+### A4. Front-end development
 
 For UI work, run the Angular dev server instead of rebuilding into `wwwroot` each time. It serves on
 :4200 with hot reload and proxies `/api` and `/hubs` to the API on :7099 (`client/proxy.conf.json`):
@@ -188,7 +153,7 @@ dotnet ef migrations add <Name> --project ../WorkflowApp.Infrastructure --startu
 
 ---
 
-## C. IIS deployment
+## B. IIS deployment
 
 ### 1. Prepare the server, once
 
@@ -282,6 +247,23 @@ Full operational detail — backups, log messages to watch, rollback — is in
 
 ---
 
+## Why there is no demo mode
+
+There was one: a `Demo` launch profile running on a SQLite file with `EnsureCreated()`, a seeded
+cast of sample users and a shared well-known password. It has been **removed, and is not coming
+back** — do not reintroduce it, and do not extend anything toward it.
+
+It was a second implementation of the product that nobody shipped. SQLite has no `ROWVERSION`, so
+every concurrency guard ran as code and was enforced by nothing; `EnsureCreated()` skips migrations,
+so the schema it produced was the one nobody deploys. Both had to be kept working, which meant every
+feature after the first was written twice and verified once — and the copy that got verified was the
+one that could not fail the way production fails.
+
+**No feature or requirement added from here on is to be reflected in a demo, evaluation or sample
+mode of any kind.** Run it against SQL Server, the way it is deployed.
+
+---
+
 ## Troubleshooting
 
 ### `HTTP Error 500.30 — ASP.NET Core app failed to start`
@@ -303,14 +285,14 @@ System.InvalidOperationException: Jwt:SigningKey is unset or still the placehold
 ```
 
 This is deliberate — the app refuses to run outside Development with a known signing key. Set
-`Jwt__SigningKey` (step C5).
+`Jwt__SigningKey` (step B5).
 
 ### The site loads, but every request 500s
 
 The app started but cannot reach the database. Check `/health/ready`, then:
 
 - Does the database exist? `SELECT name FROM sys.databases`
-- Does the app pool identity have a login? (step C3)
+- Does the app pool identity have a login? (step B3)
 - Is the connection string right? Remember Production uses `WorkflowApp`, Development uses
   `WorkflowApp_Dev` — they are different databases.
 
@@ -321,7 +303,7 @@ Production forces an HTTPS redirect. If you are serving plain HTTP on an interna
 
 ### `error 1934 ... QUOTED_IDENTIFIER` when running the SQL script
 
-Add `-I` to `sqlcmd`. See the warning in section B. The database is now half-created: drop it and
+Add `-I` to `sqlcmd`. See the warning in section A. The database is now half-created: drop it and
 re-run from scratch.
 
 ### The page is blank, or you get a bare 404 at the root
@@ -375,7 +357,7 @@ src/
   WorkflowApp.Application     use-case services, DTOs, permission catalog
   WorkflowApp.Infrastructure  EF Core, migrations, JWT, hashing, seeding, file storage
   WorkflowApp.Api             controllers, SignalR hub, middleware, DI, serves the client
-tests/                        258 tests, none requiring SQL Server
+tests/                        397 tests, none requiring SQL Server
 docs/
   01-ARCHITECTURE.md          why the system is shaped this way
   02-PHASE-PLAN.md            what was built, phase by phase

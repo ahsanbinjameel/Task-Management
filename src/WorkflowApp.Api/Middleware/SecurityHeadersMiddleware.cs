@@ -4,7 +4,7 @@ namespace WorkflowApp.Api.Middleware;
 /// Response headers that harden the browser side of the application.
 ///
 /// Most of this API is consumed by a client that never renders its responses, so these headers earn
-/// their place mainly because of what the host also serves: the static dev console, Swagger, and any
+/// their place mainly because of what the host also serves: the Angular client, Swagger, and any
 /// error page. A JSON endpoint that a browser can be tricked into interpreting as HTML is the
 /// classic route to a stored XSS, and <c>X-Content-Type-Options</c> is what closes it.
 ///
@@ -24,8 +24,7 @@ public sealed class SecurityHeadersMiddleware
 
         // Swagger UI is inline script and style. It is only served locally, so the relaxation is
         // confined to the environments that actually serve it.
-        _allowSwaggerInlineScripts =
-            environment.IsDevelopment() || environment.IsEnvironment("Demo");
+        _allowSwaggerInlineScripts = environment.IsDevelopment();
     }
 
     public Task InvokeAsync(HttpContext context)

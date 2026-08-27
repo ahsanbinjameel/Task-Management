@@ -49,7 +49,7 @@ var jwtOptions = builder.Configuration.GetSection(JwtOptions.SectionName).Get<Jw
     ?? throw new InvalidOperationException("Missing required configuration section 'Jwt'.");
 
 // A placeholder signing key must never reach a deployed environment.
-if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("Demo") &&
+if (!builder.Environment.IsDevelopment() &&
     (string.IsNullOrWhiteSpace(jwtOptions.SigningKey) || jwtOptions.SigningKey.StartsWith("REPLACE_WITH")))
 {
     throw new InvalidOperationException(
@@ -207,47 +207,27 @@ if (applyMigrations || seedOnStartup)
     if (applyMigrations)
     {
         var db = scope.ServiceProvider.GetRequiredService<WorkflowDbContext>();
-
-        if (app.Configuration.GetDatabaseProvider() == DatabaseProvider.Sqlite)
-        {
-            // The migrations are authored for SQL Server, so the demo store is built straight from
-            // the model instead. Same schema shape, no migration history.
-            await db.Database.EnsureCreatedAsync();
-        }
-        else
-        {
-            await db.Database.MigrateAsync();
-        }
+        await db.Database.MigrateAsync();
     }
 
     if (seedOnStartup)
-    {
         await scope.ServiceProvider.GetRequiredService<DatabaseSeeder>().SeedAsync();
-
-        // Sample people, requests and tasks. Local evaluation only — see DemoDataSeeder.
-        if (app.Configuration.GetValue("Database:SeedDemoData", false))
-            await scope.ServiceProvider.GetRequiredService<DemoDataSeeder>().SeedAsync();
-    }
 }
 
 app.UseSecurityHeaders();
 app.UseWorkflowExceptionHandling();
 
-// Swagger is exposed in Development and in the local Demo environment, never in production.
-var isLocal = app.Environment.IsDevelopment() || app.Environment.IsEnvironment("Demo");
-
-if (isLocal)
+// Swagger is exposed in Development only, never in production.
+if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
-// The Demo profile is plain HTTP on localhost; redirecting there would only produce a broken
-// hop to a port that is not listening. The same is true of an internal host that serves plain HTTP
-// on a LAN, or one sitting behind a proxy that already terminates TLS — hence the opt-out. It
-// defaults to true, so a deployment has to say out loud that it does not want the redirect.
-if (!app.Environment.IsEnvironment("Demo") &&
-    app.Configuration.GetValue("Security:RequireHttps", true))
+// An internal host that serves plain HTTP on a LAN, or one sitting behind a proxy that already
+// terminates TLS, would only get a broken hop from a redirect — hence the opt-out. It defaults to
+// true, so a deployment has to say out loud that it does not want the redirect.
+if (app.Configuration.GetValue("Security:RequireHttps", true))
 {
     app.UseHttpsRedirection();
 }

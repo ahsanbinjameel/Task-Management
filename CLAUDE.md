@@ -49,13 +49,12 @@ on the local SQL Server 2019 Developer Edition default instance. Base/prod:
     dotnet ef migrations add <Name> --project ../WorkflowApp.Infrastructure --startup-project . --output-dir Persistence/Migrations
     dotnet ef migrations script --idempotent --project ../WorkflowApp.Infrastructure --startup-project . --output ../../scripts/sql/<n>.sql
     dotnet ef database update --project ../WorkflowApp.Infrastructure --startup-project .   # needs SQL Server
-    dotnet run --project src/WorkflowApp.Api                                                # needs SQL Server
 
     dotnet run --project src/WorkflowApp.Api --launch-profile Development   # against SQL Server
 
-**Demo mode** (no SQL Server needed, and the default with no profile) — see §10:
-
-    dotnet run --project src/WorkflowApp.Api --launch-profile Demo   # http://localhost:5099
+`Development` is the only launch profile, so a bare `dotnet run --project src/WorkflowApp.Api` now
+starts it too. **Everything needs SQL Server** — there is no lighter store to run against, by
+decision (§6).
 
 **Runtime on this machine:** `dotnet --list-runtimes` shows 6.0.36 and **8.0.30**, an exact match
 for the `net8.0` target, so `dotnet build` / `test` / `run` all work with no roll-forward. The
@@ -202,7 +201,6 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | `Identity/JwtTokenService.cs` | ✅ | Access-token issuance + `AppClaimTypes`; refresh token generation and SHA-256 hashing |
 | `Identity/PasswordHasherAdapter.cs` | ✅ | Wraps `PasswordHasher<User>` (PBKDF2-HMAC-SHA256) |
 | `Storage/DiskFileStorage.cs` | ✅ | Generated stored names, path-traversal guard, hash-while-writing |
-| `Persistence/Seed/DemoDataSeeder.cs` | ✅ | Local-evaluation data only; refuses to run if any request exists |
 | `Common/SystemDateTimeProvider.cs` | ✅ | The real clock |
 | `DependencyInjection.cs` | ✅ | `AddInfrastructure(configuration)` |
 
@@ -905,6 +903,20 @@ running the API instead (`--launch-profile Development`), which does load user-s
   which is exactly how the first checks list rendered. Every real grid in this app is an Angular
   Material `mat-table`; the header/row/cell styling in `styles.scss` is written against
   `.mat-mdc-header-cell` and `.mat-mdc-row` and applies to nothing else.
+- **There is no demo mode, and nothing added from here on goes into one.** A `Demo` launch profile
+  existed until 2026-08-27: SQLite, `EnsureCreated()` instead of migrations, a seeded cast of seven
+  sample accounts on one well-known password, and its own branches through `Program.cs`,
+  `DependencyInjection`, `WorkflowDbContext` and the security headers. It is **removed** —
+  `appsettings.Demo.json`, `DemoDataSeeder`, the `DatabaseProvider` enum, the SQLite package
+  reference and every `IsEnvironment("Demo")` check with it. Do not reintroduce it under any name,
+  and do not mirror a new feature or requirement into an evaluation, sample or offline mode.
+  It was a second implementation of the product that nobody deployed: SQLite has no `ROWVERSION`,
+  so every concurrency guard ran as code with nothing behind it, and `EnsureCreated()` builds a
+  schema no migration ever produced. Keeping both alive meant writing each feature twice and
+  verifying it once, on the copy that could not fail the way production fails — the SQLite
+  `DateTimeOffset`-to-ticks converter and the RowVersion strip in `OnModelCreating` were exactly
+  that tax. SQL Server is the only store, in every environment. The InMemory provider stays,
+  because a test suite is not a second product.
 - **Activity events ordered by `(OccurredAt, Id)` everywhere.** Two events can share a timestamp;
   without the `Id` tie-break, "the latest state" resolves arbitrarily and timelines go wrong.
 
@@ -987,9 +999,9 @@ been created, migrated and seeded, and every phase has been driven end to end ov
 **`WorkflowApp_Dev` is the only local database.** A second one, `WorkflowApp`, existed until
 2026-08-25: it was created accidentally by a `dotnet run` that fell back to base `appsettings.json`
 instead of the Development profile, held only `InitialCreate` and the bootstrap admin, and was
-seven migrations behind. It has been dropped. Remember that **a bare
-`dotnet run --project src/WorkflowApp.Api` starts Demo**, not Development (§10) - it is
-`--launch-profile Development` that reaches SQL Server.
+seven migrations behind. It has been dropped. That fallback is what to watch for: a run that does
+not resolve the Development profile reads base `appsettings.json` and points at `WorkflowApp`
+instead. `Development` is now the only profile, so a bare `dotnet run` selects it.
 
 > **Second dev machine (DESKTOP-2E2D7JE) has no default instance.** It exposes
 > `localhost\SQLEXPRESS` (SQL Server 2022 Express) and `(localdb)\MSSQLLocalDB` (2025 Express)
@@ -1076,37 +1088,3 @@ Still outstanding before this is anything but a dev box:
       and startup will refuse with the list it looked for. Install one, or ship a `.ttf`
 
 Everything above is covered operationally by `docs/03-RUNBOOK.md`.
-
-## 10. Demo mode (how to see it running)
-
-A local evaluation profile that needs no SQL Server:
-
-    dotnet run --project src/WorkflowApp.Api --launch-profile Demo
-    # http://localhost:5099  ·  Swagger at /swagger
-
-Configured by `appsettings.Demo.json`. What it changes, and why none of it is production-shaped:
-
-| | |
-|---|---|
-| Store | SQLite file `workflowapp-demo.db` (gitignored) |
-| Schema | `EnsureCreated()` — the migrations are authored for SQL Server and are **not** used here |
-| Data | `DemoDataSeeder` adds people + a pipeline; refuses to run if any request already exists |
-| Accounts | `rachel` `victor` `amara` `wu` `priya` `quentin` `morgan`, all `Demo!Pass123`; plus `admin` / `ChangeMe!2024` |
-| UI | `wwwroot/index.html` — a single-file dev console. **Not** the Angular front end |
-
-Two provider shims live in `WorkflowDbContext.OnModelCreating` and exist only so the same model
-loads on SQLite. Don't extend them to carry real behaviour:
-
-- `RowVersion` is stripped of its concurrency-token role on any non-SQL-Server provider.
-- `DateTimeOffset` is stored as UTC ticks, because SQLite refuses to `ORDER BY` one.
-
-**Do not run anything that matters on Demo mode.** No ROWVERSION means the assignment concurrency
-guard is exercised in code but not enforced by the database.
-
-Demo mode uses `EnsureCreated()`, which does **not** migrate. An existing `workflowapp-demo.db`
-created before a schema change will be missing the new tables — delete the file to have it rebuilt.
-**This applies to the `Verifications` change:** a demo database made before 2026-08-26 has no
-`Verifications` or `VerificationActivities` table and will fail the moment a request detail is
-opened, because that read now includes the checks raised against it.
-`dotnet run --project src/WorkflowApp.Api` with no `--launch-profile` starts **Demo**, not
-Development; pass `--launch-profile Development` to run against SQL Server.

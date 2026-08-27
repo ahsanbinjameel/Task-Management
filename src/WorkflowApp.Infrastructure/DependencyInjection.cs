@@ -12,20 +12,6 @@ using WorkflowApp.Infrastructure.Storage;
 
 namespace WorkflowApp.Infrastructure;
 
-/// <summary>Which store the application is running against.</summary>
-public enum DatabaseProvider
-{
-    /// <summary>The deployment target and the source of truth.</summary>
-    SqlServer = 0,
-
-    /// <summary>
-    /// Local demo/dev only: a single file, no server to install. Schema is created with
-    /// <c>EnsureCreated</c> from the model rather than from migrations, because the migrations are
-    /// authored for SQL Server. Never use this for anything that matters.
-    /// </summary>
-    Sqlite = 1
-}
-
 public static class DependencyInjection
 {
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
@@ -43,23 +29,17 @@ public static class DependencyInjection
         // Scoped too: it drains the per-request integration-event queue after the save commits.
         services.AddScoped<IntegrationEventDispatchInterceptor>();
 
-        var provider = configuration.GetValue("Database:Provider", DatabaseProvider.SqlServer);
+        // SQL Server is the only store, in every environment. There is deliberately no
+        // second provider to run against: a lighter one would need its own schema shim, and
+        // anything it did not enforce — ROWVERSION above all — would be a rule the code believes
+        // it has and the database does not.
         var connectionString = configuration.GetConnectionString("Default");
 
         services.AddDbContext<WorkflowDbContext>((sp, options) =>
         {
-            switch (provider)
-            {
-                case DatabaseProvider.Sqlite:
-                    options.UseSqlite(connectionString ?? "Data Source=workflowapp-demo.db");
-                    break;
-
-                default:
-                    options.UseSqlServer(
-                        connectionString,
-                        sql => sql.MigrationsAssembly(typeof(WorkflowDbContext).Assembly.FullName));
-                    break;
-            }
+            options.UseSqlServer(
+                connectionString,
+                sql => sql.MigrationsAssembly(typeof(WorkflowDbContext).Assembly.FullName));
 
             options.AddInterceptors(
                 sp.GetRequiredService<AuditableEntityInterceptor>(),
@@ -74,11 +54,7 @@ public static class DependencyInjection
         services.AddScoped<IFileStorage, DiskFileStorage>();
 
         services.AddScoped<DatabaseSeeder>();
-        services.AddScoped<DemoDataSeeder>();
 
         return services;
     }
-
-    public static DatabaseProvider GetDatabaseProvider(this IConfiguration configuration) =>
-        configuration.GetValue("Database:Provider", DatabaseProvider.SqlServer);
 }
