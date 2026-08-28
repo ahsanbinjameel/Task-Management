@@ -132,6 +132,25 @@ public sealed record TriageDecisionDto
     public Verifications.Dtos.SendForVerificationDto? Verification { get; init; }
 }
 
+/// <summary>
+/// A point found in a later round of testing against work already in hand (PRODUCT-CORE §6).
+///
+/// It becomes a request of its own, with its own number and its own triage decision. It carries the
+/// shared client and product location so nobody retypes them, and it does <b>not</b> touch the
+/// finish line of whatever is already running.
+/// </summary>
+public sealed record CreateFollowUpDto
+{
+    [Required, MaxLength(300)]
+    public string Title { get; init; } = default!;
+
+    [MaxLength(8000)]
+    public string? Description { get; init; }
+
+    public RequestType? Type { get; init; }
+    public RequestedUrgency? RequestedUrgency { get; init; }
+}
+
 public sealed record AnswerClarificationDto
 {
     [Required, MaxLength(2000)]
@@ -243,7 +262,16 @@ public sealed record RequestDetailDto(
     string RequestedByDisplayName,
     DateTimeOffset RequestedAt,
     DateTimeOffset? TargetDate,
+    /// <summary>
+    /// The other axis (PRODUCT-CORE §5): "Sales · Delivery Order · Detail Report". Null until
+    /// somebody places it — most requests arrive with none of it, and triage fills it in.
+    /// </summary>
+    string? ProductLocation,
     long? RelatedRequestId,
+    /// <summary>The number of the request this came out of, when it is a later round.</summary>
+    string? RelatedRequestNumber,
+    /// <summary>Which round of testing found this. 1 for anything raised on its own.</summary>
+    int Round,
     long? GeneratedTaskId,
     IReadOnlyList<RequestActivityDto> Activity,
     IReadOnlyList<ClarificationDto> Clarifications,

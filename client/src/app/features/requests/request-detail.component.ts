@@ -15,6 +15,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { ApiService } from '../../core/api.service';
 import { BreadcrumbsComponent, Crumb } from '../../shared/breadcrumbs.component';
 import { RequestEditDialog } from './request-edit-dialog.component';
+import { FollowUpDialog } from './follow-up-dialog.component';
 import { ConfirmDialog, ConfirmData, ReasonDialog, ReasonData } from '../../shared/dialogs';
 import { AuthService } from '../../core/auth.service';
 import { ToastService } from '../../core/toast.service';
@@ -54,6 +55,18 @@ import {
         <app-page-header [title]="r.title" [subtitle]="r.requestNumber + ' · ' + label(r.type)">
           @if (canEdit()) {
             <button matButton (click)="edit(r)"><mat-icon>edit</mat-icon> Change this request</button>
+          }
+          <!--
+            Offered once the request has been decided on — which is exactly when editing stops
+            being allowed (PRODUCT-CORE §6). A point found while testing a fix is real and worth
+            raising; what it must not do is quietly grow work that has already been committed and
+            scheduled. So the two are offered in sequence: change it while nothing has been planned
+            around it, raise a follow-up once something has.
+          -->
+          @if (canFollowUp()) {
+            <button matButton (click)="followUp(r)">
+              <mat-icon>add_comment</mat-icon> Found something else
+            </button>
           }
           <!--
             The requester is never sent to the task. Their request is the record of it, and the
@@ -159,6 +172,16 @@ import {
                   <span class="chip" [class]="'tone-' + tone(r.viewKey)">{{ r.viewLabel }}</span>
                 }
                 <app-chip [value]="r.requestedUrgency" kind="urgency" />
+                @if (r.round > 1 && r.relatedRequestId) {
+                  <a class="chip tone-warn round" [routerLink]="['/requests', r.relatedRequestId]"
+                     matTooltip="Found in a later round of testing. It did not change the deadline of
+                                 the work it came out of.">
+                    Round {{ r.round }} · from {{ r.relatedRequestNumber }}
+                  </a>
+                }
+                @if (r.productLocation) {
+                  <span class="muted small">{{ r.productLocation }}</span>
+                }
                 <span class="muted small">
                   Requested by {{ r.requestedByDisplayName }}
                   on {{ r.requestedAt | date: 'mediumDate' }}
@@ -469,6 +492,7 @@ import {
     .attachment mat-icon { color: var(--text-muted); }
     .full { width: 100%; }
     .progress-card { border-left: 3px solid #1d69d4; }
+    .round { text-decoration: none; }
     .confirm-panel {
       margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);
     }
@@ -588,6 +612,36 @@ export class RequestDetailComponent implements OnInit {
    * reader is the human who has to give it. `confirm` is the server's own view key, so this cannot
    * drift from the statuses the tile counts.
    */
+  /**
+   * A follow-up is for a point found after this request was decided on — which is precisely when
+   * editing stops being offered. Before that, changing the request itself is the honest move and a
+   * second linked request would just be clutter.
+   */
+  readonly canFollowUp = computed(() => {
+    const r = this.request();
+    return !!r && this.auth.has(Perm.requestCreate) && !this.canEdit();
+  });
+
+  followUp(request: RequestDetailDto): void {
+    this.dialog
+      .open(FollowUpDialog, {
+        data: {
+          requestId: request.id,
+          requestNumber: request.requestNumber,
+          clientName: request.clientName,
+          productLocation: request.productLocation,
+          round: request.round,
+        },
+      })
+      .afterClosed()
+      .subscribe((created?: RequestDetailDto) => {
+        // Already saved by the dialog, which stayed open if it had failed.
+        if (!created) return;
+        this.toast.success(`${created.requestNumber} raised, linked to ${request.requestNumber}.`);
+        void this.router.navigate(['/requests', created.id]);
+      });
+  }
+
   canConfirm(request: RequestDetailDto): boolean {
     return request.viewKey === 'confirm' && this.isRequester();
   }

@@ -14,6 +14,13 @@ namespace WorkflowApp.Application.Requests.Services;
 public interface IRequestService
 {
     Task<Result<RequestDetailDto>> CreateAsync(long requesterId, CreateRequestDto dto, CancellationToken ct = default);
+    /// <summary>
+    /// A point found in a later round, raised as its own request (PRODUCT-CORE §6). Carries the
+    /// shared client and product location; never touches the original or its task.
+    /// </summary>
+    Task<Result<RequestDetailDto>> CreateFollowUpAsync(
+        long originalId, long requesterId, CreateFollowUpDto dto, CancellationToken ct = default);
+
     Task<Result<RequestDetailDto>> UpdateAsync(long requestId, long actingUserId, UpdateRequestDto dto, CancellationToken ct = default);
     Task<Result<RequestDetailDto>> GetAsync(
         long requestId, StatusAudience audience = StatusAudience.Coordinator,
@@ -138,6 +145,70 @@ public sealed class RequestService : IRequestService
         return await GetAsync(request.Id, ct: ct);
     }
 
+    /// <summary>
+    /// Raise a point found in a later round of testing (PRODUCT-CORE §6).
+    ///
+    /// This is the answer to the case the plan calls the Faisal rule: detail-report points on day
+    /// one, master-report points on day two. The software answer is neither to punish the requester
+    /// for finding things late nor to quietly absorb the new points into work already committed. It
+    /// is to make the later round cheap to raise and visible as a later round.
+    ///
+    /// So it becomes a request of its own — its own number, its own triage decision, its own place
+    /// in the queue — carrying the shared client and product location so nobody retypes them. It
+    /// deliberately does <b>not</b> touch the original request or whatever task it became. That is
+    /// invariant §4.13: once execution starts, committed scope does not silently grow.
+    ///
+    /// Anyone who can raise a request can raise one of these, including against somebody else's:
+    /// finding a second problem while testing a fix is exactly the case this exists for, and the
+    /// person who finds it is not always the person who reported the first one.
+    /// </summary>
+    public async Task<Result<RequestDetailDto>> CreateFollowUpAsync(
+        long originalId, long requesterId, CreateFollowUpDto dto, CancellationToken ct = default)
+    {
+        var original = await _db.Requests.AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == originalId, ct);
+
+        if (original is null)
+            return Result<RequestDetailDto>.Failure(
+                Error.NotFound("request.not_found", "Request not found."));
+
+        if (!await _db.Users.AnyAsync(u => u.Id == requesterId, ct))
+            return Result<RequestDetailDto>.Failure(Error.NotFound("user.not_found", "User not found."));
+
+        var followUp = new Request
+        {
+            RequestNumber = await _numbers.NextAsync(
+                NumberSequences.Request, NumberSequences.RequestPrefix, ct),
+            Title = dto.Title.Trim(),
+            Description = string.IsNullOrWhiteSpace(dto.Description)
+                ? dto.Title.Trim()
+                : dto.Description.Trim(),
+            Type = dto.Type ?? original.Type,
+            RequestedUrgency = dto.RequestedUrgency ?? original.RequestedUrgency,
+
+            // Copied, not read through the original. The two are separate requests from here on,
+            // and correcting one at triage must not reach back into the other.
+            ClientId = original.ClientId,
+            ProjectId = original.ProjectId,
+            ModuleId = original.ModuleId,
+            FormId = original.FormId,
+            FormSurfaceId = original.FormSurfaceId,
+
+            RelatedRequestId = original.Id,
+            Round = original.Round + 1,
+
+            RequestedByUserId = requesterId,
+            RequestedAt = _clock.UtcNow,
+            Status = RequestStatus.Submitted,
+        };
+
+        _db.Requests.Add(followUp);
+        await _db.SaveChangesAsync(ct);
+
+        // The requester's own view: they raised it, and they are the one being handed it back.
+        return await GetAsync(followUp.Id, StatusAudience.Requester, ct);
+    }
+
     public async Task<Result<RequestDetailDto>> UpdateAsync(
         long requestId, long actingUserId, UpdateRequestDto dto, CancellationToken ct = default)
     {
@@ -154,7 +225,9 @@ public sealed class RequestService : IRequestService
             return Result<RequestDetailDto>.Failure(Error.Conflict(
                 "request.not_editable",
                 $"This request is now \"{StatusLabels.For(request.Status)}\", so it can no longer be "
-                + "changed. Add a comment instead, or ask a reviewer."));
+                + "changed \u2014 the work has been planned around what it says. If you have found "
+                + "something else, raise it as a follow-up: it keeps its link to this one and gets "
+                + "looked at on its own, without moving the finish line of what is already in hand."));
 
         // Compare before writing, so the history can say what actually changed rather than just
         // "it was edited". A reviewer who already read this request needs to know which parts to
@@ -280,12 +353,36 @@ public sealed class RequestService : IRequestService
         // that never needed a check, which is most of them.
         var verifications = await _verifications.ForRequestAsync(requestId, ct);
 
+        // The request this came out of, when it is a later round (PRODUCT-CORE §6). The number
+        // rather than the id, because a screen cannot print a link from a number nobody can read.
+        // Where in the product this is, joined by the one place that formats it.
+        var productLocation = ProductLocation.Format(
+            request.ModuleId is { } moduleId
+                ? await _db.Modules.AsNoTracking().Where(m => m.Id == moduleId)
+                    .Select(m => m.Name).FirstOrDefaultAsync(ct)
+                : null,
+            request.FormId is { } formId
+                ? await _db.Forms.AsNoTracking().Where(f => f.Id == formId)
+                    .Select(f => f.Name).FirstOrDefaultAsync(ct)
+                : null,
+            request.FormSurfaceId is { } surfaceId
+                ? await _db.FormSurfaces.AsNoTracking().Where(x => x.Id == surfaceId)
+                    .Select(x => x.Name).FirstOrDefaultAsync(ct)
+                : null);
+
+        var relatedNumber = request.RelatedRequestId is { } relatedId
+            ? await _db.Requests.AsNoTracking().Where(r => r.Id == relatedId)
+                .Select(r => r.RequestNumber).FirstOrDefaultAsync(ct)
+            : null;
+
         return Result<RequestDetailDto>.Success(new RequestDetailDto(
             request.Id, request.RequestNumber, request.Title, request.Description, request.Type,
             request.Status, request.RequestedUrgency, request.ClientId, clientName,
             request.BusinessImpact, request.ExpectedResult, request.CurrentResult, request.ReproductionSteps,
             request.RequestedByUserId, requester, request.RequestedAt, request.TargetDate,
-            request.RelatedRequestId, request.GeneratedTaskId, activity, clarifications, attachments,
+            productLocation,
+            request.RelatedRequestId, relatedNumber, request.Round,
+            request.GeneratedTaskId, activity, clarifications, attachments,
             verifications,
             view.Key, view.Label, progress,
             request.BatchId, batch?.BatchNumber, request.OrdinalInBatch, batch?.ItemCount ?? 0));

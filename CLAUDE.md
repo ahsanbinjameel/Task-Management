@@ -203,7 +203,7 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | `Persistence/Interceptors/AuditableEntityInterceptor.cs` | ✅ | **Sole** writer of CreatedAt/UpdatedAt/CreatedByUserId/UpdatedByUserId — never set these by hand |
 | `Persistence/Interceptors/IntegrationEventDispatchInterceptor.cs` | ✅ | Derives real-time events from the change tracker; dispatches **after** commit, drops them on rollback |
 | `Persistence/Seed/DatabaseSeeder.cs` | ✅ | Idempotent: permissions, roles+grants, pause reasons, bootstrap admin |
-| `Persistence/Migrations/` | ✅ | 10 migrations: `InitialCreate` (squashed while still unapplied — **do not squash again**), `OptionalUserEmail`, `RequiredSubtasks`, `PauseCategoryAndAwayState`, `RequestActivityHistory`, `QuickWork`, `RequestBatches`, `AttachmentProof`, `Verifications`, `ProductCatalog`, + model snapshot. **All tracked in git — the schema travels with the code; never move a database backup between machines** |
+| `Persistence/Migrations/` | ✅ | 11 migrations: `InitialCreate` (squashed while still unapplied — **do not squash again**), `OptionalUserEmail`, `RequiredSubtasks`, `PauseCategoryAndAwayState`, `RequestActivityHistory`, `QuickWork`, `RequestBatches`, `AttachmentProof`, `Verifications`, `ProductCatalog`, `RequestRound`, + model snapshot. **All tracked in git — the schema travels with the code; never move a database backup between machines** |
 | `Identity/JwtTokenService.cs` | ✅ | Access-token issuance + `AppClaimTypes`; refresh token generation and SHA-256 hashing |
 | `Identity/PasswordHasherAdapter.cs` | ✅ | Wraps `PasswordHasher<User>` (PBKDF2-HMAC-SHA256) |
 | `Storage/DiskFileStorage.cs` | ✅ | Generated stored names, path-traversal guard, hash-while-writing |
@@ -283,6 +283,7 @@ running the API instead (`--launch-profile Development`), which does load user-s
 |---|---|---|
 | POST/GET/PUT | `/api/requests`, `/api/requests/{id}` | `Request.Create` / scoped by `Request.ViewAll` |
 | POST | `/api/requests/batches` | `Request.Create` |
+| POST | `/api/requests/{id}/follow-up` | `Request.Create` — a later round; never touches the original or its task |
 | GET | `/api/requests/batches/{id}`, `/mine` | authenticated (own, or anyone who reviews/coordinates/reports) |
 | GET | `/api/requests/batches/review-queue` | `Task.Review` |
 | POST | `/api/requests/batches/{id}/approve-together` | `Task.Approve` |
@@ -1024,6 +1025,23 @@ running the API instead (`--launch-profile Development`), which does load user-s
   not exist, and a report grouped by module would count it under Accounts while naming a Sales form.
 - **`Form` and `FormSurface` are unique within their parent, not globally.** Two modules may each
   reasonably have an "Adjustment"; the same module having two is one form typed twice.
+- **A point found in a later round is a new request, not a bigger task** (PRODUCT-CORE §6,
+  invariant §4.13). Detail-report points on day one, master-report points on day two: absorbing the
+  second lot into the running task is what blows a timeline while making the team look slow, and
+  refusing them punishes somebody for testing properly. So `POST /api/requests/{id}/follow-up`
+  raises a request of its own — own number, own triage decision — carrying the shared client and
+  product location, linked back by the `RelatedRequestId` column that already existed, and stamped
+  with `Round`. It is pinned by `ScopeDisciplineTests` that the original task's status, estimate,
+  due date and title are all untouched.
+  `Round` is an int rather than a chain to walk, because every screen showing a request would
+  otherwise pay a query to say "Round 2"; the migration defaults it to **1**, not 0, since every
+  request that already exists was raised on its own.
+  `RelatedRequestId` now means two things, told apart by status: a `Duplicate` request points at
+  what it duplicates, anything else with it set is a later round.
+- **The edit path is what makes the follow-up necessary, and now says so.** Editing has always been
+  refused once triage has acted — that is the structural half of §4.13 and it predates this change.
+  What it did was say "add a comment instead", which is where a requester with a genuine second
+  problem got stuck. It now names the follow-up.
 - **Parked capabilities are one flag file, not scattered `@if`s** (`core/parked.ts`). Quick Work,
   dependencies, subtasks and the scope-change ceremony are built, tested, endpoint-complete and
   **not offered**: the widget is off the shell and the three tabs are off the task detail. Reading

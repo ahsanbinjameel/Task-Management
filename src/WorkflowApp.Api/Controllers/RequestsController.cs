@@ -138,6 +138,22 @@ public sealed class RequestsController : ApiControllerBase
         return Ok(result.Value);
     }
 
+    /// <summary>
+    /// A point found in a later round of testing (PRODUCT-CORE §6).
+    ///
+    /// Creates a request of its own, carrying the shared client and product location, linked back
+    /// to the one it came out of. It deliberately does not touch the original or whatever task the
+    /// original became — invariant §4.13: once execution starts, committed scope does not silently
+    /// grow. Later rounds are made cheap and traceable instead of invisible.
+    /// </summary>
+    [HttpPost("{id:long}/follow-up")]
+    [HasPermission(Permissions.RequestCreate)]
+    [ProducesResponseType(typeof(RequestDetailDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> FollowUp(
+        long id, [FromBody] CreateFollowUpDto dto, CancellationToken ct)
+        => FromResult(await _requests.CreateFollowUpAsync(id, CurrentUserId, dto, ct));
+
     [HttpPut("{id:long}")]
     [HasPermission(Permissions.RequestCreate)]
     [ProducesResponseType(typeof(RequestDetailDto), StatusCodes.Status200OK)]

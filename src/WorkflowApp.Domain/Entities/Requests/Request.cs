@@ -37,7 +37,27 @@ public class Request : BaseEntity
     public string? CurrentResult { get; set; }
     public string? ReproductionSteps { get; set; }
 
+    /// <summary>
+    /// The request this one came out of.
+    ///
+    /// Two things use it, told apart by <see cref="Status"/>: a request marked
+    /// <see cref="RequestStatus.Duplicate"/> points at the one it duplicates, and any other request
+    /// with this set is a <em>later round</em> against the same product context (PRODUCT-CORE §6).
+    /// </summary>
     public long? RelatedRequestId { get; set; }
+
+    /// <summary>
+    /// Which round of testing found this. 1 unless it was raised as a follow-up to another request.
+    ///
+    /// This is the whole of the "Faisal rule" (PRODUCT-CORE §6): points found on day two are real
+    /// and worth raising, and they are <b>not</b> a scope change to the work already committed on
+    /// day one. Recording the round makes the cost of finding-later visible instead of hidden,
+    /// which protects the team's timeline without blaming anyone for testing properly.
+    ///
+    /// An int rather than a chain to walk, because every screen that shows a request would
+    /// otherwise pay a query to say "Round 2".
+    /// </summary>
+    public int Round { get; set; } = 1;
 
     /// <summary>
     /// The batch this arrived in, if it arrived with others. Null for a request raised on its own,

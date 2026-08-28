@@ -258,7 +258,13 @@ export interface RequestDetailDto {
   requestedByDisplayName: string;
   requestedAt: string;
   targetDate?: string | null;
+  /** The product axis: "Sales · Delivery Order · Detail Report". Null until triage places it. */
+  productLocation?: string | null;
   relatedRequestId?: number | null;
+  /** The number of the request this came out of, when it is a later round (PRODUCT-CORE §6). */
+  relatedRequestNumber?: string | null;
+  /** Which round of testing found this. 1 for anything raised on its own. */
+  round: number;
   generatedTaskId?: number | null;
   activity: RequestActivityDto[];
   clarifications: ClarificationDto[];

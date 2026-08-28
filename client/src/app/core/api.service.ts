@@ -231,6 +231,19 @@ export class ApiService {
     return this.http.put<RequestDetailDto>(`/api/requests/${id}`, body, { context });
   }
 
+  /**
+   * A point found in a later round (PRODUCT-CORE §6). Its own request, linked back, carrying the
+   * shared client and product location — and deliberately not touching what is already running.
+   */
+  followUpRequest(
+    originalId: number,
+    body: { title: string; description?: string; type?: RequestType; requestedUrgency?: RequestedUrgency },
+    context?: HttpContext,
+  ): Observable<RequestDetailDto> {
+    return this.http.post<RequestDetailDto>(
+      `/api/requests/${originalId}/follow-up`, body, { context });
+  }
+
   reviewQueue(page = 1, pageSize = 25): Observable<PagedResult<RequestSummaryDto>> {
     return this.http.get<PagedResult<RequestSummaryDto>>('/api/requests/review-queue', {
       params: params({ page, pageSize }),
