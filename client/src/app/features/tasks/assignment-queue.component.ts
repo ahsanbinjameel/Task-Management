@@ -39,18 +39,34 @@ import { AssignDialogComponent, AssignDialogResult } from './assign-dialog.compo
           emptyMessage="Everything is assigned" emptyIcon="done_all"
           (action)="assign($event)" />
 
+        <!--
+          "Who has capacity" with a summed-estimate figure beside each name is gone
+          (PRODUCT-CORE §12C). It was the one number on this screen nobody could act on: most tasks
+          carry no estimate at all, and adding the guesses that exist together does not make a
+          fact. What is left is what a coordinator can actually check — who is on the clock, what
+          they are running this minute, and how much is already queued behind it. The fuller
+          picture, including whether they have worked on this part of the product before, is in the
+          assign dialog, because that is where the choice is made.
+        -->
         <aside class="card card-pad">
-          <h2 class="card-title">Who has capacity</h2>
+          <h2 class="card-title">Who is around</h2>
           @for (person of workload(); track person.userId) {
             <div class="person">
+              <span class="dot" [class.on]="person.isOnShift"></span>
               <div class="who">
                 <strong class="truncate">{{ person.displayName }}</strong>
                 <span class="muted small">
-                  {{ person.openTaskCount }} open
+                  @if (person.activeTaskNumber) {
+                    <span class="now">On {{ person.activeTaskNumber }}</span>
+                  } @else if (!person.isOnShift) {
+                    Not on shift
+                  } @else {
+                    Free
+                  }
+                  · {{ person.openTaskCount }} open
                   @if (person.blockedCount > 0) { · {{ person.blockedCount }} blocked }
                 </span>
               </div>
-              <span class="load mono small">{{ person.estimatedHoursOutstanding }}h</span>
             </div>
           } @empty {
             <p class="muted small">Nobody has open work.</p>
@@ -68,7 +84,12 @@ import { AssignDialogComponent, AssignDialogResult } from './assign-dialog.compo
     }
     .person:first-of-type { border-top: none; }
     .who { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
-    .load { color: var(--text-muted); }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%; flex: none;
+      border: 1.5px solid var(--border-strong); background: transparent;
+    }
+    .dot.on { background: var(--tone-good-fg); border-color: var(--tone-good-fg); }
+    .now { color: var(--tone-running-fg); font-weight: 500; }
   `,
 })
 export class AssignmentQueueComponent implements OnInit {

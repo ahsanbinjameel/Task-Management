@@ -332,6 +332,47 @@ public sealed record PauseReasonDto(
 /// <summary>Minimal directory entry for the assign dialog — id and name, nothing more.</summary>
 public sealed record AssignableUserDto(long Id, string UserName, string DisplayName, WorkforceState WorkforceState);
 
+/// <summary>
+/// One person a specific task could be given to, described in facts (PRODUCT-CORE §12C).
+///
+/// Deliberately <b>no capacity number</b>. The old panel summed estimated hours and called it
+/// capacity, which is a figure nobody could act on: estimates are guesses, most tasks carry none at
+/// all, and adding guesses together does not produce a fact. What a coordinator actually asks is
+/// "is this person here, what are they on right now, how much is already queued behind it, and have
+/// they touched this part of the product before" — so that is what this carries, and the person
+/// decides.
+///
+/// Everyone who may hold work appears, including people with nothing on. A panel built only from
+/// people who already have tasks cannot answer "who is free", which is most of the question.
+/// </summary>
+public sealed record AssignmentCandidateDto(
+    long UserId,
+    string DisplayName,
+    WorkforceState WorkforceState,
+    /// <summary>On the clock right now, in any of the on-shift states.</summary>
+    bool IsOnShift,
+
+    // What they are doing this minute.
+    long? ActiveTaskId,
+    string? ActiveTaskNumber,
+    string? ActiveTaskTitle,
+    /// <summary>How long the running timer has been going. Null when nothing is running.</summary>
+    TimeSpan? ActiveFor,
+
+    // What is already on them.
+    /// <summary>Started and not finished.</summary>
+    int ActiveCount,
+    /// <summary>Theirs, but not started: assigned, ready, paused, blocked, waiting to be redone.</summary>
+    int WaitingCount,
+    /// <summary>Of those, how many are due before the end of today.</summary>
+    int DueTodayCount,
+
+    /// <summary>
+    /// Work they have recently done in the same part of the product — same client, or same module.
+    /// The one piece of context that is about fit rather than availability.
+    /// </summary>
+    IReadOnlyList<string> RecentRelated);
+
 /// <summary>One assignee's load, for the workload/capacity view.</summary>
 public sealed record WorkloadDto(
     long UserId,
@@ -342,4 +383,10 @@ public sealed record WorkloadDto(
     int BlockedCount,
     decimal EstimatedHoursOutstanding,
     long? ActiveTaskId,
-    string? ActiveTaskNumber);
+    string? ActiveTaskNumber,
+    /// <summary>
+    /// On the clock right now. Answered here rather than by the client re-listing the on-shift
+    /// states: two copies of the state machine is one too many, and this one would drift the first
+    /// time a state was added.
+    /// </summary>
+    bool IsOnShift = false);

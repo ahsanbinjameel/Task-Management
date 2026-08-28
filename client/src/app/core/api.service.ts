@@ -2,7 +2,7 @@ import { HttpClient, HttpContext, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
-  AcceptanceCriteriaDto, ActiveWorkforceDto, ActivityEventDto, AssignableUserDto, AttachmentDto,
+  AcceptanceCriteriaDto, ActiveWorkforceDto, ActivityEventDto, AssignableUserDto, AssignmentCandidateDto, AttachmentDto,
   AttachmentKind,
   AuditLogDto, ClientOptionDto, ModuleOptionDto, HomeDashboardDto, QuickWorkDto, StartQuickWorkDto,
   CreateRequestBatchDto, RequestBatchDetailDto, RequestBatchSummaryDto, ApproveTogetherDto,
@@ -336,6 +336,11 @@ export class ApiService {
 
   assignableUsers(): Observable<AssignableUserDto[]> {
     return this.http.get<AssignableUserDto[]>('/api/tasks/assignable-users');
+  }
+
+  /** Who this task could go to, with the facts to decide on. See AssignmentCandidateDto. */
+  assignmentCandidates(taskId: number): Observable<AssignmentCandidateDto[]> {
+    return this.http.get<AssignmentCandidateDto[]>(`/api/tasks/${taskId}/assignment-candidates`);
   }
 
   pauseReasons(): Observable<PauseReasonDto[]> {

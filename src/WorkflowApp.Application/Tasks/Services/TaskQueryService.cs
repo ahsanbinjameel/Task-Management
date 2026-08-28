@@ -93,6 +93,14 @@ public interface ITaskQueryService
     /// user-administration permission — a name and an id is all it exposes.
     /// </summary>
     Task<IReadOnlyList<AssignableUserDto>> AssignableUsersAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Who this particular task could go to, with the facts a coordinator decides on
+    /// (PRODUCT-CORE §12C). Task-specific, because "have they worked on this part of the product
+    /// before" is half the question and cannot be answered without knowing what is being assigned.
+    /// </summary>
+    Task<Result<IReadOnlyList<AssignmentCandidateDto>>> AssignmentCandidatesAsync(
+        long taskId, CancellationToken ct = default);
 }
 
 public sealed class TaskQueryService : ITaskQueryService
@@ -107,15 +115,17 @@ public sealed class TaskQueryService : ITaskQueryService
     private readonly ICurrentUser _currentUser;
     private readonly ITaskDependencyService _dependencies;
     private readonly IBusinessCalendar _calendar;
+    private readonly IDateTimeProvider _clock;
 
     public TaskQueryService(
         IWorkflowDbContext db, ICurrentUser currentUser, ITaskDependencyService dependencies,
-        IBusinessCalendar calendar)
+        IBusinessCalendar calendar, IDateTimeProvider clock)
     {
         _db = db;
         _currentUser = currentUser;
         _dependencies = dependencies;
         _calendar = calendar;
+        _clock = clock;
     }
 
     public async Task<Result<TaskDetailDto>> GetAsync(long taskId, CancellationToken ct = default)
@@ -703,7 +713,8 @@ public sealed class TaskQueryService : ITaskQueryService
                     theirs.Count(t => t.Status == WorkTaskStatus.Blocked),
                     theirs.Sum(t => t.EstimatedEffortHours ?? 0m),
                     active?.TaskId,
-                    active?.TaskNumber);
+                    active?.TaskNumber,
+                    WorkforceStateMachine.IsOnShift(u.WorkforceState));
             })
             .OrderByDescending(w => w.OpenTaskCount)
             .ToList();
@@ -723,6 +734,120 @@ public sealed class TaskQueryService : ITaskQueryService
             orderby u.DisplayName
             select new AssignableUserDto(u.Id, u.UserName, u.DisplayName, u.WorkforceState))
             .ToListAsync(ct);
+    }
+
+    public async Task<Result<IReadOnlyList<AssignmentCandidateDto>>> AssignmentCandidatesAsync(
+        long taskId, CancellationToken ct = default)
+    {
+        var task = await _db.Tasks.AsNoTracking()
+            .Where(t => t.Id == taskId)
+            .Select(t => new { t.Id, t.ClientId, t.ModuleId })
+            .FirstOrDefaultAsync(ct);
+
+        if (task is null)
+            return Result<IReadOnlyList<AssignmentCandidateDto>>.Failure(
+                Error.NotFound("task.not_found", "Task not found."));
+
+        // Start from everyone who may hold work, not from everyone who already does — "who is
+        // free" is most of what this screen is asked.
+        var candidates = await AssignableUsersAsync(ct);
+        if (candidates.Count == 0)
+            return Result<IReadOnlyList<AssignmentCandidateDto>>.Success(Array.Empty<AssignmentCandidateDto>());
+
+        var userIds = candidates.Select(u => u.Id).ToList();
+
+        var open = await _db.Tasks.AsNoTracking()
+            .Where(t => t.PrimaryAssigneeUserId != null
+                        && userIds.Contains(t.PrimaryAssigneeUserId!.Value)
+                        && !TerminalStatuses.Contains(t.Status))
+            .Select(t => new
+            {
+                UserId = t.PrimaryAssigneeUserId!.Value,
+                t.Id,
+                t.Status,
+                t.DueDate,
+                t.ClientId,
+                t.ModuleId,
+                t.Title,
+            })
+            .ToListAsync(ct);
+
+        var running = await _db.WorkSessions.AsNoTracking()
+            .Where(w => w.Status == WorkSessionStatus.Active && userIds.Contains(w.UserId))
+            .Join(_db.Tasks.AsNoTracking(), w => w.TaskId, t => t.Id,
+                (w, t) => new { w.UserId, w.SessionStart, TaskId = t.Id, t.TaskNumber, t.Title })
+            .ToListAsync(ct);
+
+        var runningByUser = running
+            .GroupBy(r => r.UserId)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        // Being on shift is a fact about the person, and the state machine already knows which
+        // states count. Reading it off the user row rather than the shift table keeps this one
+        // query instead of one per candidate.
+        var states = await _db.Users.AsNoTracking()
+            .Where(u => userIds.Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id, u => u.WorkforceState, ct);
+
+        // Recently finished work in the same client or module. Closed work is where the useful
+        // signal is: "they have seen this form before" is about experience, not current load.
+        var relatedTitles = new Dictionary<long, List<string>>();
+
+        if (task.ClientId is not null || task.ModuleId is not null)
+        {
+            var related = await _db.Tasks.AsNoTracking()
+                .Where(t => t.Id != task.Id
+                            && t.PrimaryAssigneeUserId != null
+                            && userIds.Contains(t.PrimaryAssigneeUserId!.Value)
+                            && ((task.ClientId != null && t.ClientId == task.ClientId)
+                                || (task.ModuleId != null && t.ModuleId == task.ModuleId)))
+                .OrderByDescending(t => t.UpdatedAt ?? t.CreatedAt)
+                .Select(t => new { UserId = t.PrimaryAssigneeUserId!.Value, t.Title })
+                .Take(200)
+                .ToListAsync(ct);
+
+            relatedTitles = related
+                .GroupBy(r => r.UserId)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.Select(r => r.Title).Distinct().Take(3).ToList());
+        }
+
+        // The business day, not UTC midnight — the same rule the grid date filters use.
+        var todayEnds = _calendar.DayRange(_calendar.ToBusinessDate(_clock.UtcNow)).EndExclusive;
+
+        var result = candidates
+            .Select(u =>
+            {
+                var theirs = open.Where(t => t.UserId == u.Id).ToList();
+                runningByUser.TryGetValue(u.Id, out var active);
+
+                var state = states.TryGetValue(u.Id, out var s) ? s : u.WorkforceState;
+                var activeCount = theirs.Count(t => t.Status == WorkTaskStatus.InProgress);
+
+                return new AssignmentCandidateDto(
+                    u.Id,
+                    u.DisplayName,
+                    state,
+                    WorkforceStateMachine.IsOnShift(state),
+                    active?.TaskId,
+                    active?.TaskNumber,
+                    active?.Title,
+                    active is null ? null : _clock.UtcNow - active.SessionStart,
+                    activeCount,
+                    theirs.Count - activeCount,
+                    theirs.Count(t => t.DueDate != null && t.DueDate <= todayEnds),
+                    relatedTitles.TryGetValue(u.Id, out var titles)
+                        ? titles
+                        : Array.Empty<string>());
+            })
+            // People who are here and free first: that is the order the question is asked in.
+            .OrderByDescending(c => c.IsOnShift)
+            .ThenBy(c => c.ActiveCount + c.WaitingCount)
+            .ThenBy(c => c.DisplayName)
+            .ToList();
+
+        return Result<IReadOnlyList<AssignmentCandidateDto>>.Success(result);
     }
 
     public async Task<IReadOnlyList<PauseReasonDto>> PauseReasonsAsync(CancellationToken ct = default) =>

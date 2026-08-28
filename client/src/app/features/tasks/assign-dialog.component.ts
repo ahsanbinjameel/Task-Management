@@ -7,7 +7,10 @@ import { MatInputModule } from '@angular/material/input';
 import { MatIconModule } from '@angular/material/icon';
 import { ApiService } from '../../core/api.service';
 import { FormSubmit } from '../../core/form-submit';
-import { AssignableUserDto, TaskDetailDto, TaskSummaryDto } from '../../core/models';
+import {
+  AssignableUserDto, AssignmentCandidateDto, TaskDetailDto, TaskSummaryDto,
+} from '../../core/models';
+import { DurationPipe } from '../../core/format';
 import { SearchSelectComponent, SelectOption } from '../../shared/search-select.component';
 
 export interface AssignDialogData {
@@ -26,7 +29,7 @@ export type AssignDialogResult = TaskDetailDto;
   standalone: true,
   imports: [
     FormsModule, MatDialogModule, MatButtonModule, MatFormFieldModule, MatInputModule,
-    MatIconModule, SearchSelectComponent,
+    MatIconModule, SearchSelectComponent, DurationPipe,
   ],
   template: `
     <h2 mat-dialog-title>
@@ -40,10 +43,79 @@ export type AssignDialogResult = TaskDetailDto;
         </div>
       }
 
-      <app-search-select label="Responsible person" [options]="responsibleOptions()"
-                         nullLabel="Nobody — put it back in the waiting list"
-                         [ngModel]="assigneeUserId()" name="assignee"
-                         (ngModelChange)="assigneeUserId.set($event)" />
+      <!--
+        Facts, not a fabricated capacity number (PRODUCT-CORE §12C). The old panel summed estimated
+        hours and called it capacity: estimates are guesses, most tasks carry none, and adding
+        guesses together does not make a fact. What a coordinator actually asks is who is here,
+        what they are on this minute, what is already queued behind it, and whether they have seen
+        this part of the product before.
+
+        A list rather than a dropdown, because the facts are the decision — a dropdown would hide
+        exactly what there is to read. Everyone who may hold work appears, including people with
+        nothing on, since "who is free" is most of the question.
+      -->
+      <fieldset class="people">
+        <legend class="muted small">Who will do this?</legend>
+
+        @for (person of candidates(); track person.userId) {
+          <label class="person" [class.chosen]="assigneeUserId() === person.userId"
+                 [class.current]="person.userId === data.currentAssigneeId">
+            <input type="radio" name="assignee"
+                   [checked]="assigneeUserId() === person.userId"
+                   [disabled]="person.userId === data.currentAssigneeId"
+                   (change)="assigneeUserId.set(person.userId)" />
+
+            <span class="dot" [class.on]="person.isOnShift"></span>
+
+            <span class="detail">
+              <span class="name">
+                {{ person.displayName }}
+                @if (person.userId === data.currentAssigneeId) {
+                  <span class="muted small">— has it now</span>
+                }
+              </span>
+
+              <span class="facts small muted">
+                @if (person.activeTaskNumber) {
+                  <span class="now">
+                    Working now · {{ person.activeTaskNumber }}
+                    @if (person.activeFor) { ({{ person.activeFor | duration }}) }
+                  </span>
+                } @else if (!person.isOnShift) {
+                  <span>Not on shift</span>
+                } @else {
+                  <span>Free</span>
+                }
+                <span>· {{ person.activeCount }} active</span>
+                <span>· {{ person.waitingCount }} waiting</span>
+                @if (person.dueTodayCount > 0) {
+                  <span class="due">· {{ person.dueTodayCount }} due today</span>
+                }
+              </span>
+
+              @if (person.recentRelated.length) {
+                <span class="related small muted">
+                  Recent related: {{ person.recentRelated.join(' · ') }}
+                </span>
+              }
+            </span>
+          </label>
+        } @empty {
+          <p class="muted small">
+            Nobody holds the permission to do work yet. Grant a role with Task.Work in Settings.
+          </p>
+        }
+
+        <label class="person nobody" [class.chosen]="assigneeUserId() === null">
+          <input type="radio" name="assignee" [checked]="assigneeUserId() === null"
+                 [disabled]="data.currentAssigneeId == null"
+                 (change)="assigneeUserId.set(null)" />
+          <span class="dot"></span>
+          <span class="detail">
+            <span class="name">Nobody — put it back in the waiting list</span>
+          </span>
+        </label>
+      </fieldset>
 
       <p class="muted small who">
         The person responsible owns this task. It appears in their queue and counts as their work,
@@ -85,6 +157,31 @@ export type AssignDialogResult = TaskDetailDto;
     }
     .form-error mat-icon { font-size: 18px; width: 18px; height: 18px; flex: none; margin-top: 1px; }
     .who { margin: -8px 0 14px; line-height: 1.45; }
+
+    .people { border: none; padding: 0; margin: 0 0 14px; min-width: 0; }
+    .people legend { padding: 0 0 6px; }
+    .person {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px;
+      margin-bottom: 6px; cursor: pointer;
+    }
+    .person:hover { background: var(--surface-sunken); }
+    .person.chosen { border-color: #1d69d4; background: var(--tone-running-bg); }
+    .person.current { opacity: .6; cursor: default; }
+    .person input { margin-top: 3px; flex: none; }
+    /* Filled means on the clock: the one fact that decides whether the rest of the row matters. */
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex: none;
+      border: 1.5px solid var(--border-strong); background: transparent;
+    }
+    .dot.on { background: var(--tone-good-fg); border-color: var(--tone-good-fg); }
+    .detail { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .name { font-weight: 500; }
+    .facts { display: flex; flex-wrap: wrap; gap: 4px; }
+    .facts .now { color: var(--tone-running-fg); font-weight: 500; }
+    .facts .due { color: var(--tone-warn-fg); }
+    .related { font-style: italic; }
+    .nobody { margin-top: 10px; }
   `,
 })
 export class AssignDialogComponent implements OnInit {
@@ -93,6 +190,7 @@ export class AssignDialogComponent implements OnInit {
   readonly data = inject<AssignDialogData>(MAT_DIALOG_DATA);
 
   readonly users = signal<AssignableUserDto[]>([]);
+  readonly candidates = signal<AssignmentCandidateDto[]>([]);
   /** A signal, because the support list is derived from it — it must drop whoever now owns the task. */
   readonly assigneeUserId = signal<number | null>(null);
   reason = '';
@@ -100,7 +198,12 @@ export class AssignDialogComponent implements OnInit {
   number = () => 'taskNumber' in this.data.task ? this.data.task.taskNumber : '';
 
   ngOnInit(): void {
+    // Two calls, because they answer different questions. The candidate list carries the facts for
+    // choosing who is responsible; the plain user list still fills the support picker, where load
+    // and shift are beside the point — helping is not owning.
     this.api.assignableUsers().subscribe((users) => this.users.set(users));
+    this.api.assignmentCandidates(this.data.task.id)
+      .subscribe({ next: (people) => this.candidates.set(people), error: () => undefined });
   }
 
   readonly form = new FormSubmit();
@@ -113,12 +216,6 @@ export class AssignDialogComponent implements OnInit {
     chip: user.workforceState,
     chipKind: 'workforce',
   });
-
-  readonly responsibleOptions = computed(() =>
-    this.users().map((user) => ({
-      ...this.option(user),
-      disabled: user.id === this.data.currentAssigneeId,
-    })));
 
   /** Whoever is about to own it cannot also be listed as helping with it. */
   readonly supportOptions = computed(() =>

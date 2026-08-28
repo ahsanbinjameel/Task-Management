@@ -152,7 +152,7 @@ public sealed class TestHarness : IDisposable
         Requests = new RequestService(Db, Numbers, Notifications, Lookups, Clock, Calendar, Verifications);
         TaskCreation = new TaskCreationService(Db, Numbers, Clock);
         Dependencies = new TaskDependencyService(Db, Clock);
-        TaskQueries = new TaskQueryService(Db, CurrentUser, Dependencies, Calendar);
+        TaskQueries = new TaskQueryService(Db, CurrentUser, Dependencies, Calendar, Clock);
 
         Triage = new RequestTriageService(
             Db, Requests, TaskCreation, Verifications, Audit, Notifications, Lookups, Clock,

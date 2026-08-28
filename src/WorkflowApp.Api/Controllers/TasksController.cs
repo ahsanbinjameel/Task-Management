@@ -197,6 +197,18 @@ public sealed class TasksController : ApiControllerBase
     public async Task<IActionResult> AssignableUsers(CancellationToken ct)
         => Ok(await _queries.AssignableUsersAsync(ct));
 
+    /// <summary>
+    /// Who this task could go to, with the facts to decide on: who is here, what they are on right
+    /// now, what is queued behind it, and whether they have worked on this part of the product
+    /// before. Deliberately carries no capacity figure — see <c>AssignmentCandidateDto</c>.
+    /// </summary>
+    [HttpGet("{id:long}/assignment-candidates")]
+    [HasPermission(Permissions.TaskAssign)]
+    [ProducesResponseType(typeof(IReadOnlyList<AssignmentCandidateDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> AssignmentCandidates(long id, CancellationToken ct)
+        => FromResult(await _queries.AssignmentCandidatesAsync(id, ct));
+
     /// <summary>Configured pause reasons, for the pause/block dialogs.</summary>
     [HttpGet("pause-reasons")]
     [ProducesResponseType(typeof(IReadOnlyList<PauseReasonDto>), StatusCodes.Status200OK)]

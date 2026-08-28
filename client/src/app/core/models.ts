@@ -602,6 +602,33 @@ export interface AssignableUserDto {
   workforceState: WorkforceState;
 }
 
+/**
+ * One person a task could go to, in facts (PRODUCT-CORE §12C).
+ *
+ * Note the absence of a capacity number. Summed estimates are guesses added together, and the
+ * coordinator was being asked to trust a figure nobody could act on.
+ */
+export interface AssignmentCandidateDto {
+  userId: number;
+  displayName: string;
+  workforceState: WorkforceState;
+  /** On the clock right now. */
+  isOnShift: boolean;
+
+  activeTaskId?: number | null;
+  activeTaskNumber?: string | null;
+  activeTaskTitle?: string | null;
+  /** How long the running timer has been going. */
+  activeFor?: string | null;
+
+  activeCount: number;
+  waitingCount: number;
+  dueTodayCount: number;
+
+  /** Work they have recently done on the same client or module. */
+  recentRelated: string[];
+}
+
 export interface WorkloadDto {
   userId: number;
   displayName: string;
@@ -612,6 +639,8 @@ export interface WorkloadDto {
   estimatedHoursOutstanding: number;
   activeTaskId?: number | null;
   activeTaskNumber?: string | null;
+  /** On the clock right now. Decided by the server's state machine, not re-listed here. */
+  isOnShift: boolean;
 }
 
 // --- collaboration --------------------------------------------------------------------------
