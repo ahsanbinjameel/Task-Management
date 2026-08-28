@@ -217,6 +217,12 @@ public sealed class RequestTriageService : IRequestTriageService
         if (!string.IsNullOrWhiteSpace(decision.ClientName))
             request.ClientId = await _lookups.ResolveClientAsync(decision.ClientName, ct);
 
+        // How the work is classified, decided by the person who can actually tell. Written to the
+        // request first and inherited by the task from there, so the two cannot disagree — the same
+        // route the client takes.
+        if (decision.Type is { } type)
+            request.Type = type;
+
         // The other axis: where in the product this is (PRODUCT-CORE §5). Written to the request
         // for the same reason the client is, and inherited by the task a few lines down.
         //

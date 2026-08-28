@@ -52,8 +52,7 @@ export interface FollowUpDialogData {
 
       <mat-form-field class="full">
         <mat-label>What is wrong, or what you need</mat-label>
-        <textarea matInput rows="3" name="title" [(ngModel)]="text" cdkFocusInitial
-                  placeholder="Master report still shows the old total"></textarea>
+        <textarea matInput rows="3" name="title" [(ngModel)]="text" cdkFocusInitial></textarea>
       </mat-form-field>
 
       <div class="carried">

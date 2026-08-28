@@ -19,6 +19,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatDialog } from '@angular/material/dialog';
 import { ApiService } from '../../core/api.service';
 import { BreadcrumbsComponent, Crumb } from '../../shared/breadcrumbs.component';
+import { BackLinkComponent } from '../../shared/back-link.component';
 import { AuthService } from '../../core/auth.service';
 import { RealtimeService, TaskChangedEvent } from '../../core/realtime.service';
 import { syncOn } from '../../core/realtime-sync';
@@ -66,7 +67,7 @@ import { AttachmentUploadComponent } from '../../shared/attachment-upload.compon
   selector: 'app-task-detail',
   standalone: true,
   imports: [
-    BreadcrumbsComponent,
+    BreadcrumbsComponent, BackLinkComponent,
     RouterLink,
     DatePipe,
     MatButtonModule,
@@ -94,6 +95,7 @@ import { AttachmentUploadComponent } from '../../shared/attachment-upload.compon
       <app-loading message="Loading task…" />
     } @else if (task(); as t) {
       <div class="page">
+        <app-back-link fallback="/tasks" label="Tasks" />
         <app-breadcrumbs [crumbs]="crumbs(t)" />
         <app-page-header [title]="t.title" [subtitle]="t.taskNumber + ' · ' + label(t.type)">
           @if (t.requestId) {
@@ -179,10 +181,17 @@ import { AttachmentUploadComponent } from '../../shared/attachment-upload.compon
             >
               <mat-tab label="Overview">
                 <div class="tab-body stack">
-                  <div class="card card-pad">
-                    <h2 class="card-title">Description</h2>
-                    <p class="body-text">{{ t.description }}</p>
-                  </div>
+                  <!--
+                    One brief, not four cards. Description, what was asked for and the acceptance
+                    criteria are usually a line each, and giving each its own card, title and border
+                    cost more height in framing than in content — a task with three short facts ran
+                    past the bottom of the screen. Separated by a rule instead.
+                  -->
+                  <div class="card card-pad brief">
+                    <section>
+                      <h2 class="card-title">Description</h2>
+                      <p class="body-text">{{ t.description }}</p>
+                    </section>
 
                   <!--
                     What was asked for, in the requester's words, with their screenshots. Here so
@@ -190,7 +199,7 @@ import { AttachmentUploadComponent } from '../../shared/attachment-upload.compon
                     separate, the reading does not.
                   -->
                   @if (t.request; as req) {
-                    <div class="card card-pad">
+                    <section>
                       <h2 class="card-title">What was asked for</h2>
                       <p class="muted small asked">
                         {{ req.requestedByDisplayName }} · {{ req.requestedAt | date: 'mediumDate' }}
@@ -249,13 +258,28 @@ import { AttachmentUploadComponent } from '../../shared/attachment-upload.compon
                         <h3 class="sub">Files from the request</h3>
                         <app-attachments [attachments]="req.attachments" />
                       }
-                    </div>
+                    </section>
                   }
+
+                    @if (t.acceptanceCriteria) {
+                      <section>
+                        <h2 class="card-title">Acceptance criteria</h2>
+                        <p class="body-text">{{ t.acceptanceCriteria }}</p>
+                      </section>
+                    }
+
+                    @if (t.resolution) {
+                      <section>
+                        <h2 class="card-title">Resolution</h2>
+                        <p class="body-text">{{ t.resolution }}</p>
+                      </section>
+                    }
+                  </div>
 
                   <!--
                     Dependencies sit in the overview when there are any: "what is holding this up"
-                    belongs with the work, not behind a tab someone has to think to open. The tab
-                    stays for the people who edit the graph.
+                    belongs with the work, not behind a tab someone has to think to open. Its own
+                    card, because it is a warning rather than part of the brief.
                   -->
                   @if (t.blockedBy.length) {
                     <div class="card card-pad blocked">
@@ -267,20 +291,6 @@ import { AttachmentUploadComponent } from '../../shared/attachment-upload.compon
                     </div>
                   }
 
-                  @if (t.acceptanceCriteria) {
-                    <div class="card card-pad">
-                      <h2 class="card-title">Acceptance criteria</h2>
-                      <p class="body-text">{{ t.acceptanceCriteria }}</p>
-                    </div>
-                  }
-
-                  @if (t.resolution) {
-                    <div class="card card-pad">
-                      <h2 class="card-title">Resolution</h2>
-                      <p class="body-text">{{ t.resolution }}</p>
-                    </div>
-                  }
-
                   <!--
                     Proof sits in the Overview rather than behind the quality-check tab: the
                     checker looks at it before anything else, and the person who has to supply it
@@ -289,10 +299,6 @@ import { AttachmentUploadComponent } from '../../shared/attachment-upload.compon
                   @if (showProof()) {
                     <div class="card card-pad">
                       <h2 class="card-title">Proof of work</h2>
-                      <p class="muted small proof-lead">
-                        Screenshots or files showing the work actually does what was asked. Whoever
-                        checks it looks here first.
-                      </p>
                       <app-attachments
                         [attachments]="t.completionProof ?? []"
                         emptyText="Nothing attached yet." />
@@ -312,13 +318,15 @@ import { AttachmentUploadComponent } from '../../shared/attachment-upload.compon
                     </div>
                   }
 
-                  @if (!auth.isRequesterOnly()) {
+                  <!--
+                    Only once there is something to show. A card whose whole content is "no time
+                    logged yet" is a heading, a border and a sentence saying nothing has happened —
+                    the total is already in Details, where a reader looking for it goes.
+                  -->
+                  @if (!auth.isRequesterOnly() && t.workSessions.length > 0) {
                   <div class="card card-pad">
                     <h2 class="card-title">Work sessions</h2>
-                    @if (t.workSessions.length === 0) {
-                      <p class="muted small">No time logged yet.</p>
-                    } @else {
-                      @for (s of t.workSessions; track s.id) {
+                    @for (s of t.workSessions; track s.id) {
                         <div class="session">
                           <span class="mono small">{{
                             s.sessionStart | date: 'MMM d, HH:mm'
@@ -336,7 +344,6 @@ import { AttachmentUploadComponent } from '../../shared/attachment-upload.compon
                           }
                           <span class="mono small">{{ s.duration | duration }}</span>
                         </div>
-                      }
                     }
                   </div>
                   }
@@ -419,26 +426,19 @@ import { AttachmentUploadComponent } from '../../shared/attachment-upload.compon
                 are the two axes a request is placed on (PRODUCT-CORE §5) — the client is which
                 instance, this is which part of the product.
               -->
-              @if (t.productLocation) {
-                <app-field label="Where in the product">{{ t.productLocation }}</app-field>
-              }
               @if (t.clientName) {
                 <app-field label="Client">
                   {{ t.clientName }}
                 </app-field>
               }
-              <app-field label="Responsible person">
+              <app-field label="Responsible">
                 {{ t.primaryAssigneeDisplayName ?? 'Nobody yet' }}
-                <div class="muted small hint">The person responsible for completing this task.</div>
               </app-field>
               @if (t.supportPeople.length > 0) {
-                <app-field label="Support people">
+                <app-field label="Support">
                   @for (p of t.supportPeople; track p.userId) {
                     <div>{{ p.displayName }}</div>
                   }
-                  <div class="muted small hint">
-                    Helping with this task. They are not responsible for finishing it.
-                  </div>
                 </app-field>
               }
               @if (!auth.isRequesterOnly()) {
@@ -468,6 +468,12 @@ import { AttachmentUploadComponent } from '../../shared/attachment-upload.compon
     }
   `,
   styles: `
+    /* Sections divided by a rule rather than by four separate cards. */
+    .brief > section + section {
+      margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);
+    }
+    .brief .card-title { margin-top: 0; }
+
     .asked { margin: -4px 0 12px; }
     .folded { margin-top: 12px; border-left: 3px solid var(--border); padding-left: 12px; }
     .folded-item { margin-bottom: 10px; }

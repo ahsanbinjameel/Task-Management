@@ -65,10 +65,6 @@ const fromMet = (met: boolean | null | undefined): Answer =>
       @if (canReview()) {
         <div class="card card-pad">
           <h2 class="card-title">Quality check</h2>
-          <p class="muted small intro">
-            The work is finished. Check that it actually does what was asked, then record the result
-            below.
-          </p>
 
           @if (verdicts().length > 0) {
             <h3 class="sub">What needs to be checked</h3>

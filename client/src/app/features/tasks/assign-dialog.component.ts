@@ -33,7 +33,7 @@ export type AssignDialogResult = TaskDetailDto;
   ],
   template: `
     <h2 mat-dialog-title>
-      {{ data.isReassign ? 'Change who is responsible for' : 'Choose who will do' }} {{ number() }}
+      {{ data.isReassign ? 'Reassign' : 'Assign' }} {{ number() }}
     </h2>
 
     <mat-dialog-content>
@@ -44,97 +44,126 @@ export type AssignDialogResult = TaskDetailDto;
       }
 
       <!--
-        Facts, not a fabricated capacity number (PRODUCT-CORE §12C). The old panel summed estimated
-        hours and called it capacity: estimates are guesses, most tasks carry none, and adding
-        guesses together does not make a fact. What a coordinator actually asks is who is here,
-        what they are on this minute, what is already queued behind it, and whether they have seen
-        this part of the product before.
+        Two columns, because the list was the problem. Each candidate used to be a card carrying
+        every fact about them, so eight people ran well past the bottom of a laptop screen and
+        choosing one meant scrolling through the details of seven others.
 
-        A list rather than a dropdown, because the facts are the decision — a dropdown would hide
-        exactly what there is to read. Everyone who may hold work appears, including people with
-        nothing on, since "who is free" is most of the question.
+        Now the list is dense enough to see at once and the facts about the one being considered
+        use the width beside it. Still no capacity number: estimates are guesses, most tasks carry
+        none, and a sum of guesses is not something anybody can act on.
       -->
-      <fieldset class="people">
-        <legend class="muted small">Who will do this?</legend>
+      <div class="split">
+        <section class="picker">
+          @if (candidates().length > 6) {
+            <input class="search" type="text" placeholder="Search" [value]="search()"
+                   (input)="search.set($any($event.target).value)" aria-label="Search people" />
+          }
 
-        @for (person of candidates(); track person.userId) {
-          <label class="person" [class.chosen]="assigneeUserId() === person.userId"
-                 [class.current]="person.userId === data.currentAssigneeId">
-            <input type="radio" name="assignee"
-                   [checked]="assigneeUserId() === person.userId"
-                   [disabled]="person.userId === data.currentAssigneeId"
-                   (change)="assigneeUserId.set(person.userId)" />
-
-            <span class="dot" [class.on]="person.isOnShift"></span>
-
-            <span class="detail">
-              <span class="name">
-                {{ person.displayName }}
-                @if (person.userId === data.currentAssigneeId) {
-                  <span class="muted small">— has it now</span>
-                }
-              </span>
-
-              <span class="facts small muted">
-                @if (person.activeTaskNumber) {
-                  <span class="now">
-                    Working now · {{ person.activeTaskNumber }}
-                    @if (person.activeFor) { ({{ person.activeFor | duration }}) }
+          <div class="people" role="radiogroup" aria-label="Who will do this">
+            @for (person of visible(); track person.userId) {
+              <button type="button" class="person"
+                      [class.chosen]="assigneeUserId() === person.userId"
+                      [class.current]="person.userId === data.currentAssigneeId"
+                      [disabled]="person.userId === data.currentAssigneeId"
+                      [attr.aria-pressed]="assigneeUserId() === person.userId"
+                      (click)="assigneeUserId.set(person.userId)">
+                <span class="dot" [class.on]="person.isOnShift"></span>
+                <span class="detail">
+                  <span class="name">
+                    {{ person.displayName }}
+                    @if (person.userId === data.currentAssigneeId) {
+                      <span class="muted small">— has it now</span>
+                    }
                   </span>
-                } @else if (!person.isOnShift) {
-                  <span>Not on shift</span>
-                } @else {
-                  <span>Free</span>
-                }
-                <span>· {{ person.activeCount }} active</span>
-                <span>· {{ person.waitingCount }} waiting</span>
-                @if (person.dueTodayCount > 0) {
-                  <span class="due">· {{ person.dueTodayCount }} due today</span>
-                }
-              </span>
-
-              @if (person.recentRelated.length) {
-                <span class="related small muted">
-                  Recent related: {{ person.recentRelated.join(' · ') }}
+                  <span class="facts small muted">
+                    @if (person.activeTaskNumber) {
+                      <span class="now">On {{ person.activeTaskNumber }}</span>
+                    } @else if (!person.isOnShift) {
+                      <span>Not on shift</span>
+                    } @else {
+                      <span>Free</span>
+                    }
+                    <span>· {{ person.activeCount }} active</span>
+                    <span>· {{ person.waitingCount }} waiting</span>
+                    @if (person.dueTodayCount > 0) {
+                      <span class="due">· {{ person.dueTodayCount }} due today</span>
+                    }
+                  </span>
                 </span>
+              </button>
+            } @empty {
+              <p class="muted small pad">
+                @if (candidates().length === 0) {
+                  Nobody holds the permission to do work yet.
+                } @else {
+                  Nobody matches "{{ search() }}".
+                }
+              </p>
+            }
+
+            <button type="button" class="person nobody" [class.chosen]="assigneeUserId() === null"
+                    [disabled]="data.currentAssigneeId == null"
+                    (click)="assigneeUserId.set(null)">
+              <span class="dot"></span>
+              <span class="detail"><span class="name">Nobody — back to the waiting list</span></span>
+            </button>
+          </div>
+        </section>
+
+        <aside class="chosen-panel">
+          @if (selected(); as person) {
+            <div class="who-head">
+              <span class="dot" [class.on]="person.isOnShift"></span>
+              <strong>{{ person.displayName }}</strong>
+            </div>
+
+            <dl class="stats">
+              <div><dt>Shift</dt><dd>{{ person.isOnShift ? 'On shift' : 'Not on shift' }}</dd></div>
+              @if (person.activeTaskNumber) {
+                <div>
+                  <dt>Working on</dt>
+                  <dd>
+                    {{ person.activeTaskNumber }}
+                    @if (person.activeFor) { <span class="muted">({{ person.activeFor | duration }})</span> }
+                  </dd>
+                </div>
               }
-            </span>
-          </label>
-        } @empty {
-          <p class="muted small">
-            Nobody holds the permission to do work yet. Grant a role with Task.Work in Settings.
-          </p>
-        }
+              <div><dt>Active</dt><dd>{{ person.activeCount }}</dd></div>
+              <div><dt>Waiting</dt><dd>{{ person.waitingCount }}</dd></div>
+              <div><dt>Due today</dt><dd>{{ person.dueTodayCount }}</dd></div>
+            </dl>
 
-        <label class="person nobody" [class.chosen]="assigneeUserId() === null">
-          <input type="radio" name="assignee" [checked]="assigneeUserId() === null"
-                 [disabled]="data.currentAssigneeId == null"
-                 (change)="assigneeUserId.set(null)" />
-          <span class="dot"></span>
-          <span class="detail">
-            <span class="name">Nobody — put it back in the waiting list</span>
-          </span>
-        </label>
-      </fieldset>
+            @if (person.recentRelated.length) {
+              <div class="related-block">
+                <span class="k">Recent related work</span>
+                <ul>
+                  @for (title of person.recentRelated; track title) { <li>{{ title }}</li> }
+                </ul>
+              </div>
+            }
+          } @else if (assigneeUserId() === null && data.currentAssigneeId != null) {
+            <p class="muted small">This goes back to the waiting list for somebody else to pick up.</p>
+          } @else {
+            <p class="muted small">Pick somebody to see what they are carrying.</p>
+          }
+        </aside>
+      </div>
 
-      <p class="muted small who">
-        The person responsible owns this task. It appears in their queue and counts as their work,
-        and they are notified as soon as you confirm.
-      </p>
-
-      <app-search-select label="Support people (optional)" multiple [options]="supportOptions()"
-                         [ngModel]="supportUserIds()" (ngModelChange)="supportUserIds.set($event)"
-                         name="support" />
-
-      <p class="muted small who">
-        Support people help with the task. It does not go into their queue and does not count as
-        their work — they are shown on the task and in reports as having helped.
-      </p>
+      <!-- Collapsed by default: helping is the exception, and it cost a block of prose every time. -->
+      @if (showSupport()) {
+        <app-search-select label="Support people" multiple [options]="supportOptions()"
+                           [ngModel]="supportUserIds()" (ngModelChange)="supportUserIds.set($event)"
+                           name="support" />
+      } @else {
+        <button type="button" class="link" (click)="showSupport.set(true)">
+          <mat-icon>group_add</mat-icon> Add support people
+        </button>
+      }
 
       @if (data.isReassign) {
         <mat-form-field class="full">
           <mat-label>Why are you changing this?</mat-label>
-          <textarea matInput rows="3" name="reason" [(ngModel)]="reason" required></textarea>
+          <textarea matInput rows="2" name="reason" [(ngModel)]="reason" required></textarea>
           @if (form.fieldError('reason'); as e) { <mat-error>{{ e }}</mat-error> }
         </mat-form-field>
       }
@@ -149,39 +178,71 @@ export type AssignDialogResult = TaskDetailDto;
   `,
   styles: `
     .full { width: 100%; }
-    mat-dialog-content { min-width: min(460px, 82vw); padding-top: 8px !important; }
+    mat-dialog-content { min-width: min(780px, 88vw); padding-top: 8px !important; }
     .form-error {
       display: flex; align-items: flex-start; gap: 8px; margin: 0 0 12px;
       padding: 10px 12px; border-radius: 8px; font-size: 13.5px; line-height: 1.45;
       background: var(--tone-danger-bg); color: var(--tone-danger-fg);
     }
     .form-error mat-icon { font-size: 18px; width: 18px; height: 18px; flex: none; margin-top: 1px; }
-    .who { margin: -8px 0 14px; line-height: 1.45; }
 
-    .people { border: none; padding: 0; margin: 0 0 14px; min-width: 0; }
-    .people legend { padding: 0 0 6px; }
-    .person {
-      display: flex; align-items: flex-start; gap: 10px;
-      padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px;
-      margin-bottom: 6px; cursor: pointer;
+    .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 260px); gap: 14px; }
+    @media (max-width: 720px) { .split { grid-template-columns: 1fr; } }
+
+    /* The list scrolls rather than the dialog: a long team should not make the buttons unreachable. */
+    .people { max-height: 264px; overflow-y: auto; padding-right: 2px; }
+    .search {
+      width: 100%; margin-bottom: 6px; padding: 6px 9px; font: inherit; font-size: 13px;
+      border: 1px solid var(--border); border-radius: 7px;
+      background: var(--surface); color: var(--text);
     }
-    .person:hover { background: var(--surface-sunken); }
+
+    .person {
+      display: flex; align-items: flex-start; gap: 9px; width: 100%; text-align: left;
+      padding: 7px 9px; margin-bottom: 3px; cursor: pointer;
+      border: 1px solid transparent; border-radius: 7px; background: transparent;
+      color: var(--text); font: inherit;
+    }
+    .person:hover:not(:disabled) { background: var(--surface-sunken); }
     .person.chosen { border-color: #1d69d4; background: var(--tone-running-bg); }
-    .person.current { opacity: .6; cursor: default; }
-    .person input { margin-top: 3px; flex: none; }
+    .person:disabled { opacity: .55; cursor: default; }
+    .person.nobody { margin-top: 4px; border-top: 1px solid var(--border); border-radius: 0 0 7px 7px; }
+
     /* Filled means on the clock: the one fact that decides whether the rest of the row matters. */
     .dot {
-      width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex: none;
+      width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex: none;
       border: 1.5px solid var(--border-strong); background: transparent;
     }
     .dot.on { background: var(--tone-good-fg); border-color: var(--tone-good-fg); }
-    .detail { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-    .name { font-weight: 500; }
+
+    .detail { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .name { font-weight: 500; font-size: 13.5px; }
     .facts { display: flex; flex-wrap: wrap; gap: 4px; }
     .facts .now { color: var(--tone-running-fg); font-weight: 500; }
     .facts .due { color: var(--tone-warn-fg); }
-    .related { font-style: italic; }
-    .nobody { margin-top: 10px; }
+    .pad { padding: 8px 9px; }
+
+    .chosen-panel {
+      border: 1px solid var(--border); border-radius: 8px; padding: 11px 12px;
+      background: var(--surface-sunken); min-width: 0;
+    }
+    .who-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+    .stats { margin: 0; display: flex; flex-direction: column; gap: 5px; }
+    .stats > div { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; }
+    .stats dt { color: var(--text-muted); margin: 0; }
+    .stats dd { margin: 0; font-weight: 500; text-align: right; min-width: 0; }
+    .related-block { margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--border); }
+    .related-block .k { font-size: 12px; color: var(--text-muted); }
+    .related-block ul { margin: 4px 0 0; padding-left: 16px; font-size: 12.5px; }
+    .related-block li { margin-bottom: 2px; }
+
+    .link {
+      display: inline-flex; align-items: center; gap: 5px; margin-top: 12px;
+      padding: 0; border: none; background: none; cursor: pointer;
+      color: var(--tone-running-fg); font: inherit; font-size: 13px;
+    }
+    .link mat-icon { font-size: 17px; width: 17px; height: 17px; }
+    app-search-select { display: block; margin-top: 12px; }
   `,
 })
 export class AssignDialogComponent implements OnInit {
@@ -209,6 +270,20 @@ export class AssignDialogComponent implements OnInit {
   readonly form = new FormSubmit();
 
   readonly supportUserIds = signal<number[]>([]);
+  readonly showSupport = signal(false);
+
+  /** Only offered once the list is long enough that reading it stops being quicker than typing. */
+  readonly search = signal('');
+
+  readonly visible = computed(() => {
+    const term = this.search().trim().toLowerCase();
+    const people = this.candidates();
+    return term ? people.filter((p) => p.displayName.toLowerCase().includes(term)) : people;
+  });
+
+  /** The one being considered, whose facts fill the panel beside the list. */
+  readonly selected = computed(() =>
+    this.candidates().find((p) => p.userId === this.assigneeUserId()) ?? null);
 
   private option = (user: AssignableUserDto): SelectOption => ({
     value: user.id,

@@ -217,12 +217,12 @@ export class ApiService {
   }
 
   createRequest(body: {
-    title: string; description: string; type: RequestType; requestedUrgency: RequestedUrgency;
+    title: string; description: string; requestedUrgency: RequestedUrgency;
+    /** Optional: the reviewer classifies the work at triage, not the person reporting it. */
+    type?: RequestType;
     businessImpact?: string; expectedResult?: string; currentResult?: string;
     reproductionSteps?: string; targetDate?: string | null;
     clientName?: string | null;
-    /** Where in the product, if the requester knew. Refined at triage (PRODUCT-CORE §5). */
-    moduleId?: number; formId?: number;
   }, context?: HttpContext): Observable<RequestDetailDto> {
     return this.http.post<RequestDetailDto>('/api/requests', body, { context });
   }
@@ -259,8 +259,8 @@ export class ApiService {
     estimatedEffortHours?: number; dueDate?: string | null; acceptanceCriteria?: string;
     duplicateOfRequestId?: number;
     clientName?: string | null;
-    /** Where in the product this is (PRODUCT-CORE §5). Set when approving; never a client id. */
-    moduleId?: number; formId?: number; formSurfaceId?: number;
+    /** How the work is classified. Set here, by the person who can actually tell. */
+    type?: RequestType;
     /** Required when the outcome is SendForVerification. Produces a check, never a task. */
     verification?: SendForVerificationDto;
   }, context?: HttpContext): Observable<TriageResultDto> {

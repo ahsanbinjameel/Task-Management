@@ -100,6 +100,15 @@ public sealed record TriageDecisionDto
     public Priority? ApprovedPriority { get; init; }
 
     /// <summary>
+    /// How the work is classified. Set here rather than at intake: the requester knows what is
+    /// wrong, not whether it is a defect, a change request or a configuration mistake, and a guess
+    /// from them is a wrong label on every report that groups by it.
+    ///
+    /// Null leaves whatever the request already has.
+    /// </summary>
+    public RequestType? Type { get; init; }
+
+    /// <summary>
     /// Who the work is for, if the requester did not say or got it wrong. Written to the request
     /// first and inherited by the task from there, so the two can never disagree about the client.
     /// Leave null to keep whatever the request already has.

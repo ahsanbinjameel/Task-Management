@@ -1042,6 +1042,28 @@ running the API instead (`--launch-profile Development`), which does load user-s
   refused once triage has acted — that is the structural half of §4.13 and it predates this change.
   What it did was say "add a comment instead", which is where a requester with a genuine second
   problem got stuck. It now names the follow-up.
+- **The QC queue is built from the same table as the word "being checked".** It filtered on
+  `CompletedReadyForQC` alone, so a task left the Quality page the instant a checker claimed it —
+  while every other screen went on calling it "Being checked", because that view covers
+  `CompletedReadyForQC` **and** `QCReview`. Two screens contradicted each other, and the work
+  actually in hand was the half that vanished. `QueueAsync` now passes the `checking` view rather
+  than a single status: one table decides what the phrase means, so the queue cannot drift from it
+  again. Pinned by `QCQueueConsistencyTests`.
+- **A request's *kind* is set at triage, not at intake.** The requester knows what is wrong; whether
+  it is a defect, a change request or a configuration mistake is a judgement about the system, and a
+  guess from them is a wrong label on every report that groups by it. `TriageDecisionDto.Type`
+  writes it to the request, and the task inherits it from there — the same route the client takes,
+  so the two cannot disagree.
+- **A row's primary action lands where the work is done.** Assign navigates to
+  `/assignment?task=<id>` and the queue opens that task's dialog straight away; Check opens the task
+  on `?tab=qc`. Both used to drop the reader on a page and make them find the thing they had just
+  clicked — one action costing two selections. The task id is stripped from the URL once consumed,
+  so a refresh or a Back does not reopen a dialog already dealt with.
+- **`app-back-link` is the way out of a detail screen, not the sidebar.** A task reached from the
+  assignment queue and one reached from Tasks are the same screen with different parents, so
+  `NavigationHistory` records the previous in-app URL and the control falls back to the named parent
+  when there is none. The fallback is what makes it safe on a page opened from a notification or a
+  pasted link — `history.back()` there walks out of the app entirely.
 - **Parked capabilities are one flag file, not scattered `@if`s** (`core/parked.ts`). Quick Work,
   dependencies, subtasks and the scope-change ceremony are built, tested, endpoint-complete and
   **not offered**: the widget is off the shell and the three tabs are off the task detail. Reading

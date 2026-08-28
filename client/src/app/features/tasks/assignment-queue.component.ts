@@ -3,6 +3,7 @@ import { syncOn } from '../../core/realtime-sync';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatDialog } from '@angular/material/dialog';
+import { ActivatedRoute, Router } from '@angular/router';
 import { ApiService } from '../../core/api.service';
 import { ToastService } from '../../core/toast.service';
 import { RealtimeService } from '../../core/realtime.service';
@@ -10,6 +11,7 @@ import { PagedResult, TaskSummaryDto, WorkloadDto } from '../../core/models';
 import { PageHeaderComponent } from '../../shared/ui';
 import { ViewTabsComponent } from '../../shared/view-tabs.component';
 import { TaskTableComponent } from '../../shared/task-table.component';
+import { BackLinkComponent } from '../../shared/back-link.component';
 import { AssignDialogComponent, AssignDialogResult } from './assign-dialog.component';
 
 /**
@@ -20,10 +22,11 @@ import { AssignDialogComponent, AssignDialogResult } from './assign-dialog.compo
   selector: 'app-assignment-queue',
   standalone: true,
   imports: [
-    MatButtonModule, MatIconModule, PageHeaderComponent, TaskTableComponent, ViewTabsComponent,
+    MatButtonModule, MatIconModule, PageHeaderComponent, TaskTableComponent, BackLinkComponent, ViewTabsComponent,
   ],
   template: `
     <div class="page">
+      <app-back-link fallback="/tasks" label="Tasks" />
       <app-page-header title="Assignment queue">
         <button matButton (click)="load()"><mat-icon>refresh</mat-icon> Refresh</button>
       </app-page-header>
@@ -95,6 +98,8 @@ import { AssignDialogComponent, AssignDialogResult } from './assign-dialog.compo
 export class AssignmentQueueComponent implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(ApiService);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
   private readonly dialog = inject(MatDialog);
   private readonly toast = inject(ToastService);
   private readonly realtime = inject(RealtimeService);
@@ -115,10 +120,39 @@ export class AssignmentQueueComponent implements OnInit {
 
   load(): void {
     this.api.assignmentQueue(1, 50).subscribe({
-      next: (result) => { this.page.set(result); this.loading.set(false); },
+      next: (result) => {
+        this.page.set(result);
+        this.loading.set(false);
+        this.openRequestedTask();
+      },
       error: () => this.loading.set(false),
     });
     this.api.workload().subscribe({ next: (w) => this.workload.set(w), error: () => undefined });
+  }
+
+  /**
+   * Arriving from a row's Assign button opens that row's dialog straight away.
+   *
+   * The task list has always navigated here with `?task=<id>`; nothing read it, so the reader was
+   * dropped on a list and made to find the row they had just clicked. One action, two selections.
+   *
+   * The id is cleared from the URL once used, so a refresh or a Back does not reopen a dialog the
+   * reader has already dealt with. If the id is not in the queue — somebody else assigned it in the
+   * meantime — nothing happens, and the list they are looking at is the honest answer.
+   */
+  private openRequestedTask(): void {
+    const requested = Number(this.route.snapshot.queryParamMap.get('task'));
+    if (!requested) return;
+
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { task: null },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
+
+    const task = this.page().items.find((t) => t.id === requested);
+    if (task) this.assign(task);
   }
 
   assign(task: TaskSummaryDto): void {

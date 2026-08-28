@@ -198,6 +198,13 @@ export class TaskListComponent implements OnInit {
       return;
     }
 
+    // Opening a task to check it should land on the check, not on the overview with the reader
+    // hunting for the tab. The task screen already takes ?tab= for exactly this.
+    if (label === 'Check') {
+      void this.router.navigate(['/tasks', task.id], { queryParams: { tab: 'qc' } });
+      return;
+    }
+
     // "Start work" and "Start fixing" both mean "go and work on this", which is the task screen's
     // job: it owns the timer, the single-active-session rule and the blocked check.
     void this.router.navigate(['/tasks', task.id], {

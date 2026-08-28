@@ -17,6 +17,7 @@ import { FormSubmit } from '../../core/form-submit';
 import { VerificationDetailDto, VerificationResult } from '../../core/models';
 import { verificationResultLabel, verificationTargetLabel } from '../../core/labels';
 import { ChipComponent, FieldComponent, LoadingComponent, PageHeaderComponent } from '../../shared/ui';
+import { BackLinkComponent } from '../../shared/back-link.component';
 import { SearchSelectComponent, SelectOption, enumOptions } from '../../shared/search-select.component';
 import { AttachmentsComponent } from '../../shared/attachments.component';
 import { AttachmentUploadComponent } from '../../shared/attachment-upload.component';
@@ -43,12 +44,14 @@ import { VerificationAssignDialog } from './verification-assign-dialog.component
     MatInputModule,
     PageHeaderComponent, LoadingComponent, ChipComponent, FieldComponent,
     SearchSelectComponent, AttachmentsComponent, AttachmentUploadComponent,
+    BackLinkComponent,
   ],
   template: `
     @if (loading()) {
       <div class="page"><app-loading /></div>
     } @else if (verification(); as v) {
       <div class="page">
+        <app-back-link fallback="/verifications" label="Checks" />
         <app-page-header [title]="v.verificationNumber + ' · ' + v.title" [subtitle]="v.targetSummary">
           <!--
             The action that matters most sits first and is the filled one. For an unclaimed check

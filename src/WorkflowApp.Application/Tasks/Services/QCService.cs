@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using WorkflowApp.Application.Common;
 using WorkflowApp.Application.Common.Interfaces;
 using WorkflowApp.Application.Common.Models;
 using WorkflowApp.Application.Common.Services;
@@ -75,8 +76,23 @@ public sealed class QCService : IQCService
         _logger = logger;
     }
 
+    /// <summary>
+    /// Everything a checker has to deal with: work handed over and not yet claimed, and work
+    /// already being checked.
+    ///
+    /// This used to filter on <see cref="WorkTaskStatus.CompletedReadyForQC"/> alone, which meant a
+    /// task disappeared from this page the instant somebody claimed it — while every other screen
+    /// in the app went on saying "Being checked", because that label covers
+    /// <c>CompletedReadyForQC</c> <em>and</em> <c>QCReview</c>. Two screens contradicted each other
+    /// and the work in hand was the part that vanished.
+    ///
+    /// So the queue is now driven by the same <see cref="StatusViews"/> entry that produces the
+    /// label. That is the fix rather than adding a second status to the filter: one table decides
+    /// what "being checked" means, and a queue built from it cannot drift from the word again.
+    /// </summary>
     public Task<PagedResult<TaskSummaryDto>> QueueAsync(PageQuery page, CancellationToken ct = default) =>
-        _queries.ListAsync(new TaskQuery { Status = WorkTaskStatus.CompletedReadyForQC }, page, ct);
+        _queries.ListAsync(
+            new TaskQuery { View = "checking", Audience = StatusAudience.Coordinator }, page, ct);
 
     public async Task<Result<TaskDetailDto>> StartReviewAsync(
         long taskId, long reviewerId, CancellationToken ct = default)

@@ -478,7 +478,12 @@ export interface FoldedRequestDto {
 export interface BatchItemDto {
   title: string;
   description: string;
-  type: RequestType;
+  /**
+   * Optional. The requester is not asked to classify their own problem — a guess from them is a
+   * wrong label on every report that groups by it — so the reviewer sets it at triage and the
+   * server applies its default until then.
+   */
+  type?: RequestType;
   requestedUrgency: RequestedUrgency;
   targetDate?: string | null;
 }
@@ -488,9 +493,6 @@ export interface CreateRequestBatchDto {
   title?: string | null;
   note?: string | null;
   clientName?: string | null;
-  /** Shared product location, copied onto each item. Never a client (PRODUCT-CORE §5). */
-  moduleId?: number;
-  formId?: number;
   items: BatchItemDto[];
 }
 

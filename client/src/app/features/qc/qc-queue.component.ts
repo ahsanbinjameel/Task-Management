@@ -31,7 +31,7 @@ import { TaskTableComponent } from '../../shared/task-table.component';
 
       <app-task-table
         [tasks]="page().items"
-        [columns]="['number', 'title', 'priority', 'assignee', 'worked', 'action']"
+        [columns]="['number', 'title', 'status', 'priority', 'assignee', 'worked', 'action']"
         actionLabel="Start review"
         [loading]="loading()"
         emptyMessage="Nothing waiting for QC" emptyIcon="verified"
@@ -66,7 +66,20 @@ export class QcQueueComponent implements OnInit {
     });
   }
 
+  /**
+   * Open the check. Claiming happens on the way in, once.
+   *
+   * The queue now also holds work somebody has already started checking — that is the point of the
+   * fix, since it used to vanish the moment it was claimed while every other screen still called it
+   * "Being checked". Claiming a second time is refused by the server, so a task already in review
+   * is simply opened.
+   */
   startReview(task: TaskSummaryDto): void {
+    if (task.status === 'QCReview') {
+      void this.router.navigate(['/tasks', task.id], { queryParams: { tab: 'qc' } });
+      return;
+    }
+
     this.api.startQC(task.id).subscribe(() => {
       this.toast.success(`${task.taskNumber} is now under your review.`);
       void this.router.navigate(['/tasks', task.id], { queryParams: { tab: 'qc' } });

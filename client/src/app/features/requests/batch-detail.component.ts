@@ -22,6 +22,7 @@ import { enumOptions, SearchSelectComponent } from '../../shared/search-select.c
 import { AttachmentsComponent } from '../../shared/attachments.component';
 import { BreadcrumbsComponent, Crumb } from '../../shared/breadcrumbs.component';
 import { ChipComponent, EmptyComponent, FieldComponent, LoadingComponent, PageHeaderComponent } from '../../shared/ui';
+import { BackLinkComponent } from '../../shared/back-link.component';
 
 /** Settling the terms of the combined task before it exists. */
 @Component({
@@ -164,7 +165,7 @@ export class FoldDialog {
   imports: [
     DatePipe, RouterLink, MatButtonModule, MatCheckboxModule, MatIconModule,
     PageHeaderComponent, LoadingComponent, EmptyComponent, FieldComponent, ChipComponent,
-    AttachmentsComponent, BreadcrumbsComponent,
+    AttachmentsComponent, BreadcrumbsComponent, BackLinkComponent,
   ],
   template: `
     <div class="page">
@@ -172,6 +173,8 @@ export class FoldDialog {
         <app-loading />
       } @else if (batch(); as b) {
         <app-breadcrumbs [crumbs]="crumbs(b)" />
+
+        <app-back-link fallback="/requests" label="Requests" />
 
         <app-page-header [title]="b.title" [subtitle]="b.batchNumber + ' · ' + b.items.length + ' requests'">
           @if (canApprove() && selected().length > 0) {

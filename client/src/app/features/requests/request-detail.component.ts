@@ -10,10 +10,12 @@ import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
+import { MatMenuModule } from '@angular/material/menu';
 import { MatInputModule } from '@angular/material/input';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { ApiService } from '../../core/api.service';
 import { BreadcrumbsComponent, Crumb } from '../../shared/breadcrumbs.component';
+import { BackLinkComponent } from '../../shared/back-link.component';
 import { RequestEditDialog } from './request-edit-dialog.component';
 import { FollowUpDialog } from './follow-up-dialog.component';
 import { ConfirmDialog, ConfirmData, ReasonDialog, ReasonData } from '../../shared/dialogs';
@@ -40,9 +42,9 @@ import {
   selector: 'app-request-detail',
   standalone: true,
   imports: [
-    BreadcrumbsComponent,
+    BreadcrumbsComponent, BackLinkComponent,
     DatePipe, FormsModule, RouterLink, MatButtonModule, MatButtonToggleModule, MatFormFieldModule,
-    MatIconModule, MatInputModule, MatTooltipModule,
+    MatIconModule, MatInputModule, MatMenuModule, MatTooltipModule,
     PageHeaderComponent, ChipComponent, FieldComponent, LoadingComponent,
     SearchSelectComponent, AttachmentsComponent,
   ],
@@ -51,6 +53,7 @@ import {
       <app-loading message="Loading request…" />
     } @else if (request(); as r) {
       <div class="page">
+        <app-back-link fallback="/requests" label="Requests" />
         <app-breadcrumbs [crumbs]="crumbs(r)" />
         <app-page-header [title]="r.title" [subtitle]="r.requestNumber + ' · ' + label(r.type)">
           @if (canEdit()) {
@@ -214,14 +217,15 @@ import {
               anyone uses; and an empty one gets a single line rather than a card of empty space —
               a section with nothing in it should take up nothing.
             -->
+            @if (r.clarifications.length === 0) {
+              <!-- Nothing to show costs one line, not a card of empty space. -->
+              <p class="empty-line">
+                <span class="k">Questions &amp; replies</span><span class="v muted">None</span>
+              </p>
+            } @else {
             <div class="card">
               <div class="card-pad">
                 <h2 class="card-title" style="margin:0">Questions &amp; Replies</h2>
-                @if (r.clarifications.length === 0) {
-                  <p class="muted small" style="margin:6px 0 0">
-                    No more information has been asked for.
-                  </p>
-                }
               </div>
               @if (r.clarifications.length > 0) {
                 @for (c of r.clarifications; track c.id) {
@@ -258,22 +262,31 @@ import {
                 }
               }
             </div>
+            }
 
-            <!--
-              Attachments, with screenshots shown as screenshots. Looking at a picture should not
-              require downloading it, finding it and opening something else.
-            -->
-            <div class="card card-pad">
-              <div class="row" style="margin-bottom:12px">
-                <h2 class="card-title" style="margin:0">Attachments</h2>
+            <!-- Screenshots shown as screenshots: looking at one should not mean downloading it. -->
+            @if (r.attachments.length === 0) {
+              <p class="empty-line">
+                <span class="k">Attachments</span><span class="v muted">None</span>
                 <span class="spacer"></span>
-                <button matButton (click)="file.click()">
+                <button matButton class="tight" (click)="file.click()">
                   <mat-icon>upload</mat-icon> Add a file
                 </button>
                 <input #file type="file" hidden (change)="upload($event)" />
+              </p>
+            } @else {
+              <div class="card card-pad">
+                <div class="row" style="margin-bottom:12px">
+                  <h2 class="card-title" style="margin:0">Attachments</h2>
+                  <span class="spacer"></span>
+                  <button matButton (click)="file2.click()">
+                    <mat-icon>upload</mat-icon> Add a file
+                  </button>
+                  <input #file2 type="file" hidden (change)="upload($event)" />
+                </div>
+                <app-attachments [attachments]="r.attachments" />
               </div>
-              <app-attachments [attachments]="r.attachments" />
-            </div>
+            }
 
             <!-- --- history ------------------------------------------------------------------ -->
             @if (r.activity.length > 0) {
@@ -300,100 +313,104 @@ import {
               <div class="card card-pad">
                 <h2 class="card-title">Your decision</h2>
 
-                <mat-button-toggle-group [(ngModel)]="outcome" vertical class="outcomes">
-                  <mat-button-toggle value="Approve">
-                    <mat-icon>check_circle</mat-icon> Approve — create the task
-                  </mat-button-toggle>
-                  <mat-button-toggle value="RequestClarification">
-                    <mat-icon>help</mat-icon> Ask for clarification
-                  </mat-button-toggle>
-                  @if (canSendForVerification()) {
-                    <mat-button-toggle value="SendForVerification">
-                      <mat-icon>fact_check</mat-icon> Send for checking
-                    </mat-button-toggle>
+                <!--
+                  The four decisions that get made, two across, plus the rarer three behind a menu.
+                  Seven full-width rows was most of the height of this panel, and the reader had to
+                  read all seven every time to find the one they wanted — which is nearly always
+                  Approve.
+                -->
+                <div class="outcomes">
+                  @for (o of primaryOutcomes(); track o.value) {
+                    <button type="button" class="outcome" [class.on]="outcome === o.value"
+                            (click)="outcome = o.value">
+                      <mat-icon>{{ o.icon }}</mat-icon> {{ o.label }}
+                    </button>
                   }
-                  <mat-button-toggle value="Reject">
-                    <mat-icon>cancel</mat-icon> Reject
-                  </mat-button-toggle>
-                  <mat-button-toggle value="MarkDuplicate">
-                    <mat-icon>content_copy</mat-icon> Duplicate
-                  </mat-button-toggle>
-                  <mat-button-toggle value="Defer">
-                    <mat-icon>schedule</mat-icon> Defer
-                  </mat-button-toggle>
-                  <mat-button-toggle value="Escalate">
-                    <mat-icon>priority_high</mat-icon> Escalate
-                  </mat-button-toggle>
-                </mat-button-toggle-group>
+                </div>
 
+                <div class="more-row">
+                  @if (isSecondary(outcome)) {
+                    <button type="button" class="outcome on wide" [matMenuTriggerFor]="moreMenu">
+                      <mat-icon>{{ iconFor(outcome) }}</mat-icon> {{ labelFor(outcome) }}
+                      <mat-icon class="caret">expand_more</mat-icon>
+                    </button>
+                  } @else {
+                    <button type="button" class="more" [matMenuTriggerFor]="moreMenu">
+                      Something else <mat-icon class="caret">expand_more</mat-icon>
+                    </button>
+                  }
+
+                  <mat-menu #moreMenu="matMenu">
+                    @for (o of secondaryOutcomes(); track o.value) {
+                      <button mat-menu-item type="button" (click)="outcome = o.value">
+                        <mat-icon>{{ o.icon }}</mat-icon><span>{{ o.label }}</span>
+                      </button>
+                    }
+                  </mat-menu>
+                </div>
+
+                <!--
+                  Only what the chosen decision needs. Approval fields left standing while somebody
+                  rejects a request are three controls they have to read past to reach the one that
+                  matters, and a tall panel for a decision that needed one sentence.
+                -->
                 @if (outcome === 'Approve') {
                   <div class="approve-fields">
                     <!--
-                      Where in the product this is (PRODUCT-CORE §5, §12D). Triage is the right
-                      place for it: the requester gave a client and a sentence, and turning that
-                      into structured product context is the reviewer's job, not theirs.
-
-                      Three pickers, narrowing left to right — a form belongs to a module and a
-                      surface to a form. None of them takes a client, and none of them can: the
-                      catalog describes the product, and each client runs an instance of it.
+                      Kind is set here rather than at intake. The requester knows what is wrong,
+                      not whether it is a defect, a change request or a configuration mistake, and
+                      a guess from them is a wrong label on every report that groups by it.
                     -->
-                    <app-search-select class="full" label="Module (optional)"
-                                       [options]="moduleOptions()" [ngModel]="moduleId"
-                                       (ngModelChange)="pickModule($event)" name="module" />
-
-                    <app-search-select class="full" label="Form (optional)"
-                                       [options]="formOptions()" [ngModel]="formId"
-                                       (ngModelChange)="pickForm($event)" name="form"
-                                       [disabled]="moduleId === null" />
-
-                    <app-search-select class="full" label="Which part of it (optional)"
-                                       [options]="surfaceOptions()" [(ngModel)]="surfaceId"
-                                       name="surface" [disabled]="formId === null" />
-
-                    <app-search-select class="full" label="Approved priority"
-                                       [options]="priorityOptions" [(ngModel)]="priority" />
+                    <div class="pair">
+                      <app-search-select label="Kind" [options]="typeOptions" [(ngModel)]="type"
+                                         name="type" />
+                      <app-search-select label="Priority" [options]="priorityOptions"
+                                         [(ngModel)]="priority" name="priority" />
+                    </div>
 
                     <mat-form-field class="full">
                       <mat-label>Estimate (hours)</mat-label>
-                      <input matInput type="number" min="0" [(ngModel)]="estimate" />
+                      <input matInput type="number" min="0" [(ngModel)]="estimate" name="estimate" />
                     </mat-form-field>
 
                     <mat-form-field class="full">
                       <mat-label>Acceptance criteria — one per line</mat-label>
-                      <textarea matInput rows="4" [(ngModel)]="criteria"></textarea>
+                      <textarea matInput rows="3" [(ngModel)]="criteria" name="criteria"></textarea>
                     </mat-form-field>
                   </div>
-                } @else {
-                  <mat-form-field class="full">
-                    <mat-label>Reason (required unless approving)</mat-label>
-                    <textarea matInput rows="3" [(ngModel)]="reason"></textarea>
-                  </mat-form-field>
+                }
+
+                @if (outcome === 'SendForVerification') {
+                  <div class="verify-fields">
+                    <app-search-select class="full" label="Give it to"
+                                       nullLabel="Leave for someone to pick up"
+                                       [options]="checkerOptions()" [(ngModel)]="checkerId"
+                                       name="checker" />
+
+                    <mat-form-field class="full">
+                      <mat-label>What should they look at?</mat-label>
+                      <textarea matInput rows="2" [(ngModel)]="verifyInstructions"
+                                name="instructions"></textarea>
+                    </mat-form-field>
+
+                    <p class="note small">
+                      This creates no task. Whatever they find, the request comes back to you.
+                    </p>
+                  </div>
                 }
 
                 @if (outcome === 'MarkDuplicate') {
                   <mat-form-field class="full">
                     <mat-label>Duplicate of (request id)</mat-label>
-                    <input matInput type="number" [(ngModel)]="duplicateOf" />
+                    <input matInput type="number" [(ngModel)]="duplicateOf" name="duplicate" />
                   </mat-form-field>
                 }
 
-                @if (outcome === 'SendForVerification') {
-                  <div class="verify-fields">
-                    <p class="note">
-                      Somebody finds out whether there is really a problem here. This creates no
-                      task — whatever they find, the request comes back to you and approving it is
-                      still your decision.
-                    </p>
-
-                    <app-search-select class="full" label="Give it to"
-                                       nullLabel="Leave for someone to pick up"
-                                       [options]="checkerOptions()" [(ngModel)]="checkerId" />
-
-                    <mat-form-field class="full">
-                      <mat-label>What should they look at? (optional)</mat-label>
-                      <textarea matInput rows="3" [(ngModel)]="verifyInstructions"></textarea>
-                    </mat-form-field>
-                  </div>
+                @if (outcome !== 'Approve') {
+                  <mat-form-field class="full">
+                    <mat-label>{{ outcome === 'RequestClarification' ? 'What do you need to know?' : 'Reason' }}</mat-label>
+                    <textarea matInput rows="3" [(ngModel)]="reason" name="reason"></textarea>
+                  </mat-form-field>
                 }
 
                 <button matButton="filled" class="full submit"
@@ -472,8 +489,16 @@ import {
     }
     .event mat-icon { font-size: 18px; width: 18px; height: 18px; color: var(--text-muted); }
     .event .what { min-width: 0; }
-    .layout { display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr) 340px; }
+    /* Wider than the old 340px rail. The decision is the reason a reviewer opened this page, and
+       squeezing it into a narrow column is what forced its fields into a tall stack while the left
+       side sat half empty. */
+    .layout { display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr) minmax(320px, 400px); }
     @media (max-width: 1150px) { .layout { grid-template-columns: 1fr; } }
+
+    /* The decision panel follows the page rather than scrolling away from it on a long request. */
+    @media (min-width: 1151px) {
+      .layout > aside > .card:first-child { position: sticky; top: 12px; }
+    }
     .chips { gap: 9px; }
     .top-gap { margin-top: 18px; }
     .body-text { margin: 0; white-space: pre-wrap; line-height: 1.55; font-size: 14px; }
@@ -529,9 +554,45 @@ import {
     .check-head { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
     .check-result { margin-top: 6px; font-size: 13px; }
     .check-findings { margin: 4px 0 0; font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; }
-    .outcomes { width: 100%; margin-bottom: 14px; }
-    .outcomes .mat-button-toggle { text-align: left; }
-    .approve-fields { display: contents; }
+    /* Two across. Seven full-width rows was most of this panel's height, for a choice that is
+       Approve nine times in ten. */
+    .outcomes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px; }
+    .outcome {
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      padding: 9px 10px; border-radius: 8px; cursor: pointer;
+      border: 1px solid var(--border); background: var(--surface);
+      color: var(--text); font-size: 13px; font-weight: 500;
+    }
+    .outcome:hover { background: var(--surface-sunken); }
+    .outcome.on { border-color: #1d69d4; background: var(--tone-running-bg); color: var(--tone-running-fg); }
+    .outcome mat-icon { font-size: 17px; width: 17px; height: 17px; }
+    .outcome .caret { margin-left: auto; opacity: .7; }
+    .outcome.wide { width: 100%; justify-content: flex-start; }
+
+    .more-row { margin-bottom: 12px; }
+    .more {
+      display: flex; align-items: center; gap: 4px; width: 100%;
+      padding: 7px 10px; border-radius: 8px; cursor: pointer;
+      border: 1px dashed var(--border-strong); background: transparent;
+      color: var(--text-muted); font-size: 12.5px;
+    }
+    .more:hover { border-style: solid; color: var(--text); }
+    .more .caret { margin-left: auto; font-size: 17px; width: 17px; height: 17px; }
+
+    .approve-fields { display: flex; flex-direction: column; gap: 12px; }
+    .approve-fields .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .approve-fields mat-form-field, .approve-fields app-search-select { width: 100%; }
+    .verify-fields { display: flex; flex-direction: column; gap: 12px; }
+
+    /* An empty section costs one line, not a card. */
+    .empty-line {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      margin: 0 0 10px; padding: 8px 2px; border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .empty-line .k { font-weight: 600; }
+    .empty-line .spacer { flex: 1 1 auto; }
+    .empty-line .tight { min-width: 0; }
     .submit { margin-top: 6px; }
   `,
 })
@@ -561,14 +622,60 @@ export class RequestDetailComponent implements OnInit {
   estimate: number | null = null;
   criteria = '';
 
-  // The product-catalog axis, set at triage.
-  moduleId: number | null = null;
-  formId: number | null = null;
-  surfaceId: number | null = null;
+  /** Set by the reviewer, not the requester — see the note in the template. */
+  type: RequestType = 'Bug';
 
-  readonly moduleOptions = signal<SelectOption[]>([]);
-  readonly formOptions = signal<SelectOption[]>([]);
-  readonly surfaceOptions = signal<SelectOption[]>([]);
+  readonly typeOptions = enumOptions<RequestType>([
+    'Bug', 'ChangeRequest', 'NewFeature', 'Support', 'Configuration',
+    'Database', 'Report', 'Investigation', 'DataCorrection', 'Infrastructure', 'Other',
+  ]);
+
+  /**
+   * The decisions worth putting in front of somebody, and the rarer ones behind a menu.
+   *
+   * Approve is what nearly every request gets; clarify, check and reject are the real
+   * alternatives. Duplicate, defer and escalate are all genuine outcomes and all uncommon, and
+   * seven equal-weight rows made the reader read past six to reach the one they wanted.
+   */
+  readonly primaryOutcomes = computed(() => {
+    const outcomes: { value: TriageOutcome; label: string; icon: string }[] = [
+      { value: 'Approve', label: 'Approve', icon: 'check_circle' },
+      { value: 'RequestClarification', label: 'Clarification', icon: 'help' },
+    ];
+
+    if (this.canSendForVerification()) {
+      outcomes.push({ value: 'SendForVerification', label: 'Check', icon: 'fact_check' });
+    }
+
+    outcomes.push({ value: 'Reject', label: 'Reject', icon: 'cancel' });
+    return outcomes;
+  });
+
+  readonly secondaryOutcomes = computed(() => {
+    const outcomes: { value: TriageOutcome; label: string; icon: string }[] = [
+      { value: 'MarkDuplicate', label: 'Duplicate', icon: 'content_copy' },
+      { value: 'Defer', label: 'Defer', icon: 'schedule' },
+      { value: 'Escalate', label: 'Escalate', icon: 'priority_high' },
+    ];
+
+    // Checking only fits in the menu when it did not earn a place above.
+    if (!this.canSendForVerification()) return outcomes;
+    return outcomes;
+  });
+
+  isSecondary(outcome: TriageOutcome): boolean {
+    return this.secondaryOutcomes().some((o) => o.value === outcome);
+  }
+
+  labelFor(outcome: TriageOutcome): string {
+    return [...this.primaryOutcomes(), ...this.secondaryOutcomes()]
+      .find((o) => o.value === outcome)?.label ?? 'Something else';
+  }
+
+  iconFor(outcome: TriageOutcome): string {
+    return [...this.primaryOutcomes(), ...this.secondaryOutcomes()]
+      .find((o) => o.value === outcome)?.icon ?? 'more_horiz';
+  }
   reason = '';
   duplicateOf: number | null = null;
 
@@ -736,54 +843,6 @@ export class RequestDetailComponent implements OnInit {
     }
   }
 
-  /**
-   * Each level clears the ones under it, and reloads them.
-   *
-   * The server does the same thing on the way in, for the same reason: a request moved from Sales
-   * to Accounts while still pointing at the Delivery Order form would name a combination that does
-   * not exist, and a report grouped by module would then count it under Accounts and name a Sales
-   * form. Doing it here as well is so the reader sees the stale choice disappear rather than
-   * submitting it and being quietly corrected.
-   */
-  pickModule(moduleId: number | null): void {
-    this.moduleId = moduleId;
-    this.formId = null;
-    this.surfaceId = null;
-    this.formOptions.set([]);
-    this.surfaceOptions.set([]);
-    if (moduleId !== null) this.loadForms(moduleId);
-  }
-
-  pickForm(formId: number | null): void {
-    this.formId = formId;
-    this.surfaceId = null;
-    this.surfaceOptions.set([]);
-    if (formId !== null) this.loadSurfaces(formId);
-  }
-
-  private loadModules(): void {
-    this.api.modules().subscribe({
-      next: (modules) => this.moduleOptions.set(
-        modules.map((m) => ({ value: m.id, label: m.name }))),
-      error: () => undefined,
-    });
-  }
-
-  private loadForms(moduleId: number): void {
-    this.api.formOptions(moduleId).subscribe({
-      next: (forms) => this.formOptions.set(forms.map((f) => ({ value: f.id, label: f.name }))),
-      error: () => undefined,
-    });
-  }
-
-  private loadSurfaces(formId: number): void {
-    this.api.formSurfaceOptions(formId).subscribe({
-      next: (surfaces) => this.surfaceOptions.set(
-        surfaces.map((x) => ({ value: x.id, label: x.name }))),
-      error: () => undefined,
-    });
-  }
-
   /** Only people who act on tasks are offered the task. See the note in the template. */
   canSeeTask = () => this.auth.has(Perm.taskAssign) || this.auth.has(Perm.taskWork)
     || this.auth.has(Perm.taskReview) || this.auth.has(Perm.taskQCReview);
@@ -791,9 +850,6 @@ export class RequestDetailComponent implements OnInit {
   ngOnInit(): void {
     this.requestId = Number(this.id());
     this.load();
-
-    // Only for the people who triage — everyone else is never shown the pickers.
-    if (this.auth.has(Perm.taskReview)) this.loadModules();
 
     if (this.canSendForVerification()) {
       this.api.assignableCheckers().subscribe((checkers) => {
@@ -818,6 +874,9 @@ export class RequestDetailComponent implements OnInit {
       next: (r) => {
         this.request.set(r);
         this.priority = (r.requestedUrgency as unknown as Priority) ?? 'Normal';
+        // Start from whatever the request already has, so a reviewer confirming a sensible default
+        // does not have to pick it again.
+        this.type = r.type;
         this.loading.set(false);
       },
       error: () => this.loading.set(false),
@@ -916,11 +975,8 @@ export class RequestDetailComponent implements OnInit {
       approvedPriority: this.outcome === 'Approve' ? this.priority : undefined,
       estimatedEffortHours: this.outcome === 'Approve' ? (this.estimate ?? undefined) : undefined,
       acceptanceCriteria: this.outcome === 'Approve' ? (this.criteria.trim() || undefined) : undefined,
-      // Sent only when approving. The other outcomes do not create work, so placing it precisely
-      // is effort spent on something that may never be built.
-      moduleId: this.outcome === 'Approve' ? (this.moduleId ?? undefined) : undefined,
-      formId: this.outcome === 'Approve' ? (this.formId ?? undefined) : undefined,
-      formSurfaceId: this.outcome === 'Approve' ? (this.surfaceId ?? undefined) : undefined,
+      // Only when approving: classifying work that may never be built is effort spent on nothing.
+      type: this.outcome === 'Approve' ? this.type : undefined,
       duplicateOfRequestId: this.duplicateOf ?? undefined,
       verification: this.outcome === 'SendForVerification'
         ? {
