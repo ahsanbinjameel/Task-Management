@@ -17,6 +17,7 @@ import {
 import { sinceLabel } from '../../core/format';
 import { priorityLabel, verificationResultLabel, verificationStatusLabel } from '../../core/labels';
 import { ChipComponent, PageHeaderComponent } from '../../shared/ui';
+import { ViewTabsComponent } from '../../shared/view-tabs.component';
 import { StatusTilesComponent } from '../../shared/status-tiles.component';
 import { SortState } from '../../shared/sort-header.component';
 import { columnFilters } from '../../shared/column-filter.component';
@@ -56,7 +57,7 @@ const STATUS_ORDER: Record<VerificationStatus, number> = {
   standalone: true,
   imports: [
     DatePipe, RouterLink, MatButtonModule, MatIconModule, PageHeaderComponent,
-    ChipComponent, StatusTilesComponent, DataGridComponent, GridCellDirective,
+    ChipComponent, StatusTilesComponent, DataGridComponent, GridCellDirective, ViewTabsComponent,
   ],
   template: `
     <div class="page">
@@ -68,6 +69,8 @@ const STATUS_ORDER: Record<VerificationStatus, number> = {
         }
         <button matButton (click)="load()"><mat-icon>refresh</mat-icon> Refresh</button>
       </app-page-header>
+
+      <app-view-tabs group="quality" />
 
       <app-status-tiles
         [counts]="tiles()"

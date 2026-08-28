@@ -9,6 +9,7 @@ import { ToastService } from '../../core/toast.service';
 import { RealtimeService } from '../../core/realtime.service';
 import { PagedResult, RequestBatchSummaryDto, RequestSummaryDto } from '../../core/models';
 import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../shared/ui';
+import { ViewTabsComponent } from '../../shared/view-tabs.component';
 
 /**
  * The reviewer's queue, ordered by the server: urgency first, then oldest. Starting a review claims
@@ -19,13 +20,15 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
   standalone: true,
   imports: [
     DatePipe, RouterLink, MatButtonModule, MatIconModule,
-    PageHeaderComponent, ChipComponent, EmptyComponent, LoadingComponent,
+    PageHeaderComponent, ChipComponent, EmptyComponent, LoadingComponent, ViewTabsComponent,
   ],
   template: `
     <div class="page">
       <app-page-header title="Review queue">
         <button matButton (click)="load()"><mat-icon>refresh</mat-icon> Refresh</button>
       </app-page-header>
+
+      <app-view-tabs group="requests" />
 
       <!--
         Submissions that arrived as a set, above the individual requests.

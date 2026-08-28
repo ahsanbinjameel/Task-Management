@@ -15,19 +15,22 @@ import { ReasonDialog, ReasonData} from '../../shared/dialogs';
 import {
   ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent, StatComponent,
 } from '../../shared/ui';
+import { ViewTabsComponent } from '../../shared/view-tabs.component';
 
 @Component({
   selector: 'app-active-workforce',
   standalone: true,
   imports: [
     DatePipe, RouterLink, MatButtonModule, MatIconModule,
-    PageHeaderComponent, ChipComponent, EmptyComponent, LoadingComponent, StatComponent,
+    PageHeaderComponent, ChipComponent, EmptyComponent, LoadingComponent, StatComponent, ViewTabsComponent,
   ],
   template: `
     <div class="page">
       <app-page-header title="Who's working">
         <button matButton (click)="load()"><mat-icon>refresh</mat-icon> Refresh</button>
       </app-page-header>
+
+      <app-view-tabs group="team" />
 
       @if (loading()) {
         <app-loading />

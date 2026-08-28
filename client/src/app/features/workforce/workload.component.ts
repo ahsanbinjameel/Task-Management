@@ -8,6 +8,7 @@ import { ApiService } from '../../core/api.service';
 import { WorkforceState, WorkloadDto } from '../../core/models';
 import { workforceStateLabel } from '../../core/labels';
 import { ChipComponent, PageHeaderComponent } from '../../shared/ui';
+import { ViewTabsComponent } from '../../shared/view-tabs.component';
 import { columnFilters } from '../../shared/column-filter.component';
 import { DataGridComponent, GridCellDirective, GridColumn } from '../../shared/data-grid.component';
 
@@ -22,13 +23,15 @@ const WORKFORCE_STATES: WorkforceState[] = [
   standalone: true,
   imports: [
     RouterLink, MatButtonModule, MatIconModule, PageHeaderComponent, ChipComponent,
-    DataGridComponent, GridCellDirective,
+    DataGridComponent, GridCellDirective, ViewTabsComponent,
   ],
   template: `
     <div class="page">
       <app-page-header title="Workload">
         <button matButton (click)="load()"><mat-icon>refresh</mat-icon> Refresh</button>
       </app-page-header>
+
+      <app-view-tabs group="team" />
 
       <!-- Unpaged: every row is already here, so filtering locally cannot mislead. -->
       <app-data-grid

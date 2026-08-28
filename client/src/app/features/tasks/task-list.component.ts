@@ -11,6 +11,7 @@ import {
 } from '../../core/models';
 import { taskView } from '../../shared/list-views';
 import { PageHeaderComponent } from '../../shared/ui';
+import { ViewTabsComponent } from '../../shared/view-tabs.component';
 import { TaskTableComponent } from '../../shared/task-table.component';
 import { QuickViewComponent, QuickViewTarget } from '../../shared/quick-view.component';
 import { ColumnFilterSpec, columnFilters } from '../../shared/column-filter.component';
@@ -26,11 +27,13 @@ const STATUSES: WorkTaskStatus[] = [
   selector: 'app-task-list',
   standalone: true,
   imports: [
-    PageHeaderComponent, TaskTableComponent, QuickViewComponent, StatusTilesComponent,
+    PageHeaderComponent, TaskTableComponent, QuickViewComponent, StatusTilesComponent, ViewTabsComponent,
   ],
   template: `
     <div class="page">
       <app-page-header title="Tasks" />
+
+      <app-view-tabs group="tasks" />
 
       <app-status-tiles
         [counts]="counts()"

@@ -16,6 +16,7 @@ import { openPdf } from '../../shared/pdf-viewer.component';
 import {
   EmptyComponent, LoadingComponent, PageHeaderComponent, StatComponent,
 } from '../../shared/ui';
+import { ViewTabsComponent } from '../../shared/view-tabs.component';
 
 /**
  * The user's own attendance day: the timeline built from the activity stream, and the effort split
@@ -27,7 +28,7 @@ import {
   imports: [
     DatePipe, FormsModule, RouterLink, MatButtonModule, MatFormFieldModule, MatIconModule,
     MatInputModule, PageHeaderComponent, StatComponent, EmptyComponent, LoadingComponent,
-    DurationPipe,
+    DurationPipe, ViewTabsComponent,
   ],
   template: `
     <div class="page">
@@ -41,6 +42,8 @@ import {
           <mat-icon>picture_as_pdf</mat-icon> View PDF
         </button>
       </app-page-header>
+
+      <app-view-tabs group="my-tasks" />
 
       @if (loading()) {
         <app-loading />

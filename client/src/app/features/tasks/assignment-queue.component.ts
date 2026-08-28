@@ -8,6 +8,7 @@ import { ToastService } from '../../core/toast.service';
 import { RealtimeService } from '../../core/realtime.service';
 import { PagedResult, TaskSummaryDto, WorkloadDto } from '../../core/models';
 import { PageHeaderComponent } from '../../shared/ui';
+import { ViewTabsComponent } from '../../shared/view-tabs.component';
 import { TaskTableComponent } from '../../shared/task-table.component';
 import { AssignDialogComponent, AssignDialogResult } from './assign-dialog.component';
 
@@ -19,13 +20,15 @@ import { AssignDialogComponent, AssignDialogResult } from './assign-dialog.compo
   selector: 'app-assignment-queue',
   standalone: true,
   imports: [
-    MatButtonModule, MatIconModule, PageHeaderComponent, TaskTableComponent,
+    MatButtonModule, MatIconModule, PageHeaderComponent, TaskTableComponent, ViewTabsComponent,
   ],
   template: `
     <div class="page">
       <app-page-header title="Assignment queue">
         <button matButton (click)="load()"><mat-icon>refresh</mat-icon> Refresh</button>
       </app-page-header>
+
+      <app-view-tabs group="tasks" />
 
       <div class="layout">
         <app-task-table

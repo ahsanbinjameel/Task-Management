@@ -12,6 +12,7 @@ import { RealtimeService } from '../../core/realtime.service';
 import { TaskSummaryDto } from '../../core/models';
 import { DurationPipe } from '../../core/format';
 import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } from '../../shared/ui';
+import { ViewTabsComponent } from '../../shared/view-tabs.component';
 
 /**
  * The worker's own ordered queue.
@@ -26,13 +27,15 @@ import { ChipComponent, EmptyComponent, LoadingComponent, PageHeaderComponent } 
   imports: [
     DragDropModule, MatButtonModule, MatIconModule, MatTooltipModule,
     PageHeaderComponent, EmptyComponent, LoadingComponent, ChipComponent, DurationPipe,
-    DatePipe,
+    DatePipe, ViewTabsComponent,
   ],
   template: `
     <div class="page">
       <app-page-header title="My queue">
         <button matButton (click)="load()"><mat-icon>refresh</mat-icon> Refresh</button>
       </app-page-header>
+
+      <app-view-tabs group="my-tasks" />
 
       @if (loading()) {
         <app-loading />

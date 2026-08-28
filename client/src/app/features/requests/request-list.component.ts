@@ -17,6 +17,7 @@ import {
 } from '../../core/models';
 import { urgencyLabel } from '../../core/labels';
 import { ChipComponent, PageHeaderComponent } from '../../shared/ui';
+import { ViewTabsComponent } from '../../shared/view-tabs.component';
 import { QuickViewComponent, QuickViewTarget } from '../../shared/quick-view.component';
 import { columnFilters } from '../../shared/column-filter.component';
 import { DataGridComponent, GridCellDirective, GridColumn } from '../../shared/data-grid.component';
@@ -34,7 +35,7 @@ const STATUSES: RequestStatus[] = [
   imports: [
     RouterLink, MatButtonModule, MatIconModule, MatTooltipModule,
     QuickViewComponent, PageHeaderComponent, ChipComponent, StatusTilesComponent,
-    DataGridComponent, GridCellDirective,
+    DataGridComponent, GridCellDirective, ViewTabsComponent,
   ],
   template: `
     <div class="page">
@@ -45,6 +46,8 @@ const STATUSES: RequestStatus[] = [
           </a>
         }
       </app-page-header>
+
+      <app-view-tabs group="requests" />
 
       <app-status-tiles
         [counts]="counts()"

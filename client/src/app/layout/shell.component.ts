@@ -1,5 +1,7 @@
 import { Component, computed, inject, signal } from '@angular/core';
-import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { NavigationEnd, Router, RouterLink, RouterOutlet } from '@angular/router';
+import { toSignal } from '@angular/core/rxjs-interop';
+import { filter, map, startWith } from 'rxjs';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatMenuModule } from '@angular/material/menu';
@@ -9,29 +11,29 @@ import { MatSidenavModule } from '@angular/material/sidenav';
 import { MatDividerModule } from '@angular/material/divider';
 import { MatDialog } from '@angular/material/dialog';
 import { AuthService } from '../core/auth.service';
-import { Perm } from '../core/permissions';
+import { NAV_GROUPS, NavGroup } from '../core/navigation';
 import { NotificationBellComponent } from './notification-bell.component';
 import { ShiftWidgetComponent } from './shift-widget.component';
-import { QuickWorkWidgetComponent } from './quick-work-widget.component';
 import { ConfirmDialog, ConfirmData } from '../shared/dialogs';
 import { readRailPreference, writeRailPreference } from './nav-preference';
 
-interface NavItem {
+/** A group the reader can actually reach, resolved to the one link that opens it. */
+interface VisibleNavItem {
   label: string;
   icon: string;
+  /** The first view in the group this reader may open. */
   route: string;
-  /** Shown when the user holds any of these. Empty means everyone. */
-  permissions?: string[];
-  section: string;
+  /** Every view in the group, so the item stays lit while you are on any of them. */
+  routes: string[];
 }
 
 @Component({
   selector: 'app-shell',
   standalone: true,
   imports: [
-    RouterOutlet, RouterLink, RouterLinkActive, MatIconModule, MatButtonModule, MatMenuModule,
+    RouterOutlet, RouterLink, MatIconModule, MatButtonModule, MatMenuModule,
     MatBadgeModule, MatTooltipModule, MatSidenavModule, MatDividerModule,
-    NotificationBellComponent, ShiftWidgetComponent, QuickWorkWidgetComponent,
+    NotificationBellComponent, ShiftWidgetComponent,
   ],
   template: `
     <div class="shell" [class.nav-open]="navOpen()" [class.rail]="collapsed()">
@@ -42,17 +44,13 @@ interface NavItem {
         </div>
 
         <nav>
-          @for (section of sections(); track section.name) {
-            <div class="section-label">{{ section.name }}</div>
-            @for (item of section.items; track item.route) {
-              <a [routerLink]="item.route" routerLinkActive="active"
-                 [routerLinkActiveOptions]="{ exact: item.route === '/' }"
-                 [matTooltip]="collapsed() ? item.label : ''" matTooltipPosition="right"
-                 (click)="navOpen.set(false)">
-                <mat-icon>{{ item.icon }}</mat-icon>
-                <span>{{ item.label }}</span>
-              </a>
-            }
+          @for (item of items(); track item.label) {
+            <a [routerLink]="item.route" [class.active]="isActive(item)"
+               [matTooltip]="collapsed() ? item.label : ''" matTooltipPosition="right"
+               (click)="navOpen.set(false)">
+              <mat-icon>{{ item.icon }}</mat-icon>
+              <span>{{ item.label }}</span>
+            </a>
           }
         </nav>
       </aside>
@@ -71,7 +69,6 @@ interface NavItem {
 
           <div class="spacer"></div>
 
-          <app-quick-work-widget />
           <app-shift-widget />
           <app-notification-bell />
 
@@ -88,9 +85,10 @@ interface NavItem {
             </div>
             <mat-divider />
             <!--
-              "My day" is not here: it is a work screen and already sits in the nav under Work,
-              and an item in two places is one the reader has to think about twice. Everything
-              about the account or this browser now lives behind Settings.
+              "My day" is not here: it is a work screen, and it sits in the nav as a view inside
+              My tasks. An item in two places is one the reader has to think about twice.
+              Everything about the account or this browser lives behind Settings — including the
+              administration screens, which is why the rail no longer carries an Admin section.
             -->
             <a mat-menu-item routerLink="/me/settings">
               <mat-icon>settings</mat-icon><span>Settings</span>
@@ -113,6 +111,7 @@ interface NavItem {
 })
 export class ShellComponent {
   readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
   private readonly dialog = inject(MatDialog);
   readonly navOpen = signal(false);
 
@@ -158,67 +157,57 @@ export class ShellComponent {
 
   readonly roles = computed(() => this.auth.user()?.roles.join(', ') ?? '');
 
-  private readonly items: NavItem[] = [
-    { section: 'Work', label: 'Dashboard', icon: 'dashboard', route: '/' },
-    { section: 'Work', label: 'My queue', icon: 'checklist', route: '/my-queue',
-      permissions: [Perm.taskWork] },
-    // Browsing work only makes sense to someone who does, coordinates, reviews or reports on it.
-    // A requester follows their own request from the Requests page instead.
-    { section: 'Work', label: 'Tasks', icon: 'task_alt', route: '/tasks',
-      permissions: [Perm.taskWork, Perm.taskAssign, Perm.taskReview, Perm.taskQCReview,
-                    Perm.requestViewAll, Perm.dashboardManagement] },
-    // Shift/timer tooling is only meaningful for people who are actually on the clock. Gated on the
-    // capability rather than a role name, so a team lead who also does tasks keeps it.
-    { section: 'Work', label: 'My day', icon: 'schedule', route: '/me/day',
-      permissions: [Perm.workforceTrackShift] },
+  /**
+   * The sidebar the reader actually gets.
+   *
+   * A group appears when they can reach at least one view inside it, and the link goes to the
+   * first such view — so "Team" opens Workload for a coordinator and Reports for someone who only
+   * holds `Reports.View`, without either being offered a link that would bounce.
+   *
+   * There are no section headings any more. Six job-shaped items do not need to be filed under
+   * "Work", "Intake", "Coordinate" and "Insight"; those headings described the schema, and they
+   * were most of what made the rail feel like an index.
+   */
+  readonly items = computed<VisibleNavItem[]>(() =>
+    NAV_GROUPS
+      .map((group) => this.resolve(group))
+      .filter((item): item is VisibleNavItem => item !== null));
 
-    // A worker does not raise or read requests; their work arrives as tasks.
-    { section: 'Intake', label: 'Requests', icon: 'inbox', route: '/requests',
-      permissions: [Perm.requestCreate, Perm.requestViewAll, Perm.taskReview] },
-    { section: 'Intake', label: 'Review queue', icon: 'rate_review', route: '/review-queue',
-      permissions: [Perm.taskReview] },
+  private resolve(group: NavGroup): VisibleNavItem | null {
+    const reachable = group.views.filter(
+      (view) => !view.permissions || this.auth.hasAny(...view.permissions));
+    if (reachable.length === 0) return null;
 
-    { section: 'Coordinate', label: 'Assignment queue', icon: 'assignment_ind', route: '/assignment',
-      permissions: [Perm.taskAssign] },
-    { section: 'Coordinate', label: 'Workload', icon: 'groups', route: '/workload',
-      permissions: [Perm.workforceViewAll] },
-    { section: 'Coordinate', label: "Who's working", icon: 'sensors', route: '/workforce',
-      permissions: [Perm.workforceViewAll] },
+    return {
+      label: group.label,
+      icon: group.icon,
+      route: reachable[0].route,
+      routes: reachable.map((view) => view.route),
+    };
+  }
 
-    { section: 'Quality', label: 'QC queue', icon: 'verified', route: '/qc',
-      permissions: [Perm.taskQCReview] },
-    // Sits beside QC because the same people usually do both, and deliberately named "Checks"
-    // rather than "Verifications" — it is the shorter word for the same idea, and the one people
-    // already use for it out loud.
-    { section: 'Quality', label: 'Checks', icon: 'fact_check', route: '/verifications',
-      permissions: [Perm.verificationCreate, Perm.verificationWork, Perm.verificationViewAll] },
-
-    { section: 'Insight', label: 'Reports', icon: 'summarize', route: '/reports',
-      permissions: [Perm.reportsView] },
-    { section: 'Insight', label: 'Audit log', icon: 'policy', route: '/audit',
-      permissions: [Perm.adminViewAudit] },
-
-    { section: 'Admin', label: 'Users', icon: 'manage_accounts', route: '/admin/users',
-      permissions: [Perm.adminManageUsers] },
-    { section: 'Admin', label: 'Setup data', icon: 'tune', route: '/admin/setup',
-      permissions: [Perm.adminManageConfig] },
-    { section: 'Admin', label: 'Roles', icon: 'admin_panel_settings', route: '/admin/roles',
-      permissions: [Perm.adminManageRoles] },
-  ];
+  /** The URL, as a signal, so the highlight follows navigation without a subscription per link. */
+  private readonly url = toSignal(
+    this.router.events.pipe(
+      filter((event): event is NavigationEnd => event instanceof NavigationEnd),
+      map((event) => event.urlAfterRedirects),
+      startWith(this.router.url)),
+    { initialValue: this.router.url });
 
   /**
-   * The menu is filtered by permission, so people see the tool they actually have rather than a
-   * wall of links that 403. Sections with nothing in them disappear entirely.
+   * Lit while the reader is on *any* view in the group — `routerLinkActive` could not do this,
+   * because it only knows the one route it was given, and the whole point of §11 is that the
+   * assignment queue is a view of Tasks rather than a destination beside it.
+   *
+   * Home is matched exactly. Everything else matches the route or a path beneath it, so a task
+   * detail keeps Tasks lit; the trailing-boundary test is what stops `/task` lighting `/tasks`.
    */
-  readonly sections = computed(() => {
-    const visible = this.items.filter(
-      (item) => !item.permissions || this.auth.hasAny(...item.permissions),
-    );
+  isActive(item: VisibleNavItem): boolean {
+    const url = this.url().split('?')[0].split('#')[0];
 
-    const order = ['Work', 'Intake', 'Coordinate', 'Quality', 'Insight', 'Admin'];
-
-    return order
-      .map((name) => ({ name, items: visible.filter((i) => i.section === name) }))
-      .filter((section) => section.items.length > 0);
-  });
+    return item.routes.some((route) => {
+      if (route === '/') return url === '/';
+      return url === route || url.startsWith(route + '/');
+    });
+  }
 }

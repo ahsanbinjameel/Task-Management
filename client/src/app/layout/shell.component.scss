@@ -11,7 +11,6 @@
    memory of where a thing sits survives the collapse. */
 .shell.rail { grid-template-columns: 60px 1fr; }
 .shell.rail .brand span,
-.shell.rail .section-label,
 .shell.rail .nav a span { display: none; }
 .shell.rail .brand { justify-content: center; padding: 18px 0 16px; }
 .shell.rail .nav nav { padding: 4px 6px 24px; }
@@ -44,14 +43,10 @@
 
 .nav nav { padding: 4px 10px 24px; }
 
-.section-label {
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: #6b8199;
-  padding: 16px 10px 6px;
-}
+/* Section headings are gone with the sections themselves (PRODUCT-CORE §11): six job-shaped
+   items do not need filing under "Work", "Intake" and "Coordinate". A little more room at the top
+   of the list instead. */
+.nav nav a:first-child { margin-top: 6px; }
 
 .nav a {
   display: flex;

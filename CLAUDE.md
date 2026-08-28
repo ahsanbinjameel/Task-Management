@@ -373,11 +373,14 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | `src/app/core/realtime.service.ts` | SignalR. Exposes event streams; screens re-fetch, never patch |
 | `src/app/core/guards.ts` | `authGuard`, `requirePermission(...)` |
 | `src/app/core/labels.ts` | **The words users see, in one place.** Mirrors `StatusLabels` server-side; also roles, actions, categories, dependency and pause types |
+| `src/app/core/navigation.ts` | **The sidebar as the user's job.** Six groups; the queues are *views inside* them, not destinations. Read by the rail and by `app-view-tabs`, so the two cannot disagree |
+| `src/app/core/parked.ts` | `PARKED` — capabilities built, kept and deliberately not offered (PRODUCT-CORE §10). Flipping one back to `false` is the whole decision |
 | `src/app/core/format.ts` | TimeSpan parsing, `sinceLabel` ("3 days"), status→tone mapping, CSV/blob download |
 | `src/app/shared/` | Chips, stats, empty/loading states, the standard grid, the shared task table, confirm + reason dialogs |
 | `src/app/shared/search-select.component.ts` | `app-search-select` — **the** dropdown. Type-to-filter, single or multi (chips). Works with `ngModel` and `formControlName`; `enumOptions()` builds the options for enum lists |
 | `src/app/shared/data-grid.component.ts` | **`app-data-grid` — the one grid.** Every list in the app is one of these. Owns the card, the scroll wrapper, the header, the generated filter row, the sortable headings, the dimmed reload, the empty state, the "nothing matches" strip and the paginator. A screen declares `GridColumn[]` and, for anything richer than text, an `<ng-template gridCell="key">`. `mode="local"` filters and sorts in place for a grid that arrived whole |
 | `src/app/shared/list-views.ts` | Columns + primary action per status view. The server says which statuses a view covers; this says what is worth showing once you are in it |
+| `src/app/shared/view-tabs.component.ts` | `app-view-tabs` — the views inside one nav group, as a strip under the page title. Permission-filtered from the same model the rail uses; renders nothing when fewer than two are reachable |
 | `src/app/shared/task-table.component.ts` | `app-task-table` — the task **column catalogue** (what `number`, `waitingSince`, `checkNotes` … mean) over `app-data-grid`. It knows what a task column is and nothing else; the table itself is the grid's |
 | `src/app/shared/attachments.component.ts` | `app-attachments` (thumbnails, file rows) and the image viewer dialog — zoom, pan, next/previous. Download is secondary |
 | `src/app/shared/pdf-viewer.component.ts` | `PdfViewerDialog` + `openPdf(dialog, …)` — the one way a PDF is opened. Fetches with the bearer token, frames the blob, keeps Download as a button |
@@ -965,6 +968,31 @@ running the API instead (`--launch-profile Development`), which does load user-s
   because a test suite is not a second product.
 - **Activity events ordered by `(OccurredAt, Id)` everywhere.** Two events can share a timestamp;
   without the `Id` tie-break, "the latest state" resolves arbitrarily and timelines go wrong.
+- **The sidebar is the user's job, not the schema's table of contents** (PRODUCT-CORE §11). It
+  carried sixteen links in six sections — "Review queue", "Assignment queue", "QC queue",
+  "Workload", "Who's working", an Audit log and three Admin screens each with an entry of its own.
+  Nobody's job is "assignment queue". `core/navigation.ts` now holds six groups — Home, My tasks,
+  Requests, Tasks, Quality, Team — and the old entries are **views inside** them, reached by the
+  `app-view-tabs` strip under the page title. No route and no guard changed: this decides what is
+  *offered*, and every deep link, bookmark and notification target still lands exactly as before.
+  Worst case is now five items (Ahsan, wearing three hats) against sixteen.
+  Two consequences worth knowing. `Task.Work` and `Task.QCReview` deliberately no longer open the
+  **Tasks** group, so a worker navigates by their own queue and a checker by the QC queue — both
+  still hold the permission and the guard still admits them. And administration is absent from the
+  rail entirely: Settings was already the one door out of the profile menu and already linked to
+  users, roles, setup data and the audit log, so moving it there cost nothing.
+- **The rail computes its own active state; `routerLinkActive` cannot.** That directive knows only
+  the one route it was given, and the whole point of the grouping is that `/assignment` should
+  light **Tasks**. `ShellComponent.isActive` matches the URL against every view in the group, exact
+  for Home and prefix-with-boundary for the rest — the boundary is what stops `/task` lighting
+  `/tasks`.
+- **Parked capabilities are one flag file, not scattered `@if`s** (`core/parked.ts`). Quick Work,
+  dependencies, subtasks and the scope-change ceremony are built, tested, endpoint-complete and
+  **not offered**: the widget is off the shell and the three tabs are off the task detail. Reading
+  it in one place is what makes the freeze legible and reversible — un-parking is one line, and a
+  boolean with a comment beats hunting for the four templates that hid it. The task detail's
+  `tabKeys` mirrors the template's conditions, so a bookmarked `?tab=scope` falls back to the
+  overview rather than breaking, exactly as an unknown tab always did.
 
 ## 7. Conventions
 
@@ -1033,6 +1061,13 @@ checker instead of guessing or approving to find out; an authorised user can als
 a form, a module or a build with no request behind it at all. Every result hands the request back to
 a reviewer, and nothing it can do creates a task. In the same change, `Administrator` stopped being
 granted `Workforce.TrackShift` and `Task.Work` by default.
+
+**Product recovery (PRODUCT-CORE.md §13), from 2026-08-28.** The server side is complete; what is
+being recovered is the *surface*. Step 1 declared the freeze. Step 2 shrank the rail from sixteen
+database-shaped links to at most five job-shaped ones and stopped offering the four parked
+capabilities. Both are client-only — no endpoint, permission, guard, route or migration changed, and
+nothing was deleted. Steps 3–7 (My Tasks, requester acceptance, assignment, the ERP catalog at
+triage, fast multi-point intake) are still to come.
 
 **Tests:** 397 passing (`dotnet test`) — 29 domain state machines, 368 application services.
 All on EF Core InMemory or pure functions, so the suite runs with no SQL Server.

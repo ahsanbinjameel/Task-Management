@@ -24,6 +24,7 @@ import { RealtimeService, TaskChangedEvent } from '../../core/realtime.service';
 import { syncOn } from '../../core/realtime-sync';
 import { ToastService } from '../../core/toast.service';
 import { Perm } from '../../core/permissions';
+import { PARKED } from '../../core/parked';
 import { DurationPipe } from '../../core/format';
 import { requestTypeLabel, taskStatusLabel } from '../../core/labels';
 import { AttachmentDto, RequestType, TaskDetailDto, WorkTaskStatus } from '../../core/models';
@@ -362,8 +363,16 @@ import { AttachmentUploadComponent } from '../../shared/attachment-upload.compon
                 </mat-tab>
               }
 
-              <!-- Editing the dependency graph is a coordinating job; reading it is in Overview. -->
-              @if (canCoordinate()) {
+              <!--
+                Dependencies, subtasks and scope changes are parked (PRODUCT-CORE §10) — see
+                core/parked.ts. All three still work: the endpoints, permissions and panels are
+                untouched, and a ?tab= link falls back to the overview rather than breaking.
+                They are three tabs of ceremony on the screen a worker opens to do the work, and
+                none has yet been asked for by anyone using the system.
+
+                Editing the dependency graph is a coordinating job; reading it stays in Overview.
+              -->
+              @if (!PARKED.dependencies && canCoordinate()) {
                 <mat-tab label="Dependencies">
                   <div class="tab-body">
                     <app-task-dependencies [taskId]="t.id" (changed)="reload()" />
@@ -371,13 +380,15 @@ import { AttachmentUploadComponent } from '../../shared/attachment-upload.compon
                 </mat-tab>
               }
 
-              <mat-tab [label]="subtaskLabel(t)">
-                <div class="tab-body">
-                  <app-task-subtasks [task]="t" (changed)="reload()" />
-                </div>
-              </mat-tab>
+              @if (!PARKED.subtasks) {
+                <mat-tab [label]="subtaskLabel(t)">
+                  <div class="tab-body">
+                    <app-task-subtasks [task]="t" (changed)="reload()" />
+                  </div>
+                </mat-tab>
+              }
 
-              @if (canCoordinate()) {
+              @if (!PARKED.scopeChanges && canCoordinate()) {
                 <mat-tab label="Scope">
                   <div class="tab-body">
                     <app-task-scope [taskId]="t.id" (changed)="reload()" />
@@ -534,6 +545,9 @@ import { AttachmentUploadComponent } from '../../shared/attachment-upload.compon
   `,
 })
 export class TaskDetailComponent implements OnInit, OnDestroy {
+  /** Capabilities hidden while the product freeze is on — see `core/parked.ts`. */
+  protected readonly PARKED = PARKED;
+
   private readonly destroyRef = inject(DestroyRef);
   private readonly route = inject(ActivatedRoute);
 
@@ -575,9 +589,9 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
 
     const keys = ['overview', 'updates'];
     if (this.showQualityCheck(t)) keys.push('qc');
-    if (this.canCoordinate()) keys.push('dependencies');
-    keys.push('subtasks');
-    if (this.canCoordinate()) keys.push('scope');
+    if (!PARKED.dependencies && this.canCoordinate()) keys.push('dependencies');
+    if (!PARKED.subtasks) keys.push('subtasks');
+    if (!PARKED.scopeChanges && this.canCoordinate()) keys.push('scope');
     if (!this.auth.isRequesterOnly()) keys.push('history');
     return keys;
   });

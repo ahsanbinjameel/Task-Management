@@ -13,6 +13,7 @@ import { openPdf } from '../../shared/pdf-viewer.component';
 import { columnFilters } from '../../shared/column-filter.component';
 import { DataGridComponent, GridCellDirective, GridColumn } from '../../shared/data-grid.component';
 import { LoadingComponent, PageHeaderComponent, StatComponent } from '../../shared/ui';
+import { ViewTabsComponent } from '../../shared/view-tabs.component';
 
 @Component({
   selector: 'app-reports',
@@ -20,7 +21,7 @@ import { LoadingComponent, PageHeaderComponent, StatComponent } from '../../shar
   imports: [
     FormsModule, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule,
     MatTooltipModule, PageHeaderComponent, StatComponent, LoadingComponent, DurationPipe,
-    DataGridComponent, GridCellDirective,
+    DataGridComponent, GridCellDirective, ViewTabsComponent,
   ],
   template: `
     <div class="page">
@@ -37,6 +38,8 @@ import { LoadingComponent, PageHeaderComponent, StatComponent } from '../../shar
           <mat-icon>picture_as_pdf</mat-icon> View PDF
         </button>
       </app-page-header>
+
+      <app-view-tabs group="team" />
 
       @if (loading()) {
         <app-loading />
