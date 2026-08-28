@@ -492,13 +492,18 @@ import {
     /* Wider than the old 340px rail. The decision is the reason a reviewer opened this page, and
        squeezing it into a narrow column is what forced its fields into a tall stack while the left
        side sat half empty. */
-    .layout { display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr) minmax(320px, 400px); }
-    @media (max-width: 1150px) { .layout { grid-template-columns: 1fr; } }
-
-    /* The decision panel follows the page rather than scrolling away from it on a long request. */
-    @media (min-width: 1151px) {
-      .layout > aside > .card:first-child { position: sticky; top: 12px; }
+    .layout {
+      display: grid; gap: 18px;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 380px);
     }
+    .layout > * { min-width: 0; }
+    @media (max-width: 1150px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+
+    /*
+     * Deliberately not sticky. It was, and it overlapped the cards below it on the way down —
+     * a panel that follows you is only worth having if it cannot cover the thing you scrolled to
+     * read, and this one is tall enough that it always could.
+     */
     .chips { gap: 9px; }
     .top-gap { margin-top: 18px; }
     .body-text { margin: 0; white-space: pre-wrap; line-height: 1.55; font-size: 14px; }
@@ -580,7 +585,12 @@ import {
     .more .caret { margin-left: auto; font-size: 17px; width: 17px; height: 17px; }
 
     .approve-fields { display: flex; flex-direction: column; gap: 12px; }
-    .approve-fields .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    /* minmax(0, 1fr), not 1fr: a form field will not shrink below its intrinsic width otherwise,
+       and the second one is pushed off the edge of the panel. */
+    .approve-fields .pair {
+      display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px;
+    }
+    .approve-fields .pair > * { min-width: 0; }
     .approve-fields mat-form-field, .approve-fields app-search-select { width: 100%; }
     .verify-fields { display: flex; flex-direction: column; gap: 12px; }
 

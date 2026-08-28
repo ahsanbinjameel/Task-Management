@@ -103,6 +103,23 @@
 main {
   flex: 1 1 auto;
   overflow-y: auto;
+  min-width: 0;
+
+  /*
+   * Sideways is clipped here, deliberately, and this is the one place it belongs.
+   *
+   * The rule the whole app keeps is that the page scrolls down and never across: wide content —
+   * a table, a timeline — scrolls inside its own container, so the left edge of every other row
+   * stays where the reader left it. `overflow-y: auto` alone does not give that; the moment one
+   * side is a scroll axis the browser makes the other one scrollable too, so a single control that
+   * refused to shrink dragged the entire column sideways and every heading, card and button on the
+   * page moved with it.
+   *
+   * This is not a substitute for making content fit — everything inside still has to shrink or
+   * scroll on its own, and the grids and dialogs do. It is the backstop that stops one mistake
+   * breaking every screen at once.
+   */
+  overflow-x: clip;
 }
 
 .user-button {

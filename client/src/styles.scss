@@ -94,6 +94,31 @@ body {
   padding: 20px 24px 28px;
   max-width: 1500px;
   margin: 0 auto;
+  /* Without this a grid or flex child refuses to shrink below its content and pushes the page. */
+  min-width: 0;
+}
+
+/*
+ * A screen whose point is one grid: the page takes the height of the window and the grid takes
+ * whatever is left under the heading, the tabs and the tiles.
+ *
+ * Opt-in rather than applied to `.page` everywhere, because it is wrong for a form — a long form
+ * should run past the bottom and be scrolled, and squeezing one into the viewport would put its
+ * fields behind a second scrollbar for no reason.
+ */
+.page.fills {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.page.fills > app-data-grid,
+.page.fills > app-task-table {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .card {
@@ -168,8 +193,17 @@ form .mat-mdc-form-field:last-of-type {
 
 /* --- tables --------------------------------------------------------------------------------- */
 
+/*
+ * The card behind the table supplies the colour, and the table used to be transparent so it showed
+ * through. That stopped being viable when the headings became sticky: Material's own
+ * `background: inherit` on every cell walks up to the table, so a transparent table means a
+ * transparent pinned heading, and the rows scroll straight through it.
+ *
+ * So the table carries the surface colour now and the cells inherit it. The card is the same
+ * colour, so nothing looks different — but the heading is opaque, which is the whole point.
+ */
 table.mat-mdc-table {
-  background: transparent;
+  background: var(--surface-raised);
   width: 100%;
 }
 
@@ -199,6 +233,13 @@ table.mat-mdc-table {
   -webkit-overflow-scrolling: touch;
 }
 
+/*
+ * Note for anyone tempted to set this on the header cell instead: Material ships
+ * `.mat-mdc-table .mat-mdc-header-cell { background: inherit }` at identical specificity and
+ * declared later, so a rule written against the cell loses the cascade. The colour has to go on
+ * the table, above.
+ */
+
 /* --- toasts --------------------------------------------------------------------------------- */
 
 .toast-error {
@@ -217,9 +258,13 @@ table.mat-mdc-table {
 
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  /* minmax(0, …) on the shrink side: auto-fit alone still refuses to go below 240px, which is how
+     a three-field row overflows a narrow card instead of dropping to one column. */
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
   gap: 4px 16px;
 }
+
+.form-grid > * { min-width: 0; }
 
 .full-span { grid-column: 1 / -1; }
 
@@ -332,6 +377,17 @@ table.mat-mdc-table {
 
 @media (max-width: 900px) {
   .page { padding: 16px 14px 40px; }
+}
+
+/*
+ * On a phone the grid stops filling and simply runs, with the page scrolling as a phone reader
+ * expects. Squeezing rows, a pinned heading and a paginator into a short viewport leaves two rows
+ * visible and nothing useful to scroll.
+ */
+@media (max-width: 700px) {
+  .page.fills { height: auto; display: block; }
+  .page.fills > app-data-grid,
+  .page.fills > app-task-table { display: block; }
 }
 
 @media (max-width: 560px) {

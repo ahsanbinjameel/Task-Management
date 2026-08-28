@@ -1064,6 +1064,33 @@ running the API instead (`--launch-profile Development`), which does load user-s
   `NavigationHistory` records the previous in-app URL and the control falls back to the named parent
   when there is none. The fallback is what makes it safe on a page opened from a notification or a
   pasted link — `history.back()` there walks out of the app entirely.
+- **A list screen fills the window; only its rows scroll.** `.page.fills` makes the page the height
+  of the viewport and lets the grid take what is left under the heading, tabs and tiles, so the
+  column headings, the filter row and the paginator all stay in view while the rows move under them.
+  A guessed `max-height` was tried first and is right on exactly one screen: with tall status tiles
+  above it the paginator still fell below the fold, and with none it left a band of empty page. The
+  class is opt-in because it is wrong for a form — a long form should run past the bottom and be
+  scrolled rather than squeezed behind a second scrollbar. Below 700px it turns itself off, because
+  rows plus a pinned heading plus a paginator in a phone viewport leaves nothing worth scrolling.
+- **`table.mat-mdc-table` carries the surface colour; it used to be transparent.** That mattered the
+  moment the headings became sticky. Material ships
+  `.mat-mdc-table .mat-mdc-header-cell { background: inherit }`, so a transparent table means a
+  transparent pinned heading and the rows scroll straight through it. Note the trap for anyone
+  fixing this again: the obvious rule — a background on the header cell — is the *identical*
+  selector at identical specificity, declared later by Material, so it silently loses the cascade.
+  The colour has to go on the table and be inherited.
+- **Sideways scrolling is clipped at `main`, and nowhere else.** The rule "the page scrolls down and
+  never across" was written down but enforced nowhere, so one control that refused to shrink dragged
+  every heading, card and button on the page with it. `overflow-y: auto` alone does not give the
+  behaviour: the moment one axis scrolls the browser makes the other scrollable too. This is a
+  backstop, not a substitute — grids and dialogs still scroll or shrink on their own.
+- **Status tiles wrap; they never scroll sideways.** A tile that is off-screen is a count nobody
+  knows to look for, which defeats the only job the strip has.
+- **The back control is two arrows and no words.** It named the parent once — "Back to Tasks" — which
+  was wrong about as often as it was right, since the same task detail is reached from Tasks, from
+  the assignment queue and from Quality. Forward exists because back alone is a trapdoor: stepping
+  back to check something left no way to return. The fallback route is what makes it safe on a page
+  opened from a notification or a pasted link, where `history.back()` leaves the application.
 - **Parked capabilities are one flag file, not scattered `@if`s** (`core/parked.ts`). Quick Work,
   dependencies, subtasks and the scope-change ceremony are built, tested, endpoint-complete and
   **not offered**: the widget is off the shell and the three tabs are off the task detail. Reading

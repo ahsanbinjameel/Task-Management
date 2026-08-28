@@ -12,7 +12,7 @@ import { DataGridComponent, GridCellDirective, GridColumn } from '../../shared/d
   standalone: true,
   imports: [DatePipe, PageHeaderComponent, DataGridComponent, GridCellDirective],
   template: `
-    <div class="page">
+    <div class="page fills">
       <app-page-header title="Audit log" />
 
       <app-data-grid

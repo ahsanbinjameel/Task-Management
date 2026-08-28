@@ -38,7 +38,7 @@ const STATUSES: RequestStatus[] = [
     DataGridComponent, GridCellDirective, ViewTabsComponent,
   ],
   template: `
-    <div class="page">
+    <div class="page fills">
       <app-page-header title="Requests">
         @if (auth.has(Perm.requestCreate)) {
           <a matButton="filled" routerLink="/requests/new">

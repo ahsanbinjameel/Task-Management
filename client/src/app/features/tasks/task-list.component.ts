@@ -30,7 +30,7 @@ const STATUSES: WorkTaskStatus[] = [
     PageHeaderComponent, TaskTableComponent, QuickViewComponent, StatusTilesComponent, ViewTabsComponent,
   ],
   template: `
-    <div class="page">
+    <div class="page fills">
       <app-page-header title="Tasks" />
 
       <app-view-tabs group="tasks" />

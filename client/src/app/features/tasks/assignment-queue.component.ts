@@ -25,7 +25,7 @@ import { AssignDialogComponent, AssignDialogResult } from './assign-dialog.compo
     MatButtonModule, MatIconModule, PageHeaderComponent, TaskTableComponent, BackLinkComponent, ViewTabsComponent,
   ],
   template: `
-    <div class="page">
+    <div class="page fills">
       <app-back-link fallback="/tasks" label="Tasks" />
       <app-page-header title="Assignment queue">
         <button matButton (click)="load()"><mat-icon>refresh</mat-icon> Refresh</button>
@@ -158,6 +158,10 @@ export class AssignmentQueueComponent implements OnInit {
   assign(task: TaskSummaryDto): void {
     this.dialog
       .open(AssignDialogComponent, {
+        // Material caps the surface at 560px without this, and the facts panel is then
+        // clipped off the right-hand edge. See the dialog-width note in CLAUDE.md.
+        width: 'min(860px, 94vw)',
+        maxWidth: '94vw',
         data: { task, isReassign: false, currentAssigneeId: task.primaryAssigneeUserId },
       })
       .afterClosed()

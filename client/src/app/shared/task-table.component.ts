@@ -202,6 +202,9 @@ const COLUMNS: Record<string, GridColumn<TaskSummaryDto>> = {
     </app-data-grid>
   `,
   styles: `
+    /* Passes the page's fill through to the grid it wraps. */
+    :host { display: flex; flex-direction: column; min-height: 0; }
+
     .running { color: var(--tone-running-fg); font-size: 17px; width: 17px; height: 17px; }
     .truncate.wide { max-width: 320px; }
   `,

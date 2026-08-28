@@ -926,6 +926,10 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
 
     this.dialog
       .open(AssignDialogComponent, {
+        // Material caps the surface at 560px without this, and the facts panel is then
+        // clipped off the right-hand edge. See the dialog-width note in CLAUDE.md.
+        width: 'min(860px, 94vw)',
+        maxWidth: '94vw',
         data: {
           task: t,
           isReassign: !!t.primaryAssigneeUserId,

@@ -145,9 +145,10 @@ export class GridCellDirective {
               }
             }
 
-            <tr mat-header-row *matHeaderRowDef="keys()"></tr>
+            <tr mat-header-row *matHeaderRowDef="keys(); sticky: true"></tr>
             @if (filters()) {
-              <tr mat-header-row *matHeaderRowDef="filterKeys()" class="filter-row"></tr>
+              <tr mat-header-row *matHeaderRowDef="filterKeys(); sticky: true"
+                  class="filter-row"></tr>
             }
             <tr mat-row *matRowDef="let row; columns: keys()"
                 [class.clickable]="clickable()"
@@ -177,7 +178,34 @@ export class GridCellDirective {
      * and freezing it would stop the next keystroke landing.
      */
     .refreshing tbody { opacity: .45; transition: opacity .12s; }
-    .grid-card { overflow: hidden; }
+    .grid-card { overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+
+    /*
+     * The rows scroll; the headings and the paginator do not.
+     *
+     * A long grid used to scroll the whole page, which took the column headings and the filter row
+     * off the top of the screen — so by the time you were looking at row forty you could no longer
+     * tell which column you were reading, and the control that would narrow it was somewhere above.
+     * The paginator went the other way, sitting below the fold so nobody knew there was a page two.
+     *
+     * max-height rather than a fixed height, so a grid with three rows is still three rows tall.
+     * The pinning is Material's own sticky:true on the header rows: it computes the offset for
+     * the filter row itself, which is the part that cannot be done reliably by hand when the
+     * heading row's height depends on its content.
+     */
+    :host { display: flex; flex-direction: column; min-height: 0; }
+
+    .table-scroll {
+      overflow: auto;
+      flex: 1 1 auto;
+      min-height: 0;
+      /* Only bites outside a filling page — see .page.fills in styles.scss. There the flex basis
+         decides the height, and this cap never applies. */
+      max-height: min(68vh, 760px);
+    }
+
+    /* The paginator is outside the scroller, so it stays put by construction. */
+    mat-paginator { border-top: 1px solid var(--border); flex: none; }
   `,
 })
 export class DataGridComponent<T = any> {

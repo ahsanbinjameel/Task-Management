@@ -26,7 +26,7 @@ const WORKFORCE_STATES: WorkforceState[] = [
     DataGridComponent, GridCellDirective, ViewTabsComponent,
   ],
   template: `
-    <div class="page">
+    <div class="page fills">
       <app-page-header title="Workload">
         <button matButton (click)="load()"><mat-icon>refresh</mat-icon> Refresh</button>
       </app-page-header>

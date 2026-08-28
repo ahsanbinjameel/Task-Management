@@ -60,7 +60,7 @@ const STATUS_ORDER: Record<VerificationStatus, number> = {
     ChipComponent, StatusTilesComponent, DataGridComponent, GridCellDirective, ViewTabsComponent,
   ],
   template: `
-    <div class="page">
+    <div class="page fills">
       <app-page-header title="Checks">
         @if (canCreate()) {
           <button matButton="filled" (click)="raise()">

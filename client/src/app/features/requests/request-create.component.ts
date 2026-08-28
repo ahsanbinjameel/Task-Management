@@ -90,7 +90,7 @@ const DETAIL_FIELDS: { key: string; label: string }[] = [
           drags its siblings. It sits above the points because it is the one thing that is genuinely
           shared.
         -->
-        <mat-form-field class="client">
+        <mat-form-field class="client card">
           <mat-label>Client</mat-label>
           <input matInput name="client" [(ngModel)]="clientName" [matAutocomplete]="clientList" />
           <mat-autocomplete #clientList>
@@ -120,17 +120,30 @@ const DETAIL_FIELDS: { key: string; label: string }[] = [
             <div class="row-3">
               <mat-form-field class="ask">
                 <mat-label>What do you need?</mat-label>
-                <textarea matInput rows="2" [name]="'text' + i" [(ngModel)]="point.text"
-                          (focus)="focused.set(i)"></textarea>
+                <textarea
+                  matInput
+                  rows="2"
+                  [name]="'text' + i"
+                  [(ngModel)]="point.text"
+                  (focus)="focused.set(i)"
+                ></textarea>
               </mat-form-field>
 
-              <app-search-select label="Requested urgency" [options]="urgencyOptions"
-                                 [(ngModel)]="point.urgency" [name]="'urgency' + i" />
+              <app-search-select
+                label="Requested urgency"
+                [options]="urgencyOptions"
+                [(ngModel)]="point.urgency"
+                [name]="'urgency' + i"
+              />
 
               <mat-form-field>
                 <mat-label>Needed by</mat-label>
-                <input matInput [name]="'needed' + i" [matDatepicker]="picker"
-                       [(ngModel)]="point.neededBy" />
+                <input
+                  matInput
+                  [name]="'needed' + i"
+                  [matDatepicker]="picker"
+                  [(ngModel)]="point.neededBy"
+                />
                 <mat-datepicker-toggle matIconSuffix [for]="picker" />
                 <mat-datepicker #picker />
               </mat-form-field>
@@ -139,8 +152,13 @@ const DETAIL_FIELDS: { key: string; label: string }[] = [
             @if (point.open.description) {
               <mat-form-field class="full">
                 <mat-label>Description</mat-label>
-                <textarea matInput rows="2" [name]="'desc' + i" [(ngModel)]="point.description"
-                          (focus)="focused.set(i)"></textarea>
+                <textarea
+                  matInput
+                  rows="2"
+                  [name]="'desc' + i"
+                  [(ngModel)]="point.description"
+                  (focus)="focused.set(i)"
+                ></textarea>
               </mat-form-field>
             }
 
@@ -148,13 +166,21 @@ const DETAIL_FIELDS: { key: string; label: string }[] = [
               @if (point.shown[field.key]) {
                 <mat-form-field class="full">
                   <mat-label>{{ field.label }}</mat-label>
-                  <textarea matInput rows="2" [name]="field.key + i"
-                            [ngModel]="detail(point, field.key)"
-                            (ngModelChange)="setDetail(point, field.key, $event)"
-                            (focus)="focused.set(i)"></textarea>
-                  <button matIconButton matSuffix type="button"
-                          (click)="hideDetail(point, field.key)"
-                          [attr.aria-label]="'Remove ' + field.label">
+                  <textarea
+                    matInput
+                    rows="2"
+                    [name]="field.key + i"
+                    [ngModel]="detail(point, field.key)"
+                    (ngModelChange)="setDetail(point, field.key, $event)"
+                    (focus)="focused.set(i)"
+                  ></textarea>
+                  <button
+                    matIconButton
+                    matSuffix
+                    type="button"
+                    (click)="hideDetail(point, field.key)"
+                    [attr.aria-label]="'Remove ' + field.label"
+                  >
                     <mat-icon>close</mat-icon>
                   </button>
                 </mat-form-field>
@@ -206,35 +232,97 @@ const DETAIL_FIELDS: { key: string; label: string }[] = [
     </div>
   `,
   styles: `
-    .narrow { max-width: 940px; }
-    .full { width: 100%; }
-    .client { width: min(360px, 100%); margin-bottom: 12px; }
+    .narrow {
+      max-width: 940px;
+    }
+    .full {
+      width: 100%;
+    }
+    .client {
+      width: min(360px, 100%);
+      margin-bottom: 12px;
+    }
+    .ask {
+      grid-column: 1/-1;
+    }
 
-    .item { margin-bottom: 12px; padding-top: 10px; }
-    .item-head { display: flex; align-items: center; margin-bottom: 6px; }
+    .item {
+      margin-bottom: 12px;
+      padding-top: 10px;
+    }
+    .item-head {
+      display: flex;
+      align-items: center;
+      margin-bottom: 12px;
+    }
     .tag {
-      font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
       color: var(--text-muted);
     }
-    .remove { color: var(--text-muted); min-width: 0; }
+    .remove {
+      color: var(--text-muted);
+      min-width: 0;
+    }
 
     /* Three across on desktop; stacked once they would stop being readable. */
-    .row-3 { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 12px; align-items: start; }
-    @media (max-width: 820px) { .row-3 { grid-template-columns: 1fr; } }
-    .row-3 mat-form-field, .row-3 app-search-select { width: 100%; }
-
-    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
-    .chip-add {
-      display: inline-flex; align-items: center; gap: 4px;
-      padding: 4px 10px 4px 7px; border-radius: 999px;
-      border: 1px dashed var(--border-strong); background: transparent;
-      color: var(--text-muted); font-size: 12.5px; cursor: pointer;
+    .row-3 {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      align-items: start;
     }
-    .chip-add:hover { border-style: solid; color: var(--text); background: var(--surface-sunken); }
-    .chip-add mat-icon { font-size: 15px; width: 15px; height: 15px; }
+    @media (max-width: 820px) {
+      .row-3 {
+        grid-template-columns: 1fr;
+      }
+    }
+    .row-3 mat-form-field,
+    .row-3 app-search-select {
+      width: 100%;
+    }
 
-    .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
-    .spacer { flex: 1 1 auto; }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 4px;
+    }
+    .chip-add {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px 4px 7px;
+      border-radius: 999px;
+      border: 1px dashed var(--border-strong);
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 12.5px;
+      cursor: pointer;
+    }
+    .chip-add:hover {
+      border-style: solid;
+      color: var(--text);
+      background: var(--surface-sunken);
+    }
+    .chip-add mat-icon {
+      font-size: 15px;
+      width: 15px;
+      height: 15px;
+    }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
+    .spacer {
+      flex: 1 1 auto;
+    }
   `,
 })
 export class RequestCreateComponent implements OnInit {
@@ -314,7 +402,8 @@ export class RequestCreateComponent implements OnInit {
     this.dialog
       .open<ConfirmDialog, ConfirmData>(ConfirmDialog, {
         data: {
-          title: points.length > 1 ? `Submit these ${points.length} requests?` : 'Submit this request?',
+          title:
+            points.length > 1 ? `Submit these ${points.length} requests?` : 'Submit this request?',
           message: 'It goes to a reviewer, who decides what happens next.',
           confirmText: 'Submit',
         },
@@ -349,7 +438,10 @@ export class RequestCreateComponent implements OnInit {
       })
       .subscribe({
         next: (batch) => {
-          const uploads = batch.items.map((item, i) => ({ id: item.id, files: points[i]?.files ?? [] }));
+          const uploads = batch.items.map((item, i) => ({
+            id: item.id,
+            files: points[i]?.files ?? [],
+          }));
           this.uploadAll(uploads, () => {
             this.toast.success(`${batch.items.length} requests submitted.`);
             void this.router.navigate(['/requests/batches', batch.id]);
@@ -402,7 +494,8 @@ export class RequestCreateComponent implements OnInit {
         this.toast.error(
           failed === 1
             ? 'One attachment did not upload. You can add it on the request.'
-            : `${failed} attachments did not upload. You can add them on the request.`);
+            : `${failed} attachments did not upload. You can add them on the request.`,
+        );
       }
       done();
     };
@@ -410,7 +503,10 @@ export class RequestCreateComponent implements OnInit {
     for (const job of jobs) {
       this.api.uploadRequestAttachment(job.id, job.file).subscribe({
         next: finish,
-        error: () => { failed++; finish(); },
+        error: () => {
+          failed++;
+          finish();
+        },
       });
     }
   }

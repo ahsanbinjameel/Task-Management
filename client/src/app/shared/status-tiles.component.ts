@@ -41,7 +41,12 @@ import { StatusCountDto } from '../core/models';
   `,
   styles: `
     .tiles {
-      display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 8px;
+      /*
+       * Wrapped, never scrolled sideways. A hidden tile is a count nobody knows to look for, and
+       * the whole job of this strip is to say how much there is of each kind — a horizontal
+       * scrollbar makes that answer conditional on noticing the scrollbar.
+       */
+      display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 2px 8px;
       scrollbar-width: thin;
     }
     .tile {

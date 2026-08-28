@@ -496,7 +496,7 @@ export class UserDialog {
     GridCellDirective,
   ],
   template: `
-    <div class="page">
+    <div class="page fills">
       <app-page-header title="Users">
         <button matButton="filled" (click)="create()">
           <mat-icon>person_add</mat-icon> New user

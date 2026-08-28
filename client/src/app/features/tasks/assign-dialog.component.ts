@@ -178,7 +178,9 @@ export type AssignDialogResult = TaskDetailDto;
   `,
   styles: `
     .full { width: 100%; }
-    mat-dialog-content { min-width: min(780px, 88vw); padding-top: 8px !important; }
+    /* No min-width: the dialog is sized at open(), and asserting one here is what pushed the
+       content past the surface and produced a sideways scrollbar. */
+    mat-dialog-content { padding-top: 8px !important; }
     .form-error {
       display: flex; align-items: flex-start; gap: 8px; margin: 0 0 12px;
       padding: 10px 12px; border-radius: 8px; font-size: 13.5px; line-height: 1.45;
@@ -186,8 +188,17 @@ export type AssignDialogResult = TaskDetailDto;
     }
     .form-error mat-icon { font-size: 18px; width: 18px; height: 18px; flex: none; margin-top: 1px; }
 
-    .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 260px); gap: 14px; }
-    @media (max-width: 720px) { .split { grid-template-columns: 1fr; } }
+    /* minmax(0, …) on both tracks: without the zero minimum a grid track refuses to shrink below
+       its content, which is how the right-hand panel ended up outside the dialog. */
+    .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 280px); gap: 14px; }
+    .split > * { min-width: 0; }
+    @media (max-width: 720px) {
+      .split { grid-template-columns: minmax(0, 1fr); }
+      /* Stacked, the facts panel goes above the list: it is about the choice just made. */
+      .picker { order: 2; }
+      .chosen-panel { order: 1; }
+      .people { max-height: 220px; }
+    }
 
     /* The list scrolls rather than the dialog: a long team should not make the buttons unreachable. */
     .people { max-height: 264px; overflow-y: auto; padding-right: 2px; }
