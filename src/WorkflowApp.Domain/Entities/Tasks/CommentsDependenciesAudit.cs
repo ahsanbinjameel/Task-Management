@@ -54,6 +54,17 @@ public class Notification : BaseEntity
 public class AuditLog : BaseEntity
 {
     public long? ActorUserId { get; set; }
+
+    /// <summary>
+    /// The real human, when an administrator was acting as <see cref="ActorUserId"/>. Null for the
+    /// ordinary case, which is nearly every row.
+    ///
+    /// The actor stays the account the work was done as, so every existing read of this trail keeps
+    /// meaning what it meant. This is the second half of the truth, and the reason acting-as does
+    /// not cost the audit trail its point: without it the record would say somebody did something
+    /// they never did, and a trail that can lie about that is not worth keeping.
+    /// </summary>
+    public long? ImpersonatedByUserId { get; set; }
     public string Action { get; set; } = default!;         // "Login", "PermissionChanged", "Override"...
     public string? EntityType { get; set; }
     public long? EntityId { get; set; }

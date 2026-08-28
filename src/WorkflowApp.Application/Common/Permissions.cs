@@ -71,6 +71,16 @@ public static class Permissions
     public const string AdminManageConfig = "Admin.ManageConfig";
     public const string AdminViewAudit = "Admin.ViewAudit";
 
+    /// <summary>
+    /// Act as another user, for demonstrating and for support.
+    ///
+    /// Its own permission rather than a side effect of <see cref="AdminManageUsers"/>: being able
+    /// to create an account and being able to <em>become</em> one are different powers, and a site
+    /// that wants somebody to do the first without the second must be able to say so in the role
+    /// editor rather than in code.
+    /// </summary>
+    public const string AdminImpersonate = "Admin.Impersonate";
+
     public static readonly string[] All =
     {
         RequestCreate, RequestViewOwn, RequestViewAll,
@@ -78,7 +88,7 @@ public static class Permissions
         TaskQCReview, TaskClose, TaskReopen, TaskCancel, TaskDefer, TaskOverride,
         VerificationCreate, VerificationWork, VerificationViewAll,
         WorkforceViewAll, WorkforceManageOthers, WorkforceTrackShift, DashboardManagement, ReportsView,
-        AdminManageUsers, AdminManageRoles, AdminManageConfig, AdminViewAudit
+        AdminManageUsers, AdminManageRoles, AdminManageConfig, AdminViewAudit, AdminImpersonate
     };
 }
 

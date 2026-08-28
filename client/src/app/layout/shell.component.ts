@@ -100,6 +100,25 @@ interface VisibleNavItem {
           </mat-menu>
         </header>
 
+        <!--
+          Unmissable on purpose. Acting as somebody writes real rows to the real database, and an
+          administrator who forgets they are doing it will attribute their own work to a colleague.
+          A quiet indicator in a corner is exactly the wrong shape for that: this sits across the
+          top of every screen and carries its own way out.
+        -->
+        @if (auth.isActingAsSomeoneElse()) {
+          <div class="acting" role="status">
+            <mat-icon>visibility</mat-icon>
+            <span>
+              You are acting as <strong>{{ auth.displayName() }}</strong>.
+              Anything you do is recorded as theirs, with your name alongside.
+            </span>
+            <button matButton class="stop" (click)="stopActing()">
+              Back to {{ auth.actingFor() }}
+            </button>
+          </div>
+        }
+
         <main><router-outlet /></main>
       </div>
 
@@ -140,6 +159,16 @@ export class ShellComponent {
 
   /** Collapsed to an icon rail, remembered across visits. Shared with the Settings page. */
   readonly collapsed = signal(readRailPreference());
+
+  /** Hand the administrator their own session back, and start again from Home. */
+  stopActing(): void {
+    this.auth.stopImpersonating().subscribe({
+      next: () => void this.router.navigateByUrl('/'),
+      // A failure here means the token is no longer usable either way; signing out is the honest
+      // answer rather than leaving somebody stuck inside a session they cannot leave.
+      error: () => this.auth.logout(),
+    });
+  }
 
   toggleRail(): void {
     const next = !this.collapsed();

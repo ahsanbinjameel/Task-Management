@@ -1,3 +1,4 @@
+import { MatDialog } from '@angular/material/dialog';
 import { Component, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import {
@@ -12,6 +13,7 @@ import { ApiService } from '../../core/api.service';
 import { AuthService } from '../../core/auth.service';
 import { ToastService } from '../../core/toast.service';
 import { Perm } from '../../core/permissions';
+import { ActAsDialog } from './act-as-dialog.component';
 import { roleLabel } from '../../core/labels';
 import { PageHeaderComponent } from '../../shared/ui';
 import { readRailPreference, writeRailPreference } from '../../layout/nav-preference';
@@ -172,6 +174,23 @@ const matching = (group: AbstractControl): ValidationErrors | null =>
                 </span>
               </a>
             }
+            <!--
+              Acting as somebody else. A button rather than a link, because it changes the session
+              you are in rather than taking you to a page — and it says plainly that the work is
+              real, since the one dangerous misreading of this feature is "it is only a preview".
+            -->
+            @if (auth.has(Perm.adminImpersonate)) {
+              <button type="button" class="link-row" (click)="actAs()">
+                <mat-icon>visibility</mat-icon>
+                <span>
+                  <strong>Act as somebody else</strong><br />
+                  <span class="muted small">
+                    See the app as they see it. Real work, recorded as theirs with your name
+                    alongside
+                  </span>
+                </span>
+              </button>
+            }
           </div>
         </section>
       }
@@ -195,9 +214,19 @@ const matching = (group: AbstractControl): ValidationErrors | null =>
     }
     .link-row:hover { border-color: var(--border-strong); }
     .link-row mat-icon { flex: none; margin-top: 1px; color: var(--text-muted); }
+
+    /* One of these rows is a button rather than a link — it changes the session you are in rather
+       than taking you somewhere. The UA stylesheet gives a button its own font, centring and
+       background, none of which it should keep here. */
+    button.link-row {
+      width: 100%; text-align: left; font: inherit;
+      background: none; cursor: pointer;
+    }
+    button.link-row:hover { background: var(--surface-sunken); }
   `,
 })
 export class SettingsComponent {
+  private readonly dialog = inject(MatDialog);
   readonly Perm = Perm;
   readonly auth = inject(AuthService);
 
@@ -284,4 +313,9 @@ export class SettingsComponent {
       error: () => this.busy.set(false),
     });
   }
+  /** Opens the picker. The dialog performs the switch and navigates, so nothing is needed here. */
+  actAs(): void {
+    this.dialog.open(ActAsDialog, { width: 'min(520px, 92vw)', maxWidth: '92vw' });
+  }
+
 }

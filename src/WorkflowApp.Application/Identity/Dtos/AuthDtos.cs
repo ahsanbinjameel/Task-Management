@@ -48,6 +48,25 @@ public sealed record CreateUserRequest
     public IReadOnlyList<string> Roles { get; init; } = Array.Empty<string>();
 }
 
+/// <summary>Start acting as somebody else.</summary>
+public sealed record ImpersonateRequest
+{
+    [Required]
+    public long UserId { get; init; }
+}
+
+/// <summary>
+/// Somebody an administrator could act as: enough to choose from, and nothing more.
+///
+/// Deliberately not <c>UserDto</c>. That carries the full account record, and a picker does not
+/// need — or deserve — the email addresses and last-login times of everybody in the organisation.
+/// </summary>
+public sealed record ImpersonationTargetDto(
+    long Id,
+    string UserName,
+    string DisplayName,
+    IReadOnlyList<string> Roles);
+
 public sealed record AssignRolesRequest
 {
     [Required]

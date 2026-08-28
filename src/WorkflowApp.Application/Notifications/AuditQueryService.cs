@@ -9,6 +9,15 @@ public sealed record AuditLogDto(
     DateTimeOffset CreatedAt,
     long? ActorUserId,
     string? ActorDisplayName,
+    /// <summary>
+    /// The real human, when an administrator was acting as the actor. Null for nearly every row.
+    ///
+    /// Carried here because a trail that records this and cannot show it is no better than one
+    /// that never recorded it: the whole justification for acting-as is that the reader can see
+    /// "Faisal, acting: Ahsan" rather than being told Faisal did something he never did.
+    /// </summary>
+    long? ImpersonatedByUserId,
+    string? ImpersonatedByDisplayName,
     string Action,
     string? EntityType,
     long? EntityId,
@@ -78,14 +87,26 @@ public sealed class AuditQueryService : IAuditQueryService
             .Take(page.NormalizedPageSize)
             .ToListAsync(ct);
 
-        var actorIds = rows.Where(a => a.ActorUserId.HasValue).Select(a => a.ActorUserId!.Value).Distinct().ToList();
+        // Both people in one lookup: the actor, and the human behind them where there was one.
+        var actorIds = rows
+            .SelectMany(a => new[] { a.ActorUserId, a.ImpersonatedByUserId })
+            .Where(id => id.HasValue)
+            .Select(id => id!.Value)
+            .Distinct()
+            .ToList();
+
         var names = await _db.Users.AsNoTracking()
             .Where(u => actorIds.Contains(u.Id))
             .ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
 
+        string? NameOf(long? id) =>
+            id is { } key && names.TryGetValue(key, out var name) ? name : null;
+
         var items = rows.Select(a => new AuditLogDto(
             a.Id, a.CreatedAt, a.ActorUserId,
-            a.ActorUserId is { } id && names.TryGetValue(id, out var name) ? name : null,
+            NameOf(a.ActorUserId),
+            a.ImpersonatedByUserId,
+            NameOf(a.ImpersonatedByUserId),
             a.Action, a.EntityType, a.EntityId, a.PreviousValues, a.NewValues,
             a.IpAddress, a.DeviceInfo)).ToList();
 

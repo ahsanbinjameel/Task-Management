@@ -1046,6 +1046,9 @@ export interface AuditLogDto {
   createdAt: string;
   actorUserId?: number | null;
   actorDisplayName?: string | null;
+  /** The real human, when an administrator was acting as the actor. */
+  impersonatedByUserId?: number | null;
+  impersonatedByDisplayName?: string | null;
   action: string;
   entityType?: string | null;
   entityId?: number | null;
@@ -1296,4 +1299,12 @@ export interface FormSurfaceOptionDto {
   name: string;
   formId: number;
   formName: string;
+}
+
+/** Somebody an administrator could act as. Enough to choose from, and nothing more. */
+export interface ImpersonationTargetDto {
+  id: number;
+  userName: string;
+  displayName: string;
+  roles: string[];
 }

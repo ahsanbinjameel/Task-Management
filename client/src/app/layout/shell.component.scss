@@ -184,3 +184,33 @@ main {
   .burger { display: inline-flex; }
   .user-name { display: none; }
 }
+
+/* --- acting as somebody else ------------------------------------------------------------------ */
+
+.acting {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 9px 20px;
+  font-size: 13px;
+  line-height: 1.4;
+  background: var(--tone-warn-bg);
+  color: var(--tone-warn-fg);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  flex: none;
+}
+
+.acting mat-icon {
+  font-size: 18px;
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+.acting span { flex: 1 1 auto; min-width: 0; }
+
+.acting .stop {
+  --mdc-text-button-label-text-color: var(--tone-warn-fg);
+  font-weight: 600;
+}

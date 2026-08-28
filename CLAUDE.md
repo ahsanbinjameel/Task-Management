@@ -127,7 +127,7 @@ running the API instead (`--launch-profile Development`), which does load user-s
 
 | File | Status | Contains |
 |---|---|---|
-| `Common/Permissions.cs` | ✅ | `Permissions.*` key catalog + `DefaultRoles.Map` (role → permission bundles) |
+| `Common/Permissions.cs` | ✅ | `Permissions.*` key catalog (**hand-maintained — a new key must be added to `All` or it is never seeded**) + `DefaultRoles.Map` (role → permission bundles) |
 | `Common/TaskTransitionService.cs` | ✅ | Pure transition validation (workflow map + permission + reason + override) |
 | `Common/StatusLabels.cs` | ✅ | **The words users see for internal status names.** Mirrored on the client by `core/labels.ts` — change both together |
 | `Common/ColumnFilters.cs` | ✅ | The grid filter row server-side: `col[key] → value`, read as text/id/bool/enum/date. Unknown keys ignored, blank values narrow nothing |
@@ -203,7 +203,7 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | `Persistence/Interceptors/AuditableEntityInterceptor.cs` | ✅ | **Sole** writer of CreatedAt/UpdatedAt/CreatedByUserId/UpdatedByUserId — never set these by hand |
 | `Persistence/Interceptors/IntegrationEventDispatchInterceptor.cs` | ✅ | Derives real-time events from the change tracker; dispatches **after** commit, drops them on rollback |
 | `Persistence/Seed/DatabaseSeeder.cs` | ✅ | Idempotent: permissions, roles+grants, pause reasons, bootstrap admin |
-| `Persistence/Migrations/` | ✅ | 11 migrations: `InitialCreate` (squashed while still unapplied — **do not squash again**), `OptionalUserEmail`, `RequiredSubtasks`, `PauseCategoryAndAwayState`, `RequestActivityHistory`, `QuickWork`, `RequestBatches`, `AttachmentProof`, `Verifications`, `ProductCatalog`, `RequestRound`, + model snapshot. **All tracked in git — the schema travels with the code; never move a database backup between machines** |
+| `Persistence/Migrations/` | ✅ | 12 migrations: `InitialCreate` (squashed while still unapplied — **do not squash again**), `OptionalUserEmail`, `RequiredSubtasks`, `PauseCategoryAndAwayState`, `RequestActivityHistory`, `QuickWork`, `RequestBatches`, `AttachmentProof`, `Verifications`, `ProductCatalog`, `RequestRound`, `ImpersonationAudit`, + model snapshot. **All tracked in git — the schema travels with the code; never move a database backup between machines** |
 | `Identity/JwtTokenService.cs` | ✅ | Access-token issuance + `AppClaimTypes`; refresh token generation and SHA-256 hashing |
 | `Identity/PasswordHasherAdapter.cs` | ✅ | Wraps `PasswordHasher<User>` (PBKDF2-HMAC-SHA256) |
 | `Storage/DiskFileStorage.cs` | ✅ | Generated stored names, path-traversal guard, hash-while-writing |
@@ -365,6 +365,9 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | POST | `/api/quick-work/{id}/promote` | `Request.Create` (raises a request, never a task) |
 | GET/POST | `/api/notifications`, `/unread-count`, `/read`, `/read-all` | authenticated (own inbox) |
 | GET | `/api/audit`, `/api/audit/actions` | `Admin.ViewAudit` |
+| GET | `/api/auth/impersonation-targets` | `Admin.Impersonate` |
+| POST | `/api/auth/impersonate` | `Admin.Impersonate` |
+| POST | `/api/auth/stop-impersonating` | authenticated — the way back is read from the token, never from the body |
 | GET | `/health/ready` | anonymous; checks the database |
 
 ### Client (`client/`) — ✅
@@ -975,6 +978,12 @@ running the API instead (`--launch-profile Development`), which does load user-s
   `appsettings.Demo.json`, `DemoDataSeeder`, the `DatabaseProvider` enum, the SQLite package
   reference and every `IsEnvironment("Demo")` check with it. Do not reintroduce it under any name,
   and do not mirror a new feature or requirement into an evaluation, sample or offline mode.
+  **Acting as another user is not this, and does not reopen it.** Added 2026-08-29: an
+  administrator holding `Admin.Impersonate` can act as somebody else from Settings. There is no
+  second database, no second provider, no seeded cast and no second code path — it is one extra
+  token claim against the same SQL Server, and every feature reaches it by being the product rather
+  than by being mirrored into a copy of it. What §6 forbids is a parallel implementation; this is
+  the opposite of one.
   It was a second implementation of the product that nobody deployed: SQLite has no `ROWVERSION`,
   so every concurrency guard ran as code with nothing behind it, and `EnsureCreated()` builds a
   schema no migration ever produced. Keeping both alive meant writing each feature twice and
@@ -1099,6 +1108,25 @@ running the API instead (`--launch-profile Development`), which does load user-s
   `--z-shell-nav`, `--z-drawer-scrim`, `--z-drawer` — and the number they have to beat is written
   down next to them rather than rediscovered. Material's overlay container stays at 1000, which is
   correct: a dialog is modal over everything, drawer included.
+- **Acting as another user narrows, never widens** (`Admin.Impersonate`). The session carries the
+  target's permissions and none of the administrator's, so it cannot be a way to keep authority
+  under a different name — and a demonstration of a reviewer's screen is the reviewer's screen
+  rather than an administrator's with a different name on it. Three refusals earn their place:
+  somebody who can themselves act as others cannot be acted as (otherwise a restricted administrator
+  steps through a colleague to get the power back, and the trail blames the colleague), a
+  deactivated account cannot be acted as, and acting does not chain — the recorded human is always
+  the one who started it. Pinned by `ImpersonationTests`.
+- **`AuditLog.ImpersonatedByUserId` is what makes acting-as affordable.** `ActorUserId` stays the
+  account the work was done as, so every existing read of the trail keeps meaning what it meant, and
+  the real human is recorded beside it — "Faisal, acting: Ahsan". It is stamped in `AuditService`
+  from `ICurrentUser`, not at the call sites, so none of the several dozen places that record
+  something can forget it. And it is carried through to `AuditLogDto` and shown on the audit screen:
+  a trail that records this and cannot display it is no better than one that never recorded it.
+- **The acting-as banner is across the top of every screen, not in a corner.** Work done while
+  acting is real work in the real database, and an administrator who forgets will attribute their
+  own work to a colleague. The banner reads its state from the token's own claim rather than a
+  client-side flag, because a separate flag could disagree with the server — and this is the one
+  state that must never be shown wrongly.
 - **Parked capabilities are one flag file, not scattered `@if`s** (`core/parked.ts`). Quick Work,
   dependencies, subtasks and the scope-change ceremony are built, tested, endpoint-complete and
   **not offered**: the widget is off the shell and the three tabs are off the task detail. Reading

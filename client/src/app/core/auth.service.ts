@@ -1,5 +1,5 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpContext } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { Observable, tap } from 'rxjs';
 import { AuthResponse, UserDto } from './models';
@@ -33,6 +33,17 @@ export class AuthService {
   readonly isAuthenticated = computed(() => this._user() !== null);
   readonly displayName = computed(() => this._user()?.displayName ?? '');
 
+  /**
+   * The real human, when an administrator is acting as somebody else.
+   *
+   * Read from the access token rather than kept as its own flag. The token is the only thing the
+   * server actually believes, so a separate client-side "I am pretending" boolean could disagree
+   * with it — and the one state where the banner must never be wrong is this one.
+   */
+  private readonly _actingFor = signal<string | null>(actingForFromToken());
+  readonly actingFor = this._actingFor.asReadonly();
+  readonly isActingAsSomeoneElse = computed(() => this._actingFor() !== null);
+
   /** True when the account is on the clock and should see shift controls at all. */
   readonly tracksShift = computed(() => this.has('Workforce.TrackShift'));
 
@@ -61,6 +72,26 @@ export class AuthService {
 
   hasAny(...permissions: string[]): boolean {
     return permissions.some((p) => this._permissions().has(p));
+  }
+
+  /**
+   * Start acting as somebody else.
+   *
+   * The response is an ordinary session for that person, so it goes through `store` like any
+   * other — the whole point is that from here on the app is theirs, with their permissions and
+   * nobody else's. What comes back on the token, and only there, is who is really behind it.
+   */
+  impersonate(userId: number, context?: HttpContext): Observable<AuthResponse> {
+    return this.http
+      .post<AuthResponse>('/api/auth/impersonate', { userId }, { context })
+      .pipe(tap((response) => this.store(response)));
+  }
+
+  /** Hand the administrator their own session back. */
+  stopImpersonating(): Observable<AuthResponse> {
+    return this.http
+      .post<AuthResponse>('/api/auth/stop-impersonating', {})
+      .pipe(tap((response) => this.store(response)));
   }
 
   login(userName: string, password: string): Observable<AuthResponse> {
@@ -104,12 +135,14 @@ export class AuthService {
     localStorage.setItem(ACCESS_TOKEN, response.accessToken);
     localStorage.setItem(REFRESH_TOKEN, response.refreshToken);
     this.setUser(response.user);
+    this._actingFor.set(actingForFromToken());
   }
 
   clear(): void {
     localStorage.removeItem(ACCESS_TOKEN);
     localStorage.removeItem(REFRESH_TOKEN);
     localStorage.removeItem(USER);
+    this._actingFor.set(null);
     this._user.set(null);
     this._permissions.set(new Set());
   }
@@ -147,6 +180,33 @@ function readStoredUser(): UserDto | null {
   } catch {
     // Corrupt storage should log the user out, not crash the app on boot.
     localStorage.removeItem(USER);
+    return null;
+  }
+}
+
+/**
+ * The display name of the real human, from the access token's own claim.
+ *
+ * A JWT payload is base64url, not base64, and may be unpadded — hence the two substitutions and
+ * the padding. Nothing here is trusted for authorisation: it decides what a banner says, and the
+ * server checks every call regardless. Any malformed token simply reads as "not acting", which is
+ * the safe way round for a banner.
+ */
+function actingForFromToken(): string | null {
+  const token = localStorage.getItem(ACCESS_TOKEN);
+  if (!token) return null;
+
+  const payload = token.split('.')[1];
+  if (!payload) return null;
+
+  try {
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/').padEnd(
+      payload.length + ((4 - (payload.length % 4)) % 4), '='));
+    const claims = JSON.parse(json) as Record<string, unknown>;
+
+    if (claims['impersonated_by'] === undefined) return null;
+    return (claims['impersonated_by_name'] as string) ?? 'an administrator';
+  } catch {
     return null;
   }
 }

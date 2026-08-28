@@ -17,6 +17,17 @@ public static class AppClaimTypes
     public const string Permission = "permission";
 
     public const string DisplayName = "display_name";
+
+    /// <summary>
+    /// The real human, when this token was issued by acting-as. Absent on an ordinary session.
+    ///
+    /// It rides on the token rather than being held server-side because everything downstream that
+    /// needs it — the audit trail above all — already reads the caller from the token, and a second
+    /// store of "who is really behind this request" is a second thing to get out of step.
+    /// </summary>
+    public const string ImpersonatedBy = "impersonated_by";
+
+    public const string ImpersonatedByName = "impersonated_by_name";
 }
 
 /// <summary>
@@ -51,7 +62,12 @@ public sealed class JwtTokenService : ITokenService
             new SymmetricSecurityKey(keyBytes), SecurityAlgorithms.HmacSha256);
     }
 
-    public AccessToken CreateAccessToken(User user, IEnumerable<string> roles, IEnumerable<string> permissions)
+    public AccessToken CreateAccessToken(
+        User user,
+        IEnumerable<string> roles,
+        IEnumerable<string> permissions,
+        long? impersonatedByUserId = null,
+        string? impersonatedByUserName = null)
     {
         var now = _clock.UtcNow;
         var expires = now.AddMinutes(_options.AccessTokenMinutes);
@@ -72,6 +88,17 @@ public sealed class JwtTokenService : ITokenService
 
         claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));
         claims.AddRange(permissions.Select(p => new Claim(AppClaimTypes.Permission, p)));
+
+        // Note what this token does *not* get: any of the impersonator's own permissions. Acting as
+        // somebody is acting as them, so the claims are theirs alone — which is the whole point,
+        // and also what stops the feature becoming a way to borrow authority.
+        if (impersonatedByUserId is { } realUserId)
+        {
+            claims.Add(new Claim(AppClaimTypes.ImpersonatedBy, realUserId.ToString()));
+
+            if (!string.IsNullOrWhiteSpace(impersonatedByUserName))
+                claims.Add(new Claim(AppClaimTypes.ImpersonatedByName, impersonatedByUserName));
+        }
 
         var token = new JwtSecurityToken(
             issuer: _options.Issuer,

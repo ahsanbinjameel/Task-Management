@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 import {
   AcceptanceCriteriaDto, ActiveWorkforceDto, ActivityEventDto, AssignableUserDto,
   AssignmentCandidateDto, AttachmentDto, FormDto, FormOptionDto, FormSurfaceDto,
+  ImpersonationTargetDto,
   FormSurfaceOptionDto, ModuleDto,
   AttachmentKind,
   AuditLogDto, ClientOptionDto, ModuleOptionDto, HomeDashboardDto, QuickWorkDto, StartQuickWorkDto,
@@ -422,6 +423,11 @@ export class ApiService {
 
   assignableUsers(): Observable<AssignableUserDto[]> {
     return this.http.get<AssignableUserDto[]>('/api/tasks/assignable-users');
+  }
+
+  /** Who this administrator could act as. Excludes other administrators, by design. */
+  impersonationTargets(): Observable<ImpersonationTargetDto[]> {
+    return this.http.get<ImpersonationTargetDto[]>('/api/auth/impersonation-targets');
   }
 
   /** Who this task could go to, with the facts to decide on. See AssignmentCandidateDto. */

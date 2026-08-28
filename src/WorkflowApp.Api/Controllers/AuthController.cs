@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using WorkflowApp.Api.Authorization;
 using WorkflowApp.Api.Common;
+using WorkflowApp.Application.Common;
 using WorkflowApp.Application.Identity.Dtos;
 using WorkflowApp.Application.Identity.Services;
 
@@ -70,4 +72,39 @@ public sealed class AuthController : ApiControllerBase
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request, CancellationToken ct)
         => FromResult(await _auth.ChangePasswordAsync(CurrentUserId, request, ct));
+    // --- acting as somebody else -----------------------------------------------------------------
+    //
+    // For demonstrating the product and for supporting somebody who cannot describe what they are
+    // seeing. The session it issues carries the target's permissions and none of the caller's, so
+    // it can only ever narrow what they can do, and every action taken while acting records both
+    // people — see AuditLog.ImpersonatedByUserId.
+
+    /// <summary>Who this administrator could act as.</summary>
+    [HttpGet("impersonation-targets")]
+    [HasPermission(Permissions.AdminImpersonate)]
+    [ProducesResponseType(typeof(IReadOnlyList<ImpersonationTargetDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ImpersonationTargets(CancellationToken ct)
+        => FromResult(await _auth.ImpersonationTargetsAsync(CurrentUserId, ct));
+
+    /// <summary>Start acting as somebody else.</summary>
+    [HttpPost("impersonate")]
+    [HasPermission(Permissions.AdminImpersonate)]
+    [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> Impersonate(
+        [FromBody] ImpersonateRequest request, CancellationToken ct)
+        => FromResult(await _auth.ImpersonateAsync(CurrentUserId, request.UserId, ct));
+
+    /// <summary>
+    /// Stop acting and get your own session back.
+    ///
+    /// Deliberately *not* gated on the permission: the token in hand belongs to the person being
+    /// acted as, who does not hold it. The real human is read from the token, so this can only ever
+    /// return the caller to themselves.
+    /// </summary>
+    [HttpPost("stop-impersonating")]
+    [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> StopImpersonating(CancellationToken ct)
+        => FromResult(await _auth.StopImpersonatingAsync(ct));
+
 }

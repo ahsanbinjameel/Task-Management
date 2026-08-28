@@ -84,13 +84,13 @@ const DETAIL_FIELDS: { key: string; label: string }[] = [
       <app-back-link fallback="/requests" label="Requests" />
       <app-page-header title="New request" />
 
-      <form (ngSubmit)="submit()">
+      <form (ngSubmit)="submit()" class="card">
         <!--
           Asked once and copied onto each item by the API, so an item corrected at triage never
           drags its siblings. It sits above the points because it is the one thing that is genuinely
           shared.
         -->
-        <mat-form-field class="client card">
+        <mat-form-field class="client">
           <mat-label>Client</mat-label>
           <input matInput name="client" [(ngModel)]="clientName" [matAutocomplete]="clientList" />
           <mat-autocomplete #clientList>
@@ -386,7 +386,8 @@ export class RequestCreateComponent implements OnInit {
    */
   patch(index: number, changes: Partial<Point>): void {
     this.points.update((all) =>
-      all.map((point, i) => (i === index ? { ...point, ...changes } : point)));
+      all.map((point, i) => (i === index ? { ...point, ...changes } : point)),
+    );
   }
 
   /** Reveal one of the folded-away sections. */
