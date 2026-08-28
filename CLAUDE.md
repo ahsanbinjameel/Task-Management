@@ -22,7 +22,7 @@ A review can also branch sideways into **Verification** — assigned investigati
 is really a problem — which produces findings and never work. See §6.
 
 Design rationale: `docs/01-ARCHITECTURE.md` · Phase checklist: `docs/02-PHASE-PLAN.md`
-Deploy + operate: `docs/03-RUNBOOK.md` · User guide: `docs/USER-GUIDE.md` (skeleton, filled as §12 screens land)
+Deploy + operate: `docs/03-RUNBOOK.md` · User guide: `docs/USER-GUIDE.md` (task-oriented, per role; update it in the same commit that changes a screen)
 (the duplicate copies that used to sit at the repo root have been deleted — `docs/` is the only home.)
 
 ## 2. Stack & environment
