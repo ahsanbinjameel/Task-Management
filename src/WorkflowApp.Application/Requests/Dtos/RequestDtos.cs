@@ -24,6 +24,17 @@ public sealed record CreateRequestDto
     [MaxLength(200)]
     public string? ClientName { get; init; }
 
+    /// <summary>
+    /// Where in the product this is, if the requester happens to know (PRODUCT-CORE §5, §8).
+    ///
+    /// Optional and never demanded. Intake asks for a client and a sentence; placing the work
+    /// precisely is a triage concern, because that is where somebody who knows the system is
+    /// looking at it. Surface is deliberately absent here — it is finer than anyone reporting a
+    /// problem should be asked for.
+    /// </summary>
+    public long? ModuleId { get; init; }
+    public long? FormId { get; init; }
+
     [MaxLength(2000)] public string? BusinessImpact { get; init; }
     [MaxLength(2000)] public string? ExpectedResult { get; init; }
     [MaxLength(2000)] public string? CurrentResult { get; init; }

@@ -1,275 +1,253 @@
-import { Component, DestroyRef, OnInit, computed, inject, signal } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { HttpContext } from '@angular/common/http';
+import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
+import { MatAutocompleteModule } from '@angular/material/autocomplete';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDatepickerModule } from '@angular/material/datepicker';
 import { provideNativeDateAdapter } from '@angular/material/core';
+import { MatDialog } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
-import { MatAutocompleteModule } from '@angular/material/autocomplete';
-import { MatDialog } from '@angular/material/dialog';
 import { ApiService } from '../../core/api.service';
 import { ToastService } from '../../core/toast.service';
 import { RequestType, RequestedUrgency } from '../../core/models';
-import { enumOptions, SearchSelectComponent } from '../../shared/search-select.component';
 import { PageHeaderComponent } from '../../shared/ui';
-import { FileDropComponent } from '../../shared/file-drop.component';
 import { ConfirmDialog, ConfirmData } from '../../shared/dialogs';
+import { FileDropComponent } from '../../shared/file-drop.component';
+import {
+  enumOptions, SearchSelectComponent, SelectOption,
+} from '../../shared/search-select.component';
 
-/** The optional detail fields, in the order they are offered. */
-const OPTIONAL_FIELDS = [
-  {
-    key: 'expectedResult' as const,
-    label: 'What should happen',
-    hint: 'What did you expect to see?',
-    rows: 2,
-  },
-  {
-    key: 'currentResult' as const,
-    label: 'What happens instead',
-    hint: 'What actually happens?',
-    rows: 2,
-  },
-  {
-    key: 'reproductionSteps' as const,
-    label: 'Steps to reproduce',
-    hint: 'One step per line, so someone else can see it too.',
-    rows: 3,
-  },
-  {
-    key: 'businessImpact' as const,
-    label: 'Why it matters',
-    hint: 'What does it cost while this is not done?',
-    rows: 2,
-  },
+/** One thing being asked for. Text is all it needs; everything else is optional. */
+interface Point {
+  /** What is wrong, in the requester's own words. The first line becomes the title. */
+  text: string;
+  files: File[];
+  /** Optional detail, revealed by chips and folded into the description on submit. */
+  expectedResult: string;
+  currentResult: string;
+  businessImpact: string;
+  reproductionSteps: string;
+  shown: Record<string, boolean>;
+}
+
+const DETAIL_FIELDS: { key: keyof Point & string; label: string; hint: string }[] = [
+  { key: 'expectedResult', label: 'What should happen', hint: 'The total should match the sum of the lines' },
+  { key: 'currentResult', label: 'What happens instead', hint: 'It shows the previous month' },
+  { key: 'businessImpact', label: 'Why it matters', hint: 'We cannot send invoices until this is right' },
+  { key: 'reproductionSteps', label: 'How to see it', hint: 'Open the report, pick August, look at the total' },
 ];
 
-type OptionalKey = (typeof OPTIONAL_FIELDS)[number]['key'];
-
 /**
- * Which details are worth asking for, by type.
+ * New request: one client, many points, one submit (PRODUCT-CORE §8).
  *
- * A bug is a report about a difference between what happened and what should have: those two
- * fields plus the steps are the whole of it. A change is a description of a wanted outcome and a
- * reason for wanting it. Support is a question — asking someone with a question for reproduction
- * steps is how you teach people not to ask.
+ * This is the highest-value intake screen and the whole target is speed — a submittable request in
+ * fifteen or twenty seconds, because the thing it competes with is sending Ahsan a WhatsApp
+ * message, and losing that race means the software does not get used.
+ *
+ * Three things it deliberately does not do.
+ *
+ * It does not ask the requester to name their submission. The old form demanded a batch title as
+ * soon as there was more than one point, which is a question nobody reporting a broken invoice is
+ * thinking about; the answer was always a restatement of the first point, so the server now writes
+ * that itself.
+ *
+ * It does not ask for a title *and* a description per point. A point is one piece of text, and its
+ * first line is the title. Asking for both means typing the same sentence twice.
+ *
+ * It does not force the product location. Client is the ceiling for intake, with module and form
+ * offered as optional shared defaults for the requester who happens to know; placing the work
+ * precisely is a triage concern (§5, §12D) because that is where somebody who knows the codebase
+ * is looking at it.
+ *
+ * There is no single-versus-batch mode. One point posts a plain request, several post a batch, and
+ * the person filling the form never learns those are different things.
  */
-const SUGGESTED_BY_TYPE: Record<string, OptionalKey[]> = {
-  Bug: ['expectedResult', 'currentResult', 'reproductionSteps', 'businessImpact'],
-  DataCorrection: ['expectedResult', 'currentResult', 'businessImpact'],
-  ChangeRequest: ['expectedResult', 'businessImpact'],
-  NewFeature: ['expectedResult', 'businessImpact'],
-  Report: ['expectedResult', 'businessImpact'],
-  Configuration: ['expectedResult'],
-  Database: ['expectedResult', 'currentResult'],
-  Investigation: ['currentResult', 'businessImpact'],
-  Infrastructure: ['currentResult', 'businessImpact'],
-  Support: [],
-  Other: [],
-};
-
 @Component({
   selector: 'app-request-create',
   standalone: true,
   providers: [provideNativeDateAdapter()],
   imports: [
-    ReactiveFormsModule,
+    FormsModule,
+    MatAutocompleteModule,
     MatButtonModule,
     MatDatepickerModule,
     MatFormFieldModule,
     MatIconModule,
     MatInputModule,
-    MatAutocompleteModule,
     PageHeaderComponent,
     SearchSelectComponent,
     FileDropComponent,
   ],
   template: `
     <div class="page narrow">
-      <app-page-header
-        title="New request"
-      />
+      <app-page-header title="New request" />
 
-      <form class="card card-pad stack" [formGroup]="form" (ngSubmit)="submit()">
-        @if (extras.length > 0) {
-          <mat-form-field class="full">
-            <mat-label>What is this batch about?</mat-label>
-            <input matInput formControlName="batchTitle" />
-          </mat-form-field>
+      <form class="card card-pad stack" (ngSubmit)="submit()">
+        <!--
+          Shared, and asked once. Every one of these is copied onto each point rather than read
+          through the submission, so correcting one item at triage never drags its siblings.
+        -->
+        <mat-form-field class="full">
+          <mat-label>Client</mat-label>
+          <input matInput name="client" [(ngModel)]="clientName" [matAutocomplete]="clientList"
+                 placeholder="Leave blank for internal work" cdkFocusInitial />
+          <mat-autocomplete #clientList>
+            @for (name of clientSuggestions(); track name) {
+              <mat-option [value]="name">{{ name }}</mat-option>
+            }
+          </mat-autocomplete>
+        </mat-form-field>
 
-          <div class="item-head first">
-            <span class="muted small">Asking for &mdash; 1</span>
+        @if (showContext()) {
+          <div class="form-grid">
+            <app-search-select label="Module (optional)" [options]="moduleOptions()"
+                               [ngModel]="moduleId" (ngModelChange)="pickModule($event)"
+                               name="module" />
+            <app-search-select label="Form (optional)" [options]="formOptions()"
+                               [(ngModel)]="formId" name="form" [disabled]="moduleId === null" />
           </div>
+        } @else {
+          <button type="button" class="add-chip quiet" (click)="showContext.set(true)">
+            <mat-icon>add</mat-icon> Say which part of the system, if you know
+          </button>
         }
 
-        <mat-form-field class="full">
-          <mat-label>Title</mat-label>
-          <input matInput formControlName="title" />
-        </mat-form-field>
+        <!-- --- the points ------------------------------------------------------------------ -->
 
-        <mat-form-field class="full">
-          <mat-label>Description</mat-label>
-          <textarea matInput rows="4" formControlName="description"></textarea>
-        </mat-form-field>
+        <div class="points">
+          @for (point of points(); track $index; let i = $index; let last = $last) {
+            <div class="point" [class.focused]="focused() === i">
+              <div class="point-head">
+                <span class="muted small">Point {{ i + 1 }}</span>
+                <span class="spacer"></span>
+                @if (points().length > 1) {
+                  <button matIconButton type="button" (click)="removePoint(i)"
+                          [attr.aria-label]="'Remove point ' + (i + 1)">
+                    <mat-icon>close</mat-icon>
+                  </button>
+                }
+              </div>
 
-        <div class="form-grid">
-          <mat-form-field>
-            <mat-label>Client (optional)</mat-label>
-            <input matInput formControlName="clientName" [matAutocomplete]="clientList" />
-            <mat-autocomplete #clientList>
-              @for (name of suggestions(); track name) {
-                <mat-option [value]="name">{{ name }}</mat-option>
-              }
-            </mat-autocomplete>
-          </mat-form-field>
-
-          <app-search-select label="Type" [options]="typeOptions" formControlName="type" />
-
-          <app-search-select label="Urgency" [options]="urgencyOptions"
-                             formControlName="requestedUrgency" />
-
-          <mat-form-field>
-            <mat-label>Needed by (optional)</mat-label>
-            <input matInput [matDatepicker]="picker" formControlName="targetDate" />
-            <mat-datepicker-toggle matIconSuffix [for]="picker" />
-            <mat-datepicker #picker />
-          </mat-form-field>
-        </div>
-
-        <!--
-          The optional detail. Folded away by default and offered as chips, because most requests
-          do not need any of it: "the payroll report errors when I generate it" is a perfectly good
-          request, and the reviewer can ask for more if they need it. Making people fill in a
-          technical bug-analysis form before they can report anything is how you stop them
-          reporting things.
-
-          Which chips are offered follows the type — nobody asks a support request for steps to
-          reproduce — but every chip stays available, because the type is a guess and the requester
-          knows what they have to say.
-        -->
-        <div class="optional">
-          <div class="row row-wrap chips-row">
-            <span class="muted small label">Add more detail (optional)</span>
-            @for (field of optionalFields; track field.key) {
-              @if (!shown()[field.key]) {
-                <button type="button" class="add-chip"
-                        [class.suggested]="suggested().includes(field.key)"
-                        (click)="show(field.key)">
-                  <mat-icon>add</mat-icon> {{ field.label }}
-                </button>
-              }
-            }
-          </div>
-
-          @for (field of optionalFields; track field.key) {
-            @if (shown()[field.key]) {
               <mat-form-field class="full">
-                <mat-label>{{ field.label }}</mat-label>
-                <textarea matInput [rows]="field.rows" [formControlName]="field.key"
-                          [placeholder]="field.hint"></textarea>
-                <button matIconButton matSuffix type="button" (click)="hide(field.key)"
-                        [attr.aria-label]="'Remove ' + field.label">
-                  <mat-icon>close</mat-icon>
-                </button>
+                <mat-label>What is wrong, or what you need</mat-label>
+                <textarea matInput rows="2" [name]="'point' + i"
+                          [(ngModel)]="point.text"
+                          (focus)="focused.set(i)"
+                          placeholder="Delivery order detail report total is not correct"></textarea>
               </mat-form-field>
-            }
+
+              <!--
+                Optional detail, per point, folded into that point's description on submit. Offered
+                as chips and closed by default: most points do not need any of it, and a reviewer
+                can ask. Closing a chip clears the field — a value the requester can no longer see
+                must never be submitted on their behalf.
+              -->
+              <div class="row row-wrap chips-row">
+                @for (field of detailFields; track field.key) {
+                  @if (!point.shown[field.key]) {
+                    <button type="button" class="add-chip" (click)="showDetail(point, field.key)">
+                      <mat-icon>add</mat-icon> {{ field.label }}
+                    </button>
+                  }
+                }
+              </div>
+
+              @for (field of detailFields; track field.key) {
+                @if (point.shown[field.key]) {
+                  <mat-form-field class="full">
+                    <mat-label>{{ field.label }}</mat-label>
+                    <textarea matInput rows="2" [name]="field.key + i"
+                              [ngModel]="detail(point, field.key)"
+                              (ngModelChange)="setDetail(point, field.key, $event)"
+                              (focus)="focused.set(i)"
+                              [placeholder]="field.hint"></textarea>
+                    <button matIconButton matSuffix type="button"
+                            (click)="hideDetail(point, field.key)"
+                            [attr.aria-label]="'Remove ' + field.label">
+                      <mat-icon>close</mat-icon>
+                    </button>
+                  </mat-form-field>
+                }
+              }
+
+              <!--
+                Per point, not per submission. A screenshot of the broken total belongs to the
+                point about the total, and filing all eight against the whole submission is what
+                made a reviewer open every one of them to find the relevant picture.
+
+                The active flag is what makes Ctrl+V land here rather than on all of them at once
+                — see FileDropComponent.
+              -->
+              <app-file-drop [(files)]="point.files" [active]="focused() === i" />
+
+              @if (!last) { <hr /> }
+            </div>
           }
         </div>
 
-        <!--
-          Asking for more than one thing.
-          Hidden until it is wanted, because most requests are one thing and a repeatable list on
-          an empty form makes a simple job look like an ordering system. Once open, each extra item
-          asks only for what an item needs: the client, the files and the reviewer are shared, so
-          nobody retypes them.
-        -->
-        @if (extras.length > 0) {
-          <div class="items" formArrayName="extras">
-            @for (item of extras.controls; track $index; let i = $index) {
-              <div class="item card-pad" [formGroupName]="i">
-                <div class="row item-head">
-                  <span class="muted small">Also asking for &mdash; {{ i + 2 }}</span>
-                  <span class="spacer"></span>
-                  <button matIconButton type="button" (click)="removeItem(i)"
-                          [attr.aria-label]="'Remove item ' + (i + 2)">
-                    <mat-icon>close</mat-icon>
-                  </button>
-                </div>
-
-                <mat-form-field class="full">
-                  <mat-label>Title</mat-label>
-                  <input matInput formControlName="title" />
-                </mat-form-field>
-
-                <mat-form-field class="full">
-                  <mat-label>Description</mat-label>
-                  <textarea matInput rows="3" formControlName="description"></textarea>
-                </mat-form-field>
-
-                <div class="form-grid">
-                  <app-search-select label="Type" [options]="typeOptions" formControlName="type" />
-                  <app-search-select label="Urgency" [options]="urgencyOptions"
-                                     formControlName="requestedUrgency" />
-                </div>
-              </div>
-            }
-          </div>
-        }
-
         <div class="row row-wrap">
-          <button type="button" class="add-chip" (click)="addItem()">
-            <mat-icon>add</mat-icon>
-            {{ extras.length === 0 ? 'Ask for something else too' : 'Add another' }}
+          <button type="button" class="add-chip" (click)="addPoint()">
+            <mat-icon>add</mat-icon> Add another point
           </button>
         </div>
 
-        <div class="attach">
-          <h2 class="card-title">
-            Attachments
-            @if (extras.length > 0) { <span class="muted small">&mdash; shared by every item</span> }
-          </h2>
-          <app-file-drop [(files)]="files" />
-        </div>
+        <!-- --- the rest, folded away ---------------------------------------------------------- -->
+
+        @if (showMore()) {
+          <div class="form-grid">
+            <app-search-select label="Kind of request" [options]="typeOptions"
+                               [(ngModel)]="type" name="type" />
+            <app-search-select label="How urgent" [options]="urgencyOptions"
+                               [(ngModel)]="urgency" name="urgency" />
+            <mat-form-field>
+              <mat-label>Needed by (optional)</mat-label>
+              <input matInput name="target" [matDatepicker]="picker" [(ngModel)]="targetDate" />
+              <mat-datepicker-toggle matIconSuffix [for]="picker" />
+              <mat-datepicker #picker />
+            </mat-form-field>
+          </div>
+        } @else {
+          <button type="button" class="add-chip quiet" (click)="showMore.set(true)">
+            <mat-icon>tune</mat-icon> Kind, urgency and a date
+          </button>
+        }
 
         <div class="row">
           <span class="spacer"></span>
           <button matButton type="button" (click)="cancel()">Cancel</button>
-          <button matButton="filled" type="submit" [disabled]="form.invalid || busy()">
-            {{ busy() ? 'Sending…' : extras.length === 0
-                ? 'Submit request'
-                : 'Submit ' + (extras.length + 1) + ' requests' }}
+          <button matButton="filled" type="submit" [disabled]="!ready() || busy()">
+            {{ busy() ? 'Sending…' : submitLabel() }}
           </button>
         </div>
       </form>
     </div>
   `,
   styles: `
-    .narrow { max-width: 880px; }
+    .narrow { max-width: 760px; }
     .full { width: 100%; }
-    .optional { margin: 2px 0 10px; }
-    .chips-row { gap: 8px; align-items: center; margin-bottom: 12px; }
-    .chips-row .label { margin-right: 2px; }
+
+    .points { display: flex; flex-direction: column; }
+    .point { padding: 2px 0; }
+    .point-head { display: flex; align-items: center; margin-bottom: 2px; }
+    .point hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+
+    .chips-row { gap: 8px; align-items: center; margin: -6px 0 8px; }
     .add-chip {
       display: inline-flex; align-items: center; gap: 4px;
+      padding: 5px 11px 5px 8px; border-radius: 999px;
       border: 1px dashed var(--border-strong); background: transparent;
-      border-radius: 999px; padding: 5px 12px 5px 8px;
-      font: inherit; font-size: 12.5px; color: var(--text-muted); cursor: pointer;
+      color: var(--text-muted); font-size: 12.5px; cursor: pointer;
     }
-    .add-chip:hover { border-style: solid; color: inherit; background: var(--surface-sunken); }
-    /* The ones that fit the chosen type, nudged forward without being forced on anyone. */
-    .add-chip.suggested { border-style: solid; color: inherit; }
-    .add-chip mat-icon { font-size: 16px; width: 16px; height: 16px; }
-    .items { display: flex; flex-direction: column; gap: 12px; margin: 6px 0 12px; }
-    .item {
-      border: 1px solid var(--border); border-radius: var(--radius);
-      background: var(--surface-sunken);
-    }
-    .item-head { align-items: center; margin-bottom: 6px; }
-    .item-head.first { margin: 4px 0 -4px; }
-    .attach { margin: 6px 0 18px; }
-    .attach .card-title { margin-bottom: 10px; }
+    .add-chip:hover { border-style: solid; color: var(--text); background: var(--surface-sunken); }
+    .add-chip mat-icon { font-size: 15px; width: 15px; height: 15px; }
+    .add-chip.quiet { align-self: flex-start; }
+
+    /* A container that already spaces its children has to null the field's own margin, or the two
+       add up and the gap doubles. See the note on form density in CLAUDE.md. */
+    .stack > mat-form-field, .point > mat-form-field { margin: 0; }
   `,
 })
 export class RequestCreateComponent implements OnInit {
@@ -278,265 +256,161 @@ export class RequestCreateComponent implements OnInit {
   private readonly toast = inject(ToastService);
   private readonly dialog = inject(MatDialog);
 
-  private readonly destroyRef = inject(DestroyRef);
+  readonly detailFields = DETAIL_FIELDS;
+
+  clientName = '';
+  moduleId: number | null = null;
+  formId: number | null = null;
+
+  type: RequestType = 'Bug';
+  urgency: RequestedUrgency = 'Normal';
+  targetDate: Date | null = null;
+
+  readonly typeOptions = enumOptions<RequestType>([
+    'Bug', 'ChangeRequest', 'NewFeature', 'Support', 'Configuration',
+    'Database', 'Report', 'Investigation', 'DataCorrection', 'Infrastructure', 'Other',
+  ]);
+
+  readonly urgencyOptions = enumOptions<RequestedUrgency>(['Low', 'Normal', 'High', 'Critical']);
+
+  readonly points = signal<Point[]>([blankPoint()]);
+  /** Which point the reader is in, so a pasted screenshot lands on that one. */
+  readonly focused = signal(0);
+
+  readonly showContext = signal(false);
+  readonly showMore = signal(false);
   readonly busy = signal(false);
 
-  readonly types: RequestType[] = [
-    'Bug',
-    'ChangeRequest',
-    'NewFeature',
-    'Support',
-    'Configuration',
-    'Database',
-    'Report',
-    'Investigation',
-    'DataCorrection',
-    'Infrastructure',
-    'Other',
-  ];
-  readonly urgencies: RequestedUrgency[] = ['Critical', 'High', 'Normal', 'Low'];
+  readonly clientSuggestions = signal<string[]>([]);
+  readonly moduleOptions = signal<SelectOption[]>([]);
+  readonly formOptions = signal<SelectOption[]>([]);
 
-  readonly typeOptions = enumOptions(this.types);
-  readonly urgencyOptions = enumOptions(this.urgencies);
-
-  readonly optionalFields = OPTIONAL_FIELDS;
-
-  /** Which optional fields are open. Closing one hides it; only the × clears what was typed. */
-  readonly shown = signal<Record<OptionalKey, boolean>>({
-    expectedResult: false,
-    currentResult: false,
-    reproductionSteps: false,
-    businessImpact: false,
-  });
-
-  /** The fields worth offering for the chosen type. A hint, not a restriction. */
-  readonly suggested = signal<OptionalKey[]>(SUGGESTED_BY_TYPE['Support']);
-
-  show(key: OptionalKey): void {
-    this.shown.update((all) => ({ ...all, [key]: true }));
-  }
-
-  /**
-   * Hiding a field also clears it. A value the requester can no longer see must not be submitted
-   * on their behalf — that is the one thing worse than losing it.
-   */
-  hide(key: OptionalKey): void {
-    this.form.controls[key].setValue('');
-    this.shown.update((all) => ({ ...all, [key]: false }));
-  }
-
-  private readonly fb = inject(FormBuilder);
-
-  readonly form = this.fb.nonNullable.group({
-    /** Only used, and only required, once there is more than one item. */
-    batchTitle: [''],
-    title: ['', [Validators.required, Validators.maxLength(300)]],
-    description: ['', [Validators.required, Validators.maxLength(8000)]],
-    type: ['Support' as RequestType, Validators.required],
-    requestedUrgency: ['Normal' as RequestedUrgency, Validators.required],
-    targetDate: [null as Date | null],
-    clientName: [''],
-    businessImpact: [''],
-    expectedResult: [''],
-    currentResult: [''],
-    reproductionSteps: [''],
-    extras: this.fb.array([] as ReturnType<RequestCreateComponent['newItem']>[]),
-  });
-
-  get extras() {
-    return this.form.controls.extras;
-  }
-
-  private newItem() {
-    return this.fb.nonNullable.group({
-      title: ['', [Validators.required, Validators.maxLength(300)]],
-      description: ['', [Validators.required, Validators.maxLength(8000)]],
-      type: ['Support' as RequestType, Validators.required],
-      requestedUrgency: ['Normal' as RequestedUrgency, Validators.required],
+  ngOnInit(): void {
+    this.api.clients().subscribe({
+      next: (clients) => this.clientSuggestions.set(clients.map((c) => c.name)),
+      error: () => undefined,
+    });
+    this.api.modules().subscribe({
+      next: (modules) => this.moduleOptions.set(modules.map((m) => ({ value: m.id, label: m.name }))),
+      error: () => undefined,
     });
   }
 
-  addItem(): void {
-    // The batch needs a name of its own once there is more than one item — the items have their
-    // own titles, and "Month-end problems" is what a reviewer scans a queue for.
-    if (this.extras.length === 0) {
-      this.form.controls.batchTitle.addValidators([Validators.required, Validators.maxLength(300)]);
-      this.form.controls.batchTitle.updateValueAndValidity();
+  /** A form belongs to a module, so changing the module drops a form that no longer fits. */
+  pickModule(moduleId: number | null): void {
+    this.moduleId = moduleId;
+    this.formId = null;
+    this.formOptions.set([]);
+    if (moduleId === null) return;
 
-      if (!this.form.controls.batchTitle.value.trim()) {
-        this.form.controls.batchTitle.setValue(this.form.controls.title.value.trim());
-      }
-    }
-
-    this.extras.push(this.newItem());
+    this.api.formOptions(moduleId).subscribe({
+      next: (forms) => this.formOptions.set(forms.map((f) => ({ value: f.id, label: f.name }))),
+      error: () => undefined,
+    });
   }
 
-  removeItem(index: number): void {
-    this.extras.removeAt(index);
+  // --- the points -----------------------------------------------------------------------------
 
-    // Back to one request: the batch title stops being required, and stops being sent.
-    if (this.extras.length === 0) {
-      this.form.controls.batchTitle.clearValidators();
-      this.form.controls.batchTitle.updateValueAndValidity();
-    }
+  addPoint(): void {
+    this.points.update((all) => [...all, blankPoint()]);
+    this.focused.set(this.points().length - 1);
   }
 
-  /**
-   * Names already in use. Loaded once and filtered locally: the list is short by nature, and a
-   * request per keystroke would be a lot of traffic for a field most people leave alone.
-   */
-  private readonly known = signal<string[]>([]);
-
-  readonly suggestions = computed(() => {
-    const typed = (this.typed() ?? '').trim().toLowerCase();
-    const all = this.known();
-    return typed ? all.filter((n) => n.toLowerCase().includes(typed)) : all;
-  });
-
-  private readonly typed = signal<string>('');
-
-  ngOnInit(): void {
-    this.api.clients().subscribe((list) => this.known.set(list.map((c) => c.name)));
-
-    this.form.controls.clientName.valueChanges
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe((value) => this.typed.set(value ?? ''));
-
-    // The type changes which details are worth asking for. Nothing already opened is closed —
-    // the requester's decision outranks the guess.
-    this.form.controls.type.valueChanges
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe((type) => this.suggested.set(SUGGESTED_BY_TYPE[type] ?? []));
+  removePoint(index: number): void {
+    this.points.update((all) => all.filter((_, i) => i !== index));
+    this.focused.set(Math.min(this.focused(), this.points().length - 1));
   }
 
-  /** Owned here, filled in by the drop zone — see `app-file-drop`. */
-  readonly files = signal<File[]>([]);
-
-  /** Uploads sequentially, then continues regardless — see the note at the call site. */
-  private uploadPending(requestId: number, done: () => void): void {
-    const queue = this.files();
-    if (queue.length === 0) {
-      done();
-      return;
-    }
-
-    let remaining = queue.length;
-    const finish = () => {
-      if (--remaining === 0) done();
-    };
-
-    for (const file of queue) {
-      this.api.uploadRequestAttachment(requestId, file).subscribe({
-        next: finish,
-        error: () => {
-          this.toast.error(`${file.name} could not be attached.`);
-          finish();
-        },
-      });
-    }
+  detail(point: Point, key: string): string {
+    return (point as unknown as Record<string, string>)[key] ?? '';
   }
 
-  /**
-   * Asks before submitting, then hands off to the real thing.
-   *
-   * Unlike the dialogs elsewhere this one only returns an answer rather than performing the call:
-   * the form is a whole page that survives a refusal untouched, and the submit path continues on
-   * afterwards to upload the attachments — work that has no business running inside a dialog that
-   * has already closed.
-   */
+  setDetail(point: Point, key: string, value: string): void {
+    (point as unknown as Record<string, string>)[key] = value;
+  }
+
+  showDetail(point: Point, key: string): void {
+    point.shown[key] = true;
+  }
+
+  /** Clearing on close is deliberate: never submit a value the requester can no longer see. */
+  hideDetail(point: Point, key: string): void {
+    point.shown[key] = false;
+    this.setDetail(point, key, '');
+  }
+
+  // --- submitting -----------------------------------------------------------------------------
+
+  private filled(): Point[] {
+    return this.points().filter((p) => p.text.trim().length > 0);
+  }
+
+  readonly ready = computed(() => this.points().some((p) => p.text.trim().length > 0));
+
+  submitLabel(): string {
+    const count = this.filled().length;
+    return count > 1 ? `Submit ${count} points` : 'Submit request';
+  }
+
+  cancel(): void {
+    void this.router.navigate(['/requests']);
+  }
+
   submit(): void {
-    if (this.form.invalid) return;
+    const points = this.filled();
+    if (points.length === 0 || this.busy()) return;
 
-    const extras = this.form.getRawValue().extras.length;
-
+    // Submitting is a commitment other people act on, so it is confirmed. This one returns a plain
+    // true rather than performing the call inside the dialog: it is a whole page that survives a
+    // refusal untouched, and the submit path goes on to upload attachments afterwards — work that
+    // cannot run inside a dialog that has already closed.
     this.dialog
       .open<ConfirmDialog, ConfirmData>(ConfirmDialog, {
         data: {
-          title: extras > 0 ? `Submit these ${extras + 1} requests?` : 'Submit this request?',
-          message: extras > 0
-            ? `All ${extras + 1} go to the review queue together under one submission. You can `
-              + 'still edit each one until a reviewer picks it up.'
-            : 'It goes to the review queue for someone to look at. You can still edit it until a '
-              + 'reviewer picks it up.',
-          confirmText: extras > 0 ? 'Submit them' : 'Submit it',
+          title: points.length > 1 ? `Submit these ${points.length} points?` : 'Submit this request?',
+          message:
+            'It goes to a reviewer, who decides what happens next. You can follow it from the '
+            + 'Requests page without having to ask anyone.',
+          confirmText: 'Submit',
         },
       })
       .afterClosed()
       .subscribe((confirmed?: boolean) => {
-        if (confirmed) this.send();
+        if (confirmed) this.send(points);
       });
   }
 
-  private send(): void {
+  private send(points: Point[]): void {
     this.busy.set(true);
 
-    const v = this.form.getRawValue();
-
-    if (v.extras.length > 0) {
-      this.submitBatch(v);
+    // One point posts a plain request, several post a batch. The person filling the form never
+    // learns those are different things — but a batch row for every single request would put a
+    // "submission" wrapper around work that never came with anything else, and CLAUDE.md keeps
+    // that null for the ordinary case.
+    if (points.length === 1) {
+      this.sendOne(points[0]);
       return;
     }
 
     this.api
-      .createRequest({
-        title: v.title.trim(),
-        description: v.description.trim(),
-        type: v.type,
-        requestedUrgency: v.requestedUrgency,
-        targetDate: v.targetDate ? v.targetDate.toISOString() : null,
-        businessImpact: v.businessImpact.trim() || undefined,
-        expectedResult: v.expectedResult.trim() || undefined,
-        currentResult: v.currentResult.trim() || undefined,
-        reproductionSteps: v.reproductionSteps.trim() || undefined,
-        clientName: v.clientName.trim() || undefined,
-      })
-      .subscribe({
-        next: (created) => {
-          // Files can only be attached once the request exists, so they follow it rather than
-          // going up with it. The request is already saved either way — a failed upload must not
-          // look like a failed submission.
-          this.uploadPending(created.id, () => {
-            this.busy.set(false);
-            this.toast.success(`${created.requestNumber} submitted.`);
-            void this.router.navigate(['/requests', created.id]);
-          });
-        },
-        error: () => this.busy.set(false),
-      });
-  }
-
-  /**
-   * Several at once. The first item is the main form; the extras follow it in the order they were
-   * added. Files go up afterwards and against the *batch*, not against an item — the screenshot
-   * showing all eight problems belongs to the submission.
-   */
-  private submitBatch(v: ReturnType<typeof this.form.getRawValue>): void {
-    this.api
       .createBatch({
-        title: v.batchTitle.trim() || v.title.trim(),
-        clientName: v.clientName.trim() || undefined,
-        items: [
-          {
-            title: v.title.trim(),
-            description: this.withDetail(v),
-            type: v.type,
-            requestedUrgency: v.requestedUrgency,
-            targetDate: v.targetDate ? v.targetDate.toISOString() : null,
-          },
-          ...v.extras.map((e) => ({
-            title: e.title.trim(),
-            description: e.description.trim(),
-            type: e.type,
-            requestedUrgency: e.requestedUrgency,
-            targetDate: null,
-          })),
-        ],
+        clientName: this.clientName.trim() || null,
+        moduleId: this.moduleId ?? undefined,
+        formId: this.formId ?? undefined,
+        items: points.map((p) => ({
+          title: titleOf(p.text),
+          description: describe(p),
+          type: this.type,
+          requestedUrgency: this.urgency,
+          targetDate: this.targetDate ? this.targetDate.toISOString() : null,
+        })),
       })
       .subscribe({
         next: (batch) => {
-          this.uploadBatchFiles(batch.id, () => {
-            this.busy.set(false);
-            this.toast.success(`${batch.batchNumber}: ${batch.items.length} requests submitted.`);
+          // Each point's files against that point's own request, in the order they were typed.
+          const uploads = batch.items.map((item, i) => ({ id: item.id, files: points[i]?.files ?? [] }));
+          this.uploadAll(uploads, () => {
+            this.toast.success(`${batch.items.length} requests submitted.`);
             void this.router.navigate(['/requests/batches', batch.id]);
           });
         },
@@ -544,47 +418,99 @@ export class RequestCreateComponent implements OnInit {
       });
   }
 
-  /**
-   * A batch item carries a title and a description, so the first item's optional detail is folded
-   * into its description under its own heading rather than dropped. Nothing the requester typed is
-   * discarded, and nothing is sent that they cannot see: the labels are the same words the fields
-   * carried.
-   */
-  private withDetail(v: ReturnType<typeof this.form.getRawValue>): string {
-    const parts = [v.description.trim()];
-
-    for (const field of OPTIONAL_FIELDS) {
-      const value = (v[field.key] ?? '').trim();
-      if (value) parts.push(`${field.label}:\n${value}`);
-    }
-
-    return parts.join('\n\n');
+  private sendOne(point: Point): void {
+    this.api
+      .createRequest({
+        title: titleOf(point.text),
+        description: describe(point),
+        type: this.type,
+        requestedUrgency: this.urgency,
+        clientName: this.clientName.trim() || null,
+        moduleId: this.moduleId ?? undefined,
+        formId: this.formId ?? undefined,
+        targetDate: this.targetDate ? this.targetDate.toISOString() : null,
+      })
+      .subscribe({
+        next: (request) => {
+          this.uploadAll([{ id: request.id, files: point.files }], () => {
+            this.toast.success(`${request.requestNumber} submitted.`);
+            void this.router.navigate(['/requests', request.id]);
+          });
+        },
+        error: () => this.busy.set(false),
+      });
   }
 
-  private uploadBatchFiles(batchId: number, done: () => void): void {
-    const queue = this.files();
-    if (queue.length === 0) {
+  /**
+   * Files go up after the records exist, because an attachment needs something to hang off.
+   *
+   * A failed upload does not fail the submission: the request is already saved and telling someone
+   * their whole submission was lost because one screenshot did not upload would be a lie. They are
+   * told the picture is missing and can add it on the request itself.
+   */
+  private uploadAll(targets: { id: number; files: File[] }[], done: () => void): void {
+    const jobs = targets.flatMap((t) => t.files.map((file) => ({ id: t.id, file })));
+    if (jobs.length === 0) {
+      this.busy.set(false);
       done();
       return;
     }
 
-    let remaining = queue.length;
+    let remaining = jobs.length;
+    let failed = 0;
+
     const finish = () => {
-      if (--remaining === 0) done();
+      if (--remaining > 0) return;
+      this.busy.set(false);
+      if (failed > 0) {
+        this.toast.error(
+          failed === 1
+            ? 'One attachment did not upload. You can add it on the request.'
+            : `${failed} attachments did not upload. You can add them on the request.`);
+      }
+      done();
     };
 
-    for (const file of queue) {
-      this.api.uploadBatchAttachment(batchId, file).subscribe({
+    for (const job of jobs) {
+      this.api.uploadRequestAttachment(job.id, job.file).subscribe({
         next: finish,
-        error: () => {
-          this.toast.error(`${file.name} could not be attached.`);
-          finish();
-        },
+        error: () => { failed++; finish(); },
       });
     }
   }
+}
 
-  cancel(): void {
-    void this.router.navigate(['/requests']);
+function blankPoint(): Point {
+  return {
+    text: '',
+    files: [],
+    expectedResult: '',
+    currentResult: '',
+    businessImpact: '',
+    reproductionSteps: '',
+    shown: {},
+  };
+}
+
+/**
+ * The first line, which is what somebody skimming a queue reads.
+ *
+ * A point is one piece of text, so there is no separate title to ask for — asking for both means
+ * typing the same sentence twice, and that is most of what made the old form slow.
+ */
+function titleOf(text: string): string {
+  const first = text.trim().split('\n')[0].trim();
+  return first.length <= 300 ? first : `${first.slice(0, 299).trimEnd()}…`;
+}
+
+/** The point in full, with whatever optional detail was filled in folded underneath it. */
+function describe(point: Point): string {
+  const parts = [point.text.trim()];
+
+  for (const field of DETAIL_FIELDS) {
+    const value = (point as unknown as Record<string, string>)[field.key]?.trim();
+    if (value) parts.push(`${field.label}: ${value}`);
   }
+
+  return parts.join('\n\n');
 }

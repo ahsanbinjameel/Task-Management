@@ -478,9 +478,13 @@ export interface BatchItemDto {
 }
 
 export interface CreateRequestBatchDto {
-  title: string;
+  /** Optional — the server names the submission from its first point when this is absent. */
+  title?: string | null;
   note?: string | null;
   clientName?: string | null;
+  /** Shared product location, copied onto each item. Never a client (PRODUCT-CORE §5). */
+  moduleId?: number;
+  formId?: number;
   items: BatchItemDto[];
 }
 

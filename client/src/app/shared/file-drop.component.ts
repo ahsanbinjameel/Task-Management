@@ -1,4 +1,4 @@
-import { Component, DestroyRef, effect, inject, model, signal } from '@angular/core';
+import { Component, DestroyRef, effect, inject, input, model, signal } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
@@ -87,6 +87,19 @@ export class FileDropComponent {
   /** Two-way: the form owns the list, this owns how it is added to. */
   readonly files = model<File[]>([]);
 
+  /**
+   * Whether a document-level paste belongs to *this* one.
+   *
+   * Paste is caught on the document, because people press Ctrl+V wherever they happen to be
+   * looking rather than after clicking a particular box. That is right when there is one drop zone
+   * on the screen and wrong the moment there are several: on the multi-point request form a single
+   * Ctrl+V would file the same screenshot against every point at once.
+   *
+   * So a form with more than one of these tells each whether it is the one being typed into. The
+   * default is true, which keeps every existing single-drop screen behaving exactly as before.
+   */
+  readonly active = input(true);
+
   readonly over = signal(false);
   private readonly urls = signal<Map<File, string>>(new Map());
 
@@ -94,6 +107,8 @@ export class FileDropComponent {
     // Pasting is a document-level gesture: people press Ctrl+V wherever they happen to be looking,
     // not after clicking a particular box.
     const onPaste = (event: ClipboardEvent) => {
+      if (!this.active()) return;
+
       const items = Array.from(event.clipboardData?.items ?? []);
       const pasted = items
         .filter((i) => i.kind === 'file')
@@ -108,6 +123,7 @@ export class FileDropComponent {
     };
 
     document.addEventListener('paste', onPaste);
+    inject(DestroyRef).onDestroy(() => document.removeEventListener('paste', onPaste));
 
     // Thumbnails are made as files arrive and released as they leave, so the template only ever
     // reads. Runs on any change to the list, including one the form made.

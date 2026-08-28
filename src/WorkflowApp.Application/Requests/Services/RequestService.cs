@@ -110,6 +110,10 @@ public sealed class RequestService : IRequestService
             Type = dto.Type,
             RequestedUrgency = dto.RequestedUrgency,
             ClientId = await _lookups.ResolveClientAsync(dto.ClientName, ct),
+
+            // The product axis, when the requester happened to know. Refined at triage.
+            ModuleId = dto.ModuleId,
+            FormId = dto.FormId,
             BusinessImpact = dto.BusinessImpact,
             ExpectedResult = dto.ExpectedResult,
             CurrentResult = dto.CurrentResult,

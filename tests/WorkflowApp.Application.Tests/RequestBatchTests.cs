@@ -94,8 +94,16 @@ public class RequestBatchTests
         Assert.Equal("batch.no_items", result.Error!.Code);
     }
 
+    /// <summary>
+    /// A point needs something said about it, and nothing else (PRODUCT-CORE §8).
+    ///
+    /// This used to demand a title *and* a description. On the fast intake form that means typing
+    /// the same sentence twice: a point is one piece of text, and its first line is the title. What
+    /// is still refused is an item with no title at all, because there is then nothing to call it
+    /// in a queue.
+    /// </summary>
     [Fact]
-    public async Task CreateAsync_refuses_a_half_filled_item()
+    public async Task CreateAsync_refuses_an_item_with_nothing_to_call_it()
     {
         var h = await new TestHarness().SeedRolesAndPermissionsAsync();
         var requester = await h.CreateUserAsync("rachel");
@@ -107,12 +115,64 @@ public class RequestBatchTests
             Items = new[]
             {
                 new BatchItemDto { Title = "Fine", Description = "Complete." },
-                new BatchItemDto { Title = "Started but abandoned", Description = "   " },
+                new BatchItemDto { Title = "   ", Description = "Described but never named." },
             },
         });
 
         Assert.False(result.IsSuccess);
         Assert.Equal("batch.item_incomplete", result.Error!.Code);
+    }
+
+    [Fact]
+    public async Task An_item_with_only_text_is_enough()
+    {
+        var h = await new TestHarness().SeedRolesAndPermissionsAsync();
+        var requester = await h.CreateUserAsync("rachel");
+        h.ActingAsAdmin(requester.Id);
+
+        var result = await h.Batches.CreateAsync(requester.Id, new CreateRequestBatchDto
+        {
+            Items = new[]
+            {
+                new BatchItemDto { Title = "Delivery order detail report total is wrong" },
+                new BatchItemDto { Title = "Master report column XYZ is not showing" },
+            },
+        });
+
+        Assert.True(result.IsSuccess);
+
+        // The description falls back to what was said, rather than being left blank — an empty
+        // description reads as a blank panel on every screen that shows one.
+        var items = await h.Db.Requests.AsNoTracking().OrderBy(r => r.OrdinalInBatch).ToListAsync();
+        Assert.All(items, r => Assert.False(string.IsNullOrWhiteSpace(r.Description)));
+        Assert.Equal("Delivery order detail report total is wrong", items[0].Description);
+    }
+
+    /// <summary>
+    /// Nobody reporting a broken invoice thinks of it as a batch, so the form stopped asking
+    /// (PRODUCT-CORE §8). The submission is named from what was actually said.
+    /// </summary>
+    [Fact]
+    public async Task A_submission_nobody_named_is_named_after_its_first_point()
+    {
+        var h = await new TestHarness().SeedRolesAndPermissionsAsync();
+        var requester = await h.CreateUserAsync("rachel");
+        h.ActingAsAdmin(requester.Id);
+
+        var result = await h.Batches.CreateAsync(requester.Id, new CreateRequestBatchDto
+        {
+            Items = new[]
+            {
+                new BatchItemDto { Title = "Delivery order detail report total is wrong" },
+                new BatchItemDto { Title = "Master report column XYZ is not showing" },
+                new BatchItemDto { Title = "Invoice print is cut off" },
+            },
+        });
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(
+            "Delivery order detail report total is wrong (+2 more)",
+            result.Value!.Title);
     }
 
     [Fact]

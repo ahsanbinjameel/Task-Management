@@ -221,6 +221,8 @@ export class ApiService {
     businessImpact?: string; expectedResult?: string; currentResult?: string;
     reproductionSteps?: string; targetDate?: string | null;
     clientName?: string | null;
+    /** Where in the product, if the requester knew. Refined at triage (PRODUCT-CORE §5). */
+    moduleId?: number; formId?: number;
   }, context?: HttpContext): Observable<RequestDetailDto> {
     return this.http.post<RequestDetailDto>('/api/requests', body, { context });
   }

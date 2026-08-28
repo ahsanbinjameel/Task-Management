@@ -88,6 +88,27 @@ public sealed class RequestBatchService : IRequestBatchService
         _logger = logger;
     }
 
+    /// <summary>
+    /// What to call the submission when the requester was not asked (PRODUCT-CORE §8).
+    ///
+    /// One point is its own name. Several are named after the first, because that is what the
+    /// person was thinking about when they started, and a count so a list of submissions reads as
+    /// something other than a column of near-identical sentences.
+    /// </summary>
+    private static string BatchTitle(CreateRequestBatchDto dto, IReadOnlyList<BatchItemDto> items)
+    {
+        if (!string.IsNullOrWhiteSpace(dto.Title)) return dto.Title.Trim();
+
+        var first = items[0].Title.Trim();
+        if (items.Count == 1) return Shorten(first, 300);
+
+        var suffix = $" (+{items.Count - 1} more)";
+        return Shorten(first, 300 - suffix.Length) + suffix;
+    }
+
+    private static string Shorten(string text, int limit) =>
+        text.Length <= limit ? text : text[..(limit - 1)].TrimEnd() + "\u2026";
+
     public async Task<Result<RequestBatchDetailDto>> CreateAsync(
         long requesterId, CreateRequestBatchDto dto, CancellationToken ct = default)
     {
@@ -105,13 +126,15 @@ public sealed class RequestBatchService : IRequestBatchService
             return Result<RequestBatchDetailDto>.Failure(Error.Validation(
                 "batch.no_items", "Add at least one thing you are asking for."));
 
-        var missing = items.FindIndex(i =>
-            string.IsNullOrWhiteSpace(i.Title) || string.IsNullOrWhiteSpace(i.Description));
+        // A point needs something said about it, and nothing else (PRODUCT-CORE §8). The
+        // description used to be demanded alongside the title, which on the fast intake form would
+        // mean typing the same sentence twice.
+        var missing = items.FindIndex(i => string.IsNullOrWhiteSpace(i.Title));
 
         if (missing >= 0)
             return Result<RequestBatchDetailDto>.Failure(Error.Validation(
                 "batch.item_incomplete",
-                $"Item {missing + 1} needs both a title and a description."));
+                $"Item {missing + 1} needs something said about it."));
 
         var now = _clock.UtcNow;
         var clientId = await _lookups.ResolveClientAsync(dto.ClientName, ct);
@@ -119,7 +142,7 @@ public sealed class RequestBatchService : IRequestBatchService
         var batch = new RequestBatch
         {
             BatchNumber = await _numbers.NextAsync(NumberSequences.Batch, NumberSequences.BatchPrefix, ct),
-            Title = dto.Title.Trim(),
+            Title = BatchTitle(dto, items),
             Note = string.IsNullOrWhiteSpace(dto.Note) ? null : dto.Note.Trim(),
             ClientId = clientId,
             RequestedByUserId = requesterId,
@@ -139,9 +162,21 @@ public sealed class RequestBatchService : IRequestBatchService
                 RequestNumber = await _numbers.NextAsync(
                     NumberSequences.Request, NumberSequences.RequestPrefix, ct),
                 Title = item.Title.Trim(),
-                Description = item.Description.Trim(),
+
+                // The point in full, falling back to what was said when nothing longer was
+                // written. A request with an empty description reads as a blank panel on every
+                // screen that shows one.
+                Description = string.IsNullOrWhiteSpace(item.Description)
+                    ? item.Title.Trim()
+                    : item.Description.Trim(),
+
                 Type = item.Type,
                 RequestedUrgency = item.RequestedUrgency,
+
+                // The product axis, shared and copied for the same reason the client is: an item
+                // refiled at triage must not drag its siblings with it.
+                ModuleId = dto.ModuleId,
+                FormId = dto.FormId,
 
                 // Copied, not read through the batch. An item corrected at triage must not drag its
                 // siblings with it — which is exactly what happens when eight month-end problems

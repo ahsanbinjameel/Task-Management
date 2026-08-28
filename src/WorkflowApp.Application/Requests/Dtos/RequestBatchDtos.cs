@@ -13,8 +13,14 @@ public sealed record BatchItemDto
     [Required, MaxLength(300)]
     public string Title { get; init; } = default!;
 
-    [Required, MaxLength(8000)]
-    public string Description { get; init; } = default!;
+    /// <summary>
+    /// The point in full. Optional: the fast intake form collects one piece of text per point and
+    /// sends its first line as the title, so demanding a second, longer version of the same
+    /// sentence would be asking the requester to write it twice (PRODUCT-CORE §8). The service
+    /// falls back to the title when it is absent.
+    /// </summary>
+    [MaxLength(8000)]
+    public string? Description { get; init; }
 
     public RequestType Type { get; init; } = RequestType.Support;
     public RequestedUrgency RequestedUrgency { get; init; } = RequestedUrgency.Normal;
@@ -24,9 +30,17 @@ public sealed record BatchItemDto
 
 public sealed record CreateRequestBatchDto
 {
-    /// <summary>What the whole batch is about — "Month-end problems", "New starter setup".</summary>
-    [Required, MaxLength(300)]
-    public string Title { get; init; } = default!;
+    /// <summary>
+    /// What the whole batch is about — "Month-end problems", "New starter setup".
+    ///
+    /// <b>Optional.</b> It used to be required, which meant the intake form had to ask the
+    /// requester to name their own submission before they could describe a single problem
+    /// (PRODUCT-CORE §8). Nobody asking about a broken invoice thinks of it as a batch, and the
+    /// answer was invariably a restatement of the first point. When it is absent the service names
+    /// the batch from what was actually said.
+    /// </summary>
+    [MaxLength(300)]
+    public string? Title { get; init; }
 
     /// <summary>Context that applies to every item, written once.</summary>
     [MaxLength(4000)]
@@ -35,6 +49,17 @@ public sealed record CreateRequestBatchDto
     /// <summary>Shared, and copied onto each item so an item can be corrected on its own later.</summary>
     [MaxLength(200)]
     public string? ClientName { get; init; }
+
+    /// <summary>
+    /// Where in the product these are, if the requester happens to know (PRODUCT-CORE §5, §8).
+    /// Shared defaults, copied onto each item for the same reason the client is.
+    ///
+    /// Optional and never demanded: intake asks for a client and a sentence, and placing the work
+    /// precisely is a triage concern. Four mandatory dropdowns in front of somebody reporting a
+    /// broken invoice is how you stop them reporting it.
+    /// </summary>
+    public long? ModuleId { get; init; }
+    public long? FormId { get; init; }
 
     [Required]
     [MinLength(1, ErrorMessage = "A batch needs at least one item.")]
