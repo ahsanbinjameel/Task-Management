@@ -1091,6 +1091,14 @@ running the API instead (`--launch-profile Development`), which does load user-s
   the assignment queue and from Quality. Forward exists because back alone is a trapdoor: stepping
   back to check something left no way to return. The fallback route is what makes it safe on a page
   opened from a notification or a pasted link, where `history.back()` leaves the application.
+- **Stacking order is a named scale in `styles.scss`, not ad-hoc numbers.** The app's floating
+  layers were in the twenties and forties, which worked until the table headings became sticky:
+  Material's CDK pins a sticky cell at a hardcoded `z-index: 100`, so the quick-view drawer at 41
+  ended up *under* the column headings of the grid it was opened from and the filter row painted
+  across the panel. Everything of ours that floats now sits above 100 — `--z-shell-scrim`,
+  `--z-shell-nav`, `--z-drawer-scrim`, `--z-drawer` — and the number they have to beat is written
+  down next to them rather than rediscovered. Material's overlay container stays at 1000, which is
+  correct: a dialog is modal over everything, drawer included.
 - **Parked capabilities are one flag file, not scattered `@if`s** (`core/parked.ts`). Quick Work,
   dependencies, subtasks and the scope-change ceremony are built, tested, endpoint-complete and
   **not offered**: the widget is off the shell and the three tabs are off the task detail. Reading

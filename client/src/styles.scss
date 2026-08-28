@@ -37,6 +37,25 @@ html {
   --tone-done-bg:    #e3e8ee;   --tone-done-fg:    #48566a;
   --tone-muted-bg:   #eef1f5;   --tone-muted-fg:   #77828f;
 
+  /*
+   * Stacking order, in one place.
+   *
+   * These were ad-hoc numbers in the twenties and forties until the table headings became sticky.
+   * Material's CDK pins a sticky cell at a hardcoded z-index of 100 — a value this app does not
+   * control and cannot lower — so the drawer, at 41, ended up *underneath* the column headings of
+   * the grid it was opened from: the headings and the filter row painted straight over the panel.
+   *
+   * So everything of ours that floats now sits above that 100, and the number it has to beat is
+   * recorded here rather than rediscovered. Material's own overlay container (dialogs, menus,
+   * tooltips, the date picker) sits at 1000 and stays above all of it, which is right — a dialog
+   * is modal over everything, including a drawer.
+   */
+  --z-sticky-cell: 100;   /* Material's, not ours. Listed so ours can be placed against it. */
+  --z-shell-scrim: 300;
+  --z-shell-nav: 310;
+  --z-drawer-scrim: 400;
+  --z-drawer: 410;
+
   --radius: 10px;
   --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.08);
   --shell-width: 244px;

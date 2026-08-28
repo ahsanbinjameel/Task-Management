@@ -135,10 +135,11 @@ export interface QuickViewTarget {
     /* qv- prefixed: the shell already has a .scrim for its nav drawer, and two elements sharing
        one class name on the same page is a trap for whoever reads either of them next. */
     .qv-scrim {
-      position: fixed; inset: 0; background: rgba(0, 0, 0, 0.28); z-index: 40;
+      position: fixed; inset: 0; background: rgba(0, 0, 0, 0.28); z-index: var(--z-drawer-scrim);
     }
     .drawer {
-      position: fixed; top: 0; right: 0; bottom: 0; width: min(430px, 92vw); z-index: 41;
+      position: fixed; top: 0; right: 0; bottom: 0; width: min(430px, 92vw);
+      z-index: var(--z-drawer);
       background: var(--surface-raised); border-left: 1px solid var(--border);
       box-shadow: -8px 0 28px rgba(0, 0, 0, 0.14);
       display: flex; flex-direction: column;

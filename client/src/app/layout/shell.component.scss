@@ -166,7 +166,7 @@ main {
     position: fixed;
     inset: 0 auto 0 0;
     width: var(--shell-width);
-    z-index: 30;
+    z-index: var(--z-shell-nav);
     transform: translateX(-100%);
     transition: transform 0.2s ease;
   }
@@ -177,7 +177,7 @@ main {
     display: block;
     position: fixed;
     inset: 0;
-    z-index: 20;
+    z-index: var(--z-shell-scrim);
     background: rgba(9, 18, 30, 0.45);
   }
 
