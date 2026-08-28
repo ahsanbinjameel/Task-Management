@@ -4,6 +4,11 @@
 where it lives, and what the conventions are. Only open the specific files a task touches.
 When you add/move/rename anything structural, update this file in the same change.
 
+> **Freeze in effect — read `PRODUCT-CORE.md` first.** It governs *what the product is* and what may
+> be built next; this file governs *where code lives*. No new workflow, entity, status, screen or
+> field enters the visible product until the pilot runs. On a conflict: `CLAUDE.md` wins on
+> implementation, `PRODUCT-CORE.md` wins on what a user sees.
+
 > Status legend: ✅ built & compiling · 🚧 partially built · ⛔ not started · 🔒 blocked on SQL Server
 
 ---
@@ -17,7 +22,7 @@ A review can also branch sideways into **Verification** — assigned investigati
 is really a problem — which produces findings and never work. See §6.
 
 Design rationale: `docs/01-ARCHITECTURE.md` · Phase checklist: `docs/02-PHASE-PLAN.md`
-Deploy + operate: `docs/03-RUNBOOK.md`
+Deploy + operate: `docs/03-RUNBOOK.md` · User guide: `docs/USER-GUIDE.md` (skeleton, filled as §12 screens land)
 (the duplicate copies that used to sit at the repo root have been deleted — `docs/` is the only home.)
 
 ## 2. Stack & environment
