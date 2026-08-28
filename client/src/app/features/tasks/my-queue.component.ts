@@ -57,6 +57,27 @@ import { ViewTabsComponent } from '../../shared/view-tabs.component';
                     <mat-icon class="running" matTooltip="Timer running">bolt</mat-icon>
                   }
                 </div>
+
+                <!--
+                  Where in the product this is. First thing a worker asks and, until now, the
+                  first thing they had to open the task to find out (PRODUCT-CORE §12A).
+                -->
+                @if (task.clientName || task.moduleName) {
+                  <div class="context small">
+                    @if (task.clientName) { <span class="client">{{ task.clientName }}</span> }
+                    @if (task.clientName && task.moduleName) { <span class="dot">·</span> }
+                    @if (task.moduleName) { <span>{{ task.moduleName }}</span> }
+                  </div>
+                }
+
+                <!-- What "done" is supposed to look like, in the requester's own words. -->
+                @if (task.expectedResult) {
+                  <div class="expected small">
+                    <mat-icon>flag</mat-icon>
+                    <span class="truncate">{{ task.expectedResult }}</span>
+                  </div>
+                }
+
                 <div class="line2">
                   <app-chip [value]="task.status" kind="status" />
                   <app-chip [value]="task.priority" kind="priority" />
@@ -66,10 +87,30 @@ import { ViewTabsComponent } from '../../shared/view-tabs.component';
                     </span>
                   }
                   <span class="small muted">{{ task.totalWorkedTime | duration }} logged</span>
+                  @if (task.attachmentCount > 0) {
+                    <span class="small muted attach"
+                          [matTooltip]="task.attachmentCount === 1
+                                        ? '1 file to look at'
+                                        : task.attachmentCount + ' files to look at'">
+                      <mat-icon>attach_file</mat-icon>{{ task.attachmentCount }}
+                    </span>
+                  }
                 </div>
               </div>
 
-              @if (isNext(task, i)) {
+              <!--
+                Start is the whole point of this screen, so it is on the row rather than one page
+                further in. It routes through the task detail with ?start=1, which already owns the
+                confirmation and the pause-what-was-running sequence — a second implementation of
+                starting work is exactly how the two would drift apart.
+              -->
+              @if (task.hasActiveSession) {
+                <button matButton="filled" (click)="open(task)">Open</button>
+              } @else if (canStart(task)) {
+                <button matButton="filled" (click)="start(task)">
+                  <mat-icon>play_arrow</mat-icon> Start
+                </button>
+              } @else if (isNext(task, i)) {
                 <button matButton="filled" (click)="open(task)">Open</button>
               } @else {
                 <span class="waiting small muted">Later</span>
@@ -96,6 +137,16 @@ import { ViewTabsComponent } from '../../shared/view-tabs.component';
     .body { flex: 1 1 auto; min-width: 0; cursor: pointer; }
     .line1 { display: flex; align-items: center; gap: 9px; }
     .line2 { display: flex; align-items: center; gap: 9px; margin-top: 5px; flex-wrap: wrap; }
+    .context { color: var(--text-muted); margin-top: 3px; }
+    .context .client { color: var(--text); font-weight: 500; }
+    .context .dot { margin: 0 5px; }
+    .expected {
+      display: flex; align-items: center; gap: 5px;
+      color: var(--text-muted); margin-top: 3px; min-width: 0;
+    }
+    .expected mat-icon { font-size: 14px; width: 14px; height: 14px; flex: none; }
+    .attach { display: inline-flex; align-items: center; gap: 2px; }
+    .attach mat-icon { font-size: 15px; width: 15px; height: 15px; }
     .running { color: var(--tone-running-fg); font-size: 18px; width: 18px; height: 18px; }
     .cdk-drag-preview { box-shadow: 0 8px 24px rgba(16,24,40,0.18); border-radius: 8px; }
     .cdk-drag-placeholder { opacity: 0.35; }
@@ -155,6 +206,24 @@ export class MyQueueComponent implements OnInit {
    */
   isNext(task: TaskSummaryDto, index: number): boolean {
     return index === 0 || task.hasActiveSession;
+  }
+
+  /**
+   * Whether starting is the obvious next move. Deliberately the same set the task detail's own
+   * Start button uses — the server is what enforces it, and offering a button that 409s teaches
+   * people to distrust the screen.
+   *
+   * Blocked is absent: a task waiting on unfinished work is refused by `WorkSessionService`, and
+   * `Paused` is present because resuming is exactly what a paused task is for.
+   */
+  canStart(task: TaskSummaryDto): boolean {
+    return ['Assigned', 'ReadyToStart', 'Paused', 'QCFailedRework', 'Reopened']
+      .includes(task.status);
+  }
+
+  /** Hands off to the task detail, which owns the confirmation and the interrupt sequence. */
+  start(task: TaskSummaryDto): void {
+    void this.router.navigate(['/tasks', task.id], { queryParams: { start: 1 } });
   }
 
   open(task: TaskSummaryDto): void {

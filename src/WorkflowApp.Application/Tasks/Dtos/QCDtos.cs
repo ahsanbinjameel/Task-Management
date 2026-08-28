@@ -75,7 +75,43 @@ public sealed record ClosureRequirementDto(string Code, string Description, bool
 public sealed record ClosureChecklistDto(
     long TaskId,
     bool IsReady,
-    IReadOnlyList<ClosureRequirementDto> Requirements);
+    IReadOnlyList<ClosureRequirementDto> Requirements,
+
+    // ---- the acceptance policy (PRODUCT-CORE §7, invariant §4.14) --------------------------------
+    //
+    // Deliberately reported *beside* the requirements rather than as one of them. Requester
+    // acceptance is a policy about a kind of work, not a universal invariant: a coordinator whose
+    // requester has gone quiet must still be able to close, and turning this into an unmet
+    // requirement would have forced them through the override path for an ordinary Tuesday.
+    // So the screen is told, and the person decides.
+    /// <summary>Whether someone asked for this work and can therefore confirm the fix.</summary>
+    bool RequiresRequesterAcceptance = false,
+    /// <summary>Who that is, so the button can name them instead of saying "the requester".</summary>
+    string? RequesterDisplayName = null,
+    /// <summary>True once the work is closed — acceptance and closure are the same act.</summary>
+    bool RequesterHasConfirmed = false);
+
+/// <summary>
+/// The requester's "It's fixed". Carries nothing mandatory: they have already said the only thing
+/// that matters by pressing it, and demanding a sentence to close your own request is the kind of
+/// friction that sends people back to WhatsApp.
+/// </summary>
+public sealed record AcceptFixDto
+{
+    [MaxLength(2000)]
+    public string? Note { get; init; }
+}
+
+/// <summary>
+/// The requester's "Still not fixed". The reason is mandatory, because "it's still broken" with no
+/// detail costs the worker exactly the round-trip this screen exists to remove.
+/// </summary>
+public sealed record RejectFixDto
+{
+    [Required]
+    [MaxLength(2000)]
+    public string Reason { get; init; } = default!;
+}
 
 public sealed record CloseTaskDto
 {

@@ -810,9 +810,32 @@ public sealed class TaskQueryService : ITaskQueryService
             ? new Dictionary<long, RequestOrigin>()
             : await _db.Requests.AsNoTracking()
                 .Where(r => requestIds.Contains(r.Id))
-                .Select(r => new { r.Id, r.RequestNumber, r.RequestedByUserId })
+                .Select(r => new { r.Id, r.RequestNumber, r.RequestedByUserId, r.ExpectedResult })
                 .ToDictionaryAsync(
-                    r => r.Id, r => new RequestOrigin(r.RequestNumber, r.RequestedByUserId), ct);
+                    r => r.Id,
+                    r => new RequestOrigin(r.RequestNumber, r.RequestedByUserId, r.ExpectedResult),
+                    ct);
+
+        // The product area, beside the client. Same reason as the client name: an id in a queue
+        // answers nothing, and "which form is this about?" is half of what a worker needs.
+        var moduleIds = tasks.Where(t => t.ModuleId.HasValue)
+            .Select(t => t.ModuleId!.Value).Distinct().ToList();
+
+        var moduleNames = moduleIds.Count == 0
+            ? new Dictionary<long, string>()
+            : await _db.Modules.AsNoTracking()
+                .Where(m => moduleIds.Contains(m.Id))
+                .ToDictionaryAsync(m => m.Id, m => m.Name, ct);
+
+        // Is there a picture? Counted across the task and the request it came from, because to the
+        // person about to start the work they are one pile. QC evidence is left out on purpose:
+        // it belongs to a numbered attempt, and it is not context for starting.
+        var attachmentCounts = await _db.Attachments.AsNoTracking()
+            .Where(a => (a.TaskId != null && taskIds.Contains(a.TaskId.Value))
+                        || (a.RequestId != null && requestIds.Contains(a.RequestId.Value)))
+            .Where(a => a.Kind != AttachmentKind.QCEvidence)
+            .Select(a => new { a.TaskId, a.RequestId })
+            .ToListAsync(ct);
 
         // One more name lookup, for everyone the rows above referred to but the assignee list did
         // not already cover: requesters, quality checkers and support people.
@@ -898,12 +921,18 @@ public sealed class TaskQueryService : ITaskQueryService
                 lastCheck?.ReviewedAt,
                 lastCheck?.Comments,
                 NameOf(t.QCUserId),
-                helpers);
+                helpers,
+                t.ModuleId,
+                t.ModuleId is { } mid && moduleNames.TryGetValue(mid, out var module) ? module : null,
+                origin?.ExpectedResult,
+                attachmentCounts.Count(a =>
+                    a.TaskId == t.Id || (a.RequestId != null && a.RequestId == t.RequestId)));
         }).ToList();
     }
 
     /// <summary>Where a task came from, for the rows that show who asked for the work.</summary>
-    private sealed record RequestOrigin(string RequestNumber, long RequestedByUserId);
+    private sealed record RequestOrigin(
+        string RequestNumber, long RequestedByUserId, string? ExpectedResult);
 
     /// <summary>Elapsed time across all closed sessions. An open session is not counted until it ends.</summary>
     internal static TimeSpan TotalWorked(IEnumerable<WorkSession> sessions) =>

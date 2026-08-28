@@ -436,6 +436,18 @@ export class ApiService {
     return this.http.post<TaskDetailDto>(`/api/tasks/${id}/reopen`, { reason }, { context });
   }
 
+  /**
+   * The requester closing their own loop (PRODUCT-CORE §7). Neither is permission-gated: the
+   * server decides on the record whether you are the person who asked for this work.
+   */
+  acceptFix(id: number, note?: string, context?: HttpContext): Observable<TaskDetailDto> {
+    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/accept`, { note }, { context });
+  }
+
+  rejectFix(id: number, reason: string, context?: HttpContext): Observable<TaskDetailDto> {
+    return this.http.post<TaskDetailDto>(`/api/tasks/${id}/reject`, { reason }, { context });
+  }
+
   // --- collaboration -------------------------------------------------------------------------
 
   comments(id: number): Observable<TaskCommentDto[]> {

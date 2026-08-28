@@ -114,7 +114,24 @@ public sealed record TaskSummaryDto(
     string? CheckNotes = null,
     /// <summary>Who is lined up to check it, where that has been decided.</summary>
     string? QCUserDisplayName = null,
-    IReadOnlyList<string>? SupportPeople = null);
+    IReadOnlyList<string>? SupportPeople = null,
+
+    // ---- what a worker needs before they can start (PRODUCT-CORE §12A) ------------------------
+    //
+    // A queue row has to answer "what is this, in what part of the product, what is it supposed to
+    // do, and is there a picture" without opening anything. Those four questions were the ones
+    // being asked of Ahsan by message, which is exactly the relay the software exists to remove.
+    /// <summary>The product area, beside the client. Together these are the ERP context.</summary>
+    long? ModuleId = null,
+    string? ModuleName = null,
+    /// <summary>What "working" is supposed to look like, in the requester's own words.</summary>
+    string? ExpectedResult = null,
+    /// <summary>
+    /// Everything worth looking at before starting: the requester's screenshots and anything filed
+    /// against the task itself. Quality-check evidence is deliberately excluded — it belongs to a
+    /// numbered attempt, not to the task.
+    /// </summary>
+    int AttachmentCount = 0);
 
 /// <summary>
 /// A status transition, from-and-to. This is the *technical* trail: it is the shape of the state

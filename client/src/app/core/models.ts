@@ -314,6 +314,15 @@ export interface TaskSummaryDto {
   checkNotes?: string | null;
   qcUserDisplayName?: string | null;
   supportPeople?: string[] | null;
+
+  // What a worker needs before they can start (PRODUCT-CORE §12A).
+  /** The product area, beside the client. Together these are the ERP context. */
+  moduleId?: number | null;
+  moduleName?: string | null;
+  /** What "working" is supposed to look like, in the requester's own words. */
+  expectedResult?: string | null;
+  /** Screenshots and files worth seeing first. Excludes quality-check evidence. */
+  attachmentCount: number;
 }
 
 /** The state machine's own record: from-and-to, for people who run the process. */
@@ -662,6 +671,14 @@ export interface ClosureChecklistDto {
   taskId: number;
   isReady: boolean;
   requirements: ClosureRequirementDto[];
+
+  // The acceptance policy (PRODUCT-CORE §7). Reported beside the requirements, not as one of
+  // them: a coordinator whose requester has gone quiet is told, not blocked.
+  /** Whether someone asked for this work and can therefore confirm the fix. */
+  requiresRequesterAcceptance: boolean;
+  requesterDisplayName?: string | null;
+  /** True once it is closed — acceptance and closure are the same act. */
+  requesterHasConfirmed: boolean;
 }
 
 export interface AcceptanceCriteriaDto {

@@ -69,6 +69,19 @@ public static class TaskWorkflow
         new(WorkTaskStatus.Closed,                WorkTaskStatus.Reopened,              PermReopen, ReasonRequired: true),
         new(WorkTaskStatus.Reopened,              WorkTaskStatus.InProgress,            PermWork),
 
+        // The requester's "still not fixed" (PRODUCT-CORE §7). Internal quality check and client
+        // acceptance are different claims, so work that has passed ours can still come back from
+        // the person who asked — before it was ever closed. It lands in Reopened rather than
+        // QCFailedRework because that verdict belongs to QC and is reachable only through QCService,
+        // and because Reopened already resets the closure gate's QC requirement: a rejected fix has
+        // to be checked again before it can close.
+        //
+        // These say only that the move is *shaped* correctly. Who may make it is decided on the
+        // record by ClosureService — the requester of the originating request, not a permission
+        // holder — the same split the rest of the app uses.
+        new(WorkTaskStatus.QCPassed,              WorkTaskStatus.Reopened,              PermReopen, ReasonRequired: true),
+        new(WorkTaskStatus.ReadyForClosure,       WorkTaskStatus.Reopened,              PermReopen, ReasonRequired: true),
+
         // --- Cross-cutting side states (allowed from most active states) ---
         new(WorkTaskStatus.Approved,              WorkTaskStatus.Deferred,              PermDefer, ReasonRequired: true),
         new(WorkTaskStatus.ReadyForAssignment,    WorkTaskStatus.Deferred,              PermDefer, ReasonRequired: true),

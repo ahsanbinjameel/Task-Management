@@ -31,6 +31,24 @@ public interface IClosureService
     /// </summary>
     Task<Result<TaskDetailDto>> ReopenAsync(
         long taskId, long actingUserId, ReopenTaskDto request, CancellationToken ct = default);
+
+    /// <summary>
+    /// The requester's "It's fixed" (PRODUCT-CORE §7). Closes the work in their name.
+    ///
+    /// Only the person who raised the originating request may call it — decided on the record
+    /// rather than by a permission, because the answer depends on the task, not on the caller's
+    /// authority. A coordinator holding every permission there is still cannot confirm a fix on
+    /// somebody else's behalf.
+    /// </summary>
+    Task<Result<TaskDetailDto>> AcceptAsync(
+        long taskId, long actingUserId, AcceptFixDto request, CancellationToken ct = default);
+
+    /// <summary>
+    /// The requester's "Still not fixed". Sends the work back with their words attached, and
+    /// requires a fresh QC pass before it can reach closure again.
+    /// </summary>
+    Task<Result<TaskDetailDto>> RejectAsync(
+        long taskId, long actingUserId, RejectFixDto request, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -83,9 +101,149 @@ public sealed class ClosureService : IClosureService
             return Result<ClosureChecklistDto>.Failure(Error.NotFound("task.not_found", "Task not found."));
 
         var requirements = await RequirementsAsync(task, ct);
+        var requester = await RequesterAsync(task, ct);
 
         return Result<ClosureChecklistDto>.Success(new ClosureChecklistDto(
-            taskId, requirements.All(r => r.IsMet), requirements));
+            taskId, requirements.All(r => r.IsMet), requirements,
+            RequiresRequesterAcceptance: requester is not null,
+            RequesterDisplayName: requester?.DisplayName,
+            RequesterHasConfirmed: task.Status == WorkTaskStatus.Closed));
+    }
+
+    /// <summary>
+    /// Who asked for this work, when there is such a person. That is the whole acceptance policy
+    /// (PRODUCT-CORE §4.14): work with a requester is confirmed by them; work with none — a task
+    /// raised internally, or a subtask — closes on the quality check alone, because there is nobody
+    /// to ask and inventing a confirmation step for an empty seat only strands the work.
+    ///
+    /// One method, so changing the rule is one edit rather than a hunt through the call sites.
+    /// </summary>
+    private async Task<Requester?> RequesterAsync(WorkTask task, CancellationToken ct)
+    {
+        if (task.RequestId is not { } requestId) return null;
+
+        return await _db.Requests.AsNoTracking()
+            .Where(r => r.Id == requestId)
+            .Join(_db.Users.AsNoTracking(), r => r.RequestedByUserId, u => u.Id,
+                (r, u) => new Requester(u.Id, u.DisplayName))
+            .FirstOrDefaultAsync(ct);
+    }
+
+    private sealed record Requester(long UserId, string DisplayName);
+
+    public async Task<Result<TaskDetailDto>> AcceptAsync(
+        long taskId, long actingUserId, AcceptFixDto request, CancellationToken ct = default)
+    {
+        var task = await _db.Tasks.FirstOrDefaultAsync(t => t.Id == taskId, ct);
+        if (task is null)
+            return Result<TaskDetailDto>.Failure(Error.NotFound("task.not_found", "Task not found."));
+
+        // Accepting twice is what a double-click looks like.
+        if (task.Status == WorkTaskStatus.Closed)
+            return await _queries.GetAsync(taskId, ct);
+
+        var guard = await GuardRequesterAsync(task, actingUserId, ct);
+        if (guard is not null) return Result<TaskDetailDto>.Failure(guard);
+
+        // Their confirmation *is* the resolution, where nobody wrote one. Said plainly, because it
+        // ends up in the closure record and on the report: this closed because the person who
+        // asked for it said it was fixed, which is a different fact from "QC passed".
+        if (string.IsNullOrWhiteSpace(task.Resolution))
+        {
+            task.Resolution = string.IsNullOrWhiteSpace(request.Note)
+                ? "Confirmed fixed by the requester."
+                : $"Confirmed fixed by the requester: {request.Note.Trim()}";
+        }
+
+        var closed = await CloseAsync(
+            taskId, actingUserId,
+            new CloseTaskDto { Reason = request.Note?.Trim() }, ct);
+
+        if (closed.IsSuccess)
+        {
+            _audit.Record(
+                AuditActions.TaskClosed,
+                actorUserId: actingUserId,
+                entityType: nameof(WorkTask),
+                entityId: task.Id,
+                newValues: new { Accepted = true, request.Note });
+
+            await _db.SaveChangesAsync(ct);
+        }
+
+        return closed;
+    }
+
+    public async Task<Result<TaskDetailDto>> RejectAsync(
+        long taskId, long actingUserId, RejectFixDto request, CancellationToken ct = default)
+    {
+        var now = _clock.UtcNow;
+
+        var task = await _db.Tasks.FirstOrDefaultAsync(t => t.Id == taskId, ct);
+        if (task is null)
+            return Result<TaskDetailDto>.Failure(Error.NotFound("task.not_found", "Task not found."));
+
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            return Result<TaskDetailDto>.Failure(Error.Validation(
+                "acceptance.reason_required",
+                "Say what is still wrong, so the work can be put right without another round of questions."));
+
+        var guard = await GuardRequesterAsync(task, actingUserId, ct);
+        if (guard is not null) return Result<TaskDetailDto>.Failure(guard);
+
+        TaskStatusJournal.Write(
+            _db, _activity, task, WorkTaskStatus.Reopened, actingUserId, now,
+            request.Reason, ActivityType.TaskReopened,
+            $"{task.TaskNumber}: the requester reports it is still not fixed — {request.Reason}");
+
+        // Everyone who touched it, not just the assignee: the checker passed work that turned out
+        // not to satisfy the person who asked, and that is the most useful thing they can learn.
+        _notifications.RaiseFor(
+            new[] { task.PrimaryAssigneeUserId, task.QCUserId }, actingUserId,
+            $"{task.TaskNumber}: still not fixed",
+            request.Reason, NotificationService.LinkTask, task.Id);
+
+        _audit.Record(
+            AuditActions.TaskReopened,
+            actorUserId: actingUserId,
+            entityType: nameof(WorkTask),
+            entityId: task.Id,
+            previousValues: new { Status = WorkTaskStatus.QCPassed.ToString() },
+            newValues: new { Status = WorkTaskStatus.Reopened.ToString(), request.Reason, RejectedByRequester = true });
+
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "Task {TaskNumber} rejected by its requester {UserId}: {Reason}",
+            task.TaskNumber, actingUserId, request.Reason);
+
+        return await _queries.GetAsync(taskId, ct);
+    }
+
+    /// <summary>
+    /// The two rules both requester actions share: the work has to be waiting on them, and they
+    /// have to be the person who asked for it.
+    /// </summary>
+    private async Task<Error?> GuardRequesterAsync(WorkTask task, long actingUserId, CancellationToken ct)
+    {
+        if (task.Status is not (WorkTaskStatus.QCPassed or WorkTaskStatus.ReadyForClosure))
+            return Error.Conflict(
+                "acceptance.not_awaiting_confirmation",
+                $"{task.TaskNumber} is {TaskWorkflowService.Humanize(task.Status)}, so there is nothing to confirm yet.");
+
+        var requester = await RequesterAsync(task, ct);
+
+        if (requester is null)
+            return Error.Conflict(
+                "acceptance.no_requester",
+                "This work was not raised by a request, so there is nobody to confirm it.");
+
+        if (requester.UserId != actingUserId)
+            return Error.Forbidden(
+                "acceptance.not_requester",
+                "Only the person who asked for this work can say whether it is fixed.");
+
+        return null;
     }
 
     public async Task<Result<TaskDetailDto>> ReopenAsync(

@@ -15,7 +15,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { ApiService } from '../../core/api.service';
 import { BreadcrumbsComponent, Crumb } from '../../shared/breadcrumbs.component';
 import { RequestEditDialog } from './request-edit-dialog.component';
-import { ConfirmDialog, ConfirmData } from '../../shared/dialogs';
+import { ConfirmDialog, ConfirmData, ReasonDialog, ReasonData } from '../../shared/dialogs';
 import { AuthService } from '../../core/auth.service';
 import { ToastService } from '../../core/toast.service';
 import { Perm } from '../../core/permissions';
@@ -119,6 +119,35 @@ import {
                     <span class="muted small">
                       {{ p.latestUpdateBy }} · {{ p.latestUpdateAt | date: 'MMM d, HH:mm' }}
                     </span>
+                  </div>
+                }
+
+                <!--
+                  The last hop of the relay (PRODUCT-CORE §7). Today this is the requester telling
+                  Ahsan "haan hogya" on WhatsApp and Ahsan updating a sheet; here the person who
+                  asked closes their own loop.
+
+                  Offered only to the person who actually asked. The server enforces the same rule
+                  on the record, so this is about not showing a button that would 403 — but it is
+                  also the honest shape: nobody else is in a position to answer.
+                -->
+                @if (canConfirm(r)) {
+                  <div class="confirm-panel">
+                    <p class="confirm-ask">
+                      <mat-icon>help_outline</mat-icon>
+                      <span>
+                        We think this is done. Please check it on your side and tell us —
+                        is it fixed?
+                      </span>
+                    </p>
+                    <div class="row row-wrap">
+                      <button matButton="filled" [disabled]="busy()" (click)="acceptFix(r)">
+                        <mat-icon>check_circle</mat-icon> It's fixed
+                      </button>
+                      <button matButton [disabled]="busy()" (click)="rejectFix(r)">
+                        <mat-icon>replay</mat-icon> Still not fixed
+                      </button>
+                    </div>
                   </div>
                 }
               </div>
@@ -418,6 +447,16 @@ import {
     .attachment mat-icon { color: var(--text-muted); }
     .full { width: 100%; }
     .progress-card { border-left: 3px solid #1d69d4; }
+    .confirm-panel {
+      margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);
+    }
+    .confirm-ask {
+      display: flex; gap: 8px; align-items: flex-start;
+      margin: 0 0 10px; font-size: 13.5px;
+    }
+    .confirm-ask mat-icon {
+      color: var(--tone-warn-fg); font-size: 18px; width: 18px; height: 18px; flex: none;
+    }
     .facts {
       display: grid; gap: 10px 24px; margin-top: 14px;
       grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -513,6 +552,63 @@ export class RequestDetailComponent implements OnInit {
   readonly isRequester = computed(() =>
     this.request()?.requestedByUserId === this.auth.user()?.id);
 
+  /**
+   * Whether to offer the two confirmation buttons: the work is waiting on a human answer, and the
+   * reader is the human who has to give it. `confirm` is the server's own view key, so this cannot
+   * drift from the statuses the tile counts.
+   */
+  canConfirm(request: RequestDetailDto): boolean {
+    return request.viewKey === 'confirm' && this.isRequester();
+  }
+
+  acceptFix(request: RequestDetailDto): void {
+    // Confirmed work closes, and closing cannot be taken back by the person doing it — so this
+    // earns a dialog under the rule in CLAUDE.md. The note is optional: they have already said the
+    // only thing that matters by pressing the button.
+    this.dialog
+      .open<ConfirmDialog, ConfirmData>(ConfirmDialog, {
+        data: {
+          title: 'Is this fixed?',
+          message:
+            'This closes the request. If anything is still wrong, choose "Still not fixed" '
+            + 'instead and tell us what you are seeing.',
+          confirmText: "Yes, it's fixed",
+          submit: (ctx: HttpContext) => this.api.acceptFix(request.generatedTaskId!, undefined, ctx),
+        },
+      })
+      .afterClosed()
+      .subscribe((done?: unknown) => {
+        if (!done) return;
+        this.toast.success('Thank you — this request is now closed.');
+        this.load();
+      });
+  }
+
+  rejectFix(request: RequestDetailDto): void {
+    // The reason is mandatory here and the server agrees: "still broken" with no detail costs the
+    // worker exactly the round-trip this screen exists to remove.
+    this.dialog
+      .open<ReasonDialog, ReasonData>(ReasonDialog, {
+        data: {
+          title: 'What is still not working?',
+          message:
+            'This goes back to the person who did the work, and it will be checked again '
+            + 'before you are asked to confirm a second time.',
+          label: 'What you are seeing',
+          required: true,
+          confirmText: 'Send it back',
+          submit: (reason: string, ctx: HttpContext) =>
+            this.api.rejectFix(request.generatedTaskId!, reason, ctx),
+        },
+      })
+      .afterClosed()
+      .subscribe((done?: unknown) => {
+        if (!done) return;
+        this.toast.success('Sent back — we will look at it again.');
+        this.load();
+      });
+  }
+
   /** Triage only makes sense while the request is still open for a decision. */
   readonly canTriage = computed(() => {
     const r = this.request();
@@ -548,7 +644,8 @@ export class RequestDetailComponent implements OnInit {
     switch (viewKey) {
       case 'done': return 'success';
       case 'declined': return 'danger';
-      case 'input': case 'waiting': return 'warn';
+      // Amber, like "Needs Your Input": both mean the request is waiting on the person reading it.
+      case 'confirm': case 'input': case 'waiting': return 'warn';
       case 'working': case 'checking': return 'running';
       default: return 'neutral';
     }

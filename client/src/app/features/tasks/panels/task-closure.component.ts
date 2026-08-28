@@ -48,6 +48,23 @@ import { ConfirmDialog, ConfirmData, ReasonDialog, ReasonData } from '../../../s
             </div>
           }
 
+          <!--
+            The acceptance policy (PRODUCT-CORE §7), shown rather than enforced. Whether the person
+            who asked has confirmed the fix is not one of the requirements above on purpose: a
+            requester who has gone quiet must not be able to strand finished work, and turning this
+            into an unmet requirement would push an ordinary Tuesday through the override path.
+            So the coordinator is told who is being waited on, and decides.
+          -->
+          @if (c.requiresRequesterAcceptance && !c.requesterHasConfirmed) {
+            <p class="awaiting small">
+              <mat-icon>hourglass_empty</mat-icon>
+              <span>
+                Waiting for {{ c.requesterDisplayName ?? 'the requester' }} to confirm the fix.
+                They can do that from their own request.
+              </span>
+            </p>
+          }
+
           <button matButton="filled" class="full close-btn"
                   [disabled]="!c.isReady || busy()" (click)="close()">
             <mat-icon>task_alt</mat-icon> Close task
@@ -71,6 +88,12 @@ import { ConfirmDialog, ConfirmData, ReasonDialog, ReasonData } from '../../../s
     .closed { display: flex; align-items: center; gap: 7px; color: var(--text-muted); margin: 0 0 12px; }
     .closed mat-icon { font-size: 18px; width: 18px; height: 18px; }
     .hint { text-align: center; margin: 8px 0 0; }
+    .awaiting {
+      display: flex; gap: 7px; align-items: flex-start; margin: 12px 0 0;
+      padding: 9px 11px; border-radius: 8px;
+      background: var(--tone-warn-bg); color: var(--tone-warn-fg);
+    }
+    .awaiting mat-icon { font-size: 17px; width: 17px; height: 17px; flex: none; }
   `,
 })
 export class TaskClosureComponent implements OnInit {

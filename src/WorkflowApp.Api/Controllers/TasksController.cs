@@ -364,6 +364,32 @@ public sealed class TasksController : ApiControllerBase
     public async Task<IActionResult> Close(long id, [FromBody] CloseTaskDto? dto, CancellationToken ct)
         => FromResult(await _closure.CloseAsync(id, CurrentUserId, dto ?? new CloseTaskDto(), ct));
 
+    // --- requester acceptance (PRODUCT-CORE §7) ------------------------------------------------
+    //
+    // Neither carries a permission attribute, deliberately. The rule is "you are the person who
+    // asked for this work", which depends on the task rather than on the caller's authority — the
+    // same shape as completion proof and a checker's evidence, and not something a policy could
+    // express. `ClosureService` refuses anyone else with `acceptance.not_requester`.
+    //
+    // This is the last hop of the relay the product exists to remove: today it is the requester
+    // telling Ahsan on WhatsApp, and Ahsan updating a sheet.
+
+    /// <summary>The requester confirming the work really is fixed. Closes it in their name.</summary>
+    [HttpPost("{id:long}/accept")]
+    [ProducesResponseType(typeof(TaskDetailDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Accept(long id, [FromBody] AcceptFixDto? dto, CancellationToken ct)
+        => FromResult(await _closure.AcceptAsync(id, CurrentUserId, dto ?? new AcceptFixDto(), ct));
+
+    /// <summary>The requester saying it is still not fixed. Sends it back with their words.</summary>
+    [HttpPost("{id:long}/reject")]
+    [ProducesResponseType(typeof(TaskDetailDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Reject(long id, [FromBody] RejectFixDto dto, CancellationToken ct)
+        => FromResult(await _closure.RejectAsync(id, CurrentUserId, dto, ct));
+
     /// <summary>Puts closed work back in play. Always requires a reason.</summary>
     [HttpPost("{id:long}/reopen")]
     [HasPermission(Permissions.TaskReopen)]

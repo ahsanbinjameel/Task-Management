@@ -157,10 +157,15 @@ public static class StatusViews
         {
             WorkTaskStatus.CompletedReadyForQC, WorkTaskStatus.QCReview,
         }),
-        new TaskStatusView("done", "Completed", new[]
+        // The one tile with something for the requester to *do* (PRODUCT-CORE §7). Work that has
+        // passed our own quality check is not finished until the person who asked for it says so
+        // on their own instance — "coded and passed QC" and "it is fixed" are genuinely different
+        // claims, and only they can make the second one.
+        new TaskStatusView("confirm", "Ready for Confirmation", new[]
         {
-            WorkTaskStatus.QCPassed, WorkTaskStatus.ReadyForClosure, WorkTaskStatus.Closed,
+            WorkTaskStatus.QCPassed, WorkTaskStatus.ReadyForClosure,
         }),
+        new TaskStatusView("done", "Completed", new[] { WorkTaskStatus.Closed }),
         new TaskStatusView("declined", "Rejected", new[]
         {
             WorkTaskStatus.Cancelled, WorkTaskStatus.Duplicate,
@@ -224,12 +229,15 @@ public static class StatusViews
             // would mean teaching them what a verification is, which is our vocabulary, not theirs.
             new[] { RequestStatus.UnderVerification },
             new[] { WorkTaskStatus.CompletedReadyForQC, WorkTaskStatus.QCReview }),
+        // Split out of "Completed" deliberately: this is the only tile a requester is ever asked
+        // to act on, and folding it into the finished pile is what left them waiting to be told
+        // something they were the only person who could say.
+        new RequestStatusView("confirm", "Ready for Confirmation",
+            Array.Empty<RequestStatus>(),
+            new[] { WorkTaskStatus.QCPassed, WorkTaskStatus.ReadyForClosure }),
         new RequestStatusView("done", "Completed",
             Array.Empty<RequestStatus>(),
-            new[]
-            {
-                WorkTaskStatus.QCPassed, WorkTaskStatus.ReadyForClosure, WorkTaskStatus.Closed,
-            }),
+            new[] { WorkTaskStatus.Closed }),
         new RequestStatusView("declined", "Rejected",
             new[] { RequestStatus.Rejected, RequestStatus.Duplicate },
             new[] { WorkTaskStatus.Cancelled, WorkTaskStatus.Duplicate }),
