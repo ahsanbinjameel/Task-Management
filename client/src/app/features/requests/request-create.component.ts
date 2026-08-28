@@ -124,7 +124,8 @@ const DETAIL_FIELDS: { key: string; label: string }[] = [
                   matInput
                   rows="2"
                   [name]="'text' + i"
-                  [(ngModel)]="point.text"
+                  [ngModel]="point.text"
+                  (ngModelChange)="patch(i, { text: $event })"
                   (focus)="focused.set(i)"
                 ></textarea>
               </mat-form-field>
@@ -132,7 +133,8 @@ const DETAIL_FIELDS: { key: string; label: string }[] = [
               <app-search-select
                 label="Requested urgency"
                 [options]="urgencyOptions"
-                [(ngModel)]="point.urgency"
+                [ngModel]="point.urgency"
+                (ngModelChange)="patch(i, { urgency: $event })"
                 [name]="'urgency' + i"
               />
 
@@ -142,7 +144,8 @@ const DETAIL_FIELDS: { key: string; label: string }[] = [
                   matInput
                   [name]="'needed' + i"
                   [matDatepicker]="picker"
-                  [(ngModel)]="point.neededBy"
+                  [ngModel]="point.neededBy"
+                  (ngModelChange)="patch(i, { neededBy: $event })"
                 />
                 <mat-datepicker-toggle matIconSuffix [for]="picker" />
                 <mat-datepicker #picker />
@@ -156,7 +159,8 @@ const DETAIL_FIELDS: { key: string; label: string }[] = [
                   matInput
                   rows="2"
                   [name]="'desc' + i"
-                  [(ngModel)]="point.description"
+                  [ngModel]="point.description"
+                  (ngModelChange)="patch(i, { description: $event })"
                   (focus)="focused.set(i)"
                 ></textarea>
               </mat-form-field>
@@ -171,14 +175,14 @@ const DETAIL_FIELDS: { key: string; label: string }[] = [
                     rows="2"
                     [name]="field.key + i"
                     [ngModel]="detail(point, field.key)"
-                    (ngModelChange)="setDetail(point, field.key, $event)"
+                    (ngModelChange)="setDetail(i, field.key, $event)"
                     (focus)="focused.set(i)"
                   ></textarea>
                   <button
                     matIconButton
                     matSuffix
                     type="button"
-                    (click)="hideDetail(point, field.key)"
+                    (click)="hideDetail(i, field.key)"
                     [attr.aria-label]="'Remove ' + field.label"
                   >
                     <mat-icon>close</mat-icon>
@@ -189,7 +193,11 @@ const DETAIL_FIELDS: { key: string; label: string }[] = [
 
             @if (point.open.files) {
               <!-- Per point: a screenshot of the broken total belongs to the point about it. -->
-              <app-file-drop [(files)]="point.files" [active]="focused() === i" />
+              <app-file-drop
+                [files]="point.files"
+                (filesChange)="patch(i, { files: $event })"
+                [active]="focused() === i"
+              />
             }
 
             <!--
@@ -198,19 +206,19 @@ const DETAIL_FIELDS: { key: string; label: string }[] = [
             -->
             <div class="chips">
               @if (!point.open.description) {
-                <button type="button" class="chip-add" (click)="point.open.description = true">
+                <button type="button" class="chip-add" (click)="open(i, 'description')">
                   <mat-icon>add</mat-icon> Description
                 </button>
               }
               @for (field of detailFields; track field.key) {
                 @if (!point.shown[field.key]) {
-                  <button type="button" class="chip-add" (click)="point.shown[field.key] = true">
+                  <button type="button" class="chip-add" (click)="showDetail(i, field.key)">
                     <mat-icon>add</mat-icon> {{ field.label }}
                   </button>
                 }
               }
               @if (!point.open.files) {
-                <button type="button" class="chip-add" (click)="openFiles(point, i)">
+                <button type="button" class="chip-add" (click)="open(i, 'files')">
                   <mat-icon>attach_file</mat-icon> Attachment
                 </button>
               }
@@ -361,8 +369,30 @@ export class RequestCreateComponent implements OnInit {
     this.focused.set(Math.min(this.focused(), this.points().length - 1));
   }
 
-  openFiles(point: Point, index: number): void {
-    point.open.files = true;
+  /**
+   * Every edit replaces the point rather than changing it in place.
+   *
+   * This is not a style choice. `points` is a signal holding an array, and `[(ngModel)]` bound
+   * straight at a property of an object *inside* that array changes nothing the signal can see:
+   * the array is the same array, so it never notifies and every computed reading it stays frozen
+   * at its first value.
+   *
+   * The symptom was that Submit stayed disabled however much you typed, and came alive the moment
+   * you pressed "Add another request" — because that call replaces the array, which is the only
+   * thing that was making the signal fire.
+   *
+   * `task-qc.component.ts` carries the same note about the same trap. Second time, so it is
+   * spelled out here too.
+   */
+  patch(index: number, changes: Partial<Point>): void {
+    this.points.update((all) =>
+      all.map((point, i) => (i === index ? { ...point, ...changes } : point)));
+  }
+
+  /** Reveal one of the folded-away sections. */
+  open(index: number, section: 'description' | 'files'): void {
+    const point = this.points()[index];
+    this.patch(index, { open: { ...point.open, [section]: true } });
     this.focused.set(index);
   }
 
@@ -370,14 +400,22 @@ export class RequestCreateComponent implements OnInit {
     return (point as unknown as Record<string, string>)[key] ?? '';
   }
 
-  setDetail(point: Point, key: string, value: string): void {
-    (point as unknown as Record<string, string>)[key] = value;
+  setDetail(index: number, key: string, value: string): void {
+    this.patch(index, { [key]: value } as Partial<Point>);
+  }
+
+  showDetail(index: number, key: string): void {
+    const point = this.points()[index];
+    this.patch(index, { shown: { ...point.shown, [key]: true } });
   }
 
   /** Clearing on close is deliberate: never submit a value the requester can no longer see. */
-  hideDetail(point: Point, key: string): void {
-    point.shown[key] = false;
-    this.setDetail(point, key, '');
+  hideDetail(index: number, key: string): void {
+    const point = this.points()[index];
+    this.patch(index, {
+      shown: { ...point.shown, [key]: false },
+      [key]: '',
+    } as Partial<Point>);
   }
 
   private filled(): Point[] {
