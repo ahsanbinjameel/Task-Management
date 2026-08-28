@@ -13,7 +13,8 @@ namespace WorkflowApp.Infrastructure.Persistence.Configurations;
 public class OrganizationConfig :
     IEntityTypeConfiguration<Department>, IEntityTypeConfiguration<Team>,
     IEntityTypeConfiguration<Client>, IEntityTypeConfiguration<Project>,
-    IEntityTypeConfiguration<Module>, IEntityTypeConfiguration<PauseReason>
+    IEntityTypeConfiguration<Module>, IEntityTypeConfiguration<Form>,
+    IEntityTypeConfiguration<FormSurface>, IEntityTypeConfiguration<PauseReason>
 {
     public void Configure(EntityTypeBuilder<Department> b)
     {
@@ -45,6 +46,35 @@ public class OrganizationConfig :
     {
         b.Property(x => x.Name).HasMaxLength(200).IsRequired();
         b.HasIndex(x => new { x.ProjectId, x.Name }).IsUnique();
+    }
+
+    // The product catalog (PRODUCT-CORE §5). Note what is absent from both: any route to Client.
+    // A form belongs to a module, a surface to a form, and that is the whole hierarchy.
+
+    public void Configure(EntityTypeBuilder<Form> b)
+    {
+        b.Property(x => x.Name).HasMaxLength(200).IsRequired();
+
+        // Unique within its module, not globally: two modules may each have an "Adjustment".
+        b.HasIndex(x => new { x.ModuleId, x.Name }).IsUnique();
+
+        // Restrict, like every other reference relationship here. Cascading would silently take
+        // the surfaces — and the meaning of every request pointing at them — with the module.
+        b.HasOne(x => x.Module)
+            .WithMany()
+            .HasForeignKey(x => x.ModuleId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    public void Configure(EntityTypeBuilder<FormSurface> b)
+    {
+        b.Property(x => x.Name).HasMaxLength(200).IsRequired();
+        b.HasIndex(x => new { x.FormId, x.Name }).IsUnique();
+
+        b.HasOne(x => x.Form)
+            .WithMany()
+            .HasForeignKey(x => x.FormId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 
     public void Configure(EntityTypeBuilder<PauseReason> b)

@@ -16,9 +16,20 @@ public class Request : BaseEntity
     public string Description { get; set; } = default!;
     public RequestType Type { get; set; }
 
+    // Two orthogonal axes, not one tree (PRODUCT-CORE §5).
+    //
+    //   CLIENT AXIS (nullable)      PRODUCT-CATALOG AXIS (client-independent)
+    //   Impression Sourcing         Sales → Delivery Order → Detail Report
+    //   (null) = internal work
+    //
+    // Every one of them is optional: intake asks for a client and a sentence, and the reviewer
+    // refines the product location at triage. Forcing four dropdowns on the person reporting a
+    // problem is how you stop them reporting problems.
     public long? ProjectId { get; set; }
     public long? ClientId { get; set; }
     public long? ModuleId { get; set; }
+    public long? FormId { get; set; }
+    public long? FormSurfaceId { get; set; }
 
     public RequestedUrgency RequestedUrgency { get; set; } = RequestedUrgency.Normal;
     public string? BusinessImpact { get; set; }

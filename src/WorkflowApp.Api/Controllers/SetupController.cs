@@ -45,6 +45,64 @@ public sealed class SetupController : ApiControllerBase
     public async Task<IActionResult> SetClientActive(long id, [FromBody] SetActiveDto dto, CancellationToken ct)
         => FromResult(await _setup.SetClientActiveAsync(id, dto.IsActive, ct));
 
+    // --- the product catalog (PRODUCT-CORE §5) -------------------------------------------------
+    //
+    // Module → Form → Surface. Client-independent by design: your product has these, and each
+    // client runs an instance of it. Nothing here takes or returns a client id.
+
+    [HttpGet("modules")]
+    [ProducesResponseType(typeof(IReadOnlyList<ModuleDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Modules(CancellationToken ct)
+        => Ok(await _setup.ModulesAsync(ct));
+
+    [HttpPost("modules")]
+    public async Task<IActionResult> CreateModule([FromBody] SaveModuleDto dto, CancellationToken ct)
+        => FromResult(await _setup.CreateModuleAsync(dto, ct));
+
+    [HttpPut("modules/{id:long}")]
+    public async Task<IActionResult> UpdateModule(long id, [FromBody] SaveModuleDto dto, CancellationToken ct)
+        => FromResult(await _setup.UpdateModuleAsync(id, dto, ct));
+
+    [HttpPut("modules/{id:long}/active")]
+    public async Task<IActionResult> SetModuleActive(long id, [FromBody] SetActiveDto dto, CancellationToken ct)
+        => FromResult(await _setup.SetModuleActiveAsync(id, dto.IsActive, ct));
+
+    [HttpGet("forms")]
+    [ProducesResponseType(typeof(IReadOnlyList<FormDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Forms(CancellationToken ct)
+        => Ok(await _setup.FormsAsync(ct));
+
+    [HttpPost("forms")]
+    public async Task<IActionResult> CreateForm([FromBody] SaveFormDto dto, CancellationToken ct)
+        => FromResult(await _setup.CreateFormAsync(dto, ct));
+
+    [HttpPut("forms/{id:long}")]
+    public async Task<IActionResult> UpdateForm(long id, [FromBody] SaveFormDto dto, CancellationToken ct)
+        => FromResult(await _setup.UpdateFormAsync(id, dto, ct));
+
+    [HttpPut("forms/{id:long}/active")]
+    public async Task<IActionResult> SetFormActive(long id, [FromBody] SetActiveDto dto, CancellationToken ct)
+        => FromResult(await _setup.SetFormActiveAsync(id, dto.IsActive, ct));
+
+    [HttpGet("form-surfaces")]
+    [ProducesResponseType(typeof(IReadOnlyList<FormSurfaceDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> FormSurfaces(CancellationToken ct)
+        => Ok(await _setup.FormSurfacesAsync(ct));
+
+    [HttpPost("form-surfaces")]
+    public async Task<IActionResult> CreateFormSurface([FromBody] SaveFormSurfaceDto dto, CancellationToken ct)
+        => FromResult(await _setup.CreateFormSurfaceAsync(dto, ct));
+
+    [HttpPut("form-surfaces/{id:long}")]
+    public async Task<IActionResult> UpdateFormSurface(
+        long id, [FromBody] SaveFormSurfaceDto dto, CancellationToken ct)
+        => FromResult(await _setup.UpdateFormSurfaceAsync(id, dto, ct));
+
+    [HttpPut("form-surfaces/{id:long}/active")]
+    public async Task<IActionResult> SetFormSurfaceActive(
+        long id, [FromBody] SetActiveDto dto, CancellationToken ct)
+        => FromResult(await _setup.SetFormSurfaceActiveAsync(id, dto.IsActive, ct));
+
     // --- departments -------------------------------------------------------------------------
 
     [HttpGet("departments")]

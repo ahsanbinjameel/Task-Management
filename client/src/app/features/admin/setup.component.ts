@@ -16,6 +16,7 @@ import { FormSubmit } from '../../core/form-submit';
 import {
   PauseCategory, SetupClientDto, SetupDepartmentDto, SetupPauseReasonDto, SetupTeamDto,
   WorkforceState,
+  FormDto, FormSurfaceDto, ModuleDto,
 } from '../../core/models';
 import { pauseCategoryLabel, workforceStateLabel } from '../../core/labels';
 import { enumOptions, SearchSelectComponent } from '../../shared/search-select.component';
@@ -29,9 +30,18 @@ interface SimpleEditData {
   name: string;
   code?: string | null;
   showCode?: boolean;
-  departmentId?: number | null;
-  departments?: SetupDepartmentDto[];
-  save: (value: { name: string; code?: string | null; departmentId?: number | null },
+  /**
+   * The optional "belongs to" picker. It used to be department-specific; four lists now need one
+   * (a team has a department, a form has a module, a surface has a form), and four near-identical
+   * fields would have drifted the moment one grew a rule.
+   */
+  parentLabel?: string;
+  parentNullLabel?: string;
+  parentId?: number | null;
+  parents?: { id: number; name: string }[];
+  /** When true the picker has to be answered — a form without a module is not a thing. */
+  parentRequired?: boolean;
+  save: (value: { name: string; code?: string | null; parentId?: number | null },
         ctx: HttpContext) => import('rxjs').Observable<unknown>;
 }
 
@@ -70,15 +80,15 @@ interface SimpleEditData {
         </mat-form-field>
       }
 
-      @if (data.departments) {
-        <app-search-select class="full" label="Department (optional)" name="department"
-                           nullLabel="No department"
-                           [options]="departmentOptions()" [(ngModel)]="departmentId" />
+      @if (data.parents) {
+        <app-search-select class="full" [label]="data.parentLabel ?? 'Belongs to'" name="parent"
+                           [nullLabel]="data.parentNullLabel ?? ''"
+                           [options]="parentOptions()" [(ngModel)]="parentId" />
       }
     </mat-dialog-content>
     <mat-dialog-actions align="end">
       <button matButton mat-dialog-close [disabled]="form.busy()">Cancel</button>
-      <button matButton="filled" [disabled]="!name.trim() || form.busy()" (click)="save()">
+      <button matButton="filled" [disabled]="!ready() || form.busy()" (click)="save()">
         {{ form.busy() ? 'Saving…' : 'Save' }}
       </button>
     </mat-dialog-actions>
@@ -101,10 +111,12 @@ export class SimpleEditDialog {
 
   name = this.data.name;
   code = this.data.code ?? '';
-  departmentId = this.data.departmentId ?? null;
+  parentId = this.data.parentId ?? null;
 
-  departmentOptions = () =>
-    (this.data.departments ?? []).map((d) => ({ value: d.id, label: d.name }));
+  parentOptions = () => (this.data.parents ?? []).map((p) => ({ value: p.id, label: p.name }));
+
+  /** A required parent is part of "is this saveable", the same as a blank name. */
+  ready = () => !!this.name.trim() && (!this.data.parentRequired || this.parentId !== null);
 
   save(): void {
     this.ref.disableClose = true;
@@ -113,7 +125,7 @@ export class SimpleEditDialog {
         {
           name: this.name.trim(),
           code: this.code.trim() || null,
-          departmentId: this.departmentId,
+          parentId: this.parentId,
         },
         ctx),
       (saved) => { this.ref.disableClose = false; this.ref.close(saved ?? true); },
@@ -295,6 +307,132 @@ export class PauseReasonDialog {
           </div>
         </mat-tab>
 
+        <!--
+          --- the product catalog (PRODUCT-CORE §5) -----------------------------------------
+
+          Module → Form → Surface. Note there is no client anywhere in these three tabs, and no way
+          to put one there: your product has modules and forms, and each client runs an instance of
+          it. A per-client catalog would give every client a private copy of the same form, and the
+          questions worth asking — "which forms generate the most support", "is this posting bug
+          unique to ABC or are four clients seeing it" — would stop being answerable.
+        -->
+        <mat-tab label="Modules">
+          <div class="tab">
+            <div class="row bar">
+              <span class="spacer"></span>
+              <button matButton="filled" (click)="addModule()">
+                <mat-icon>add</mat-icon> Add a module
+              </button>
+            </div>
+
+            @if (loading()) {
+              <app-loading />
+            } @else if (modules().length === 0) {
+              <app-empty message="No modules yet" icon="widgets" />
+            } @else {
+              <div class="card rows">
+                @for (m of modules(); track m.id) {
+                  <div class="entry" [class.off]="!m.isActive">
+                    <div class="meta">
+                      <span class="name">{{ m.name }}</span>
+                      <span class="muted small">{{ used(m.forms, 'form') }}</span>
+                      <span class="muted small">{{ used(m.usedBy, 'request') }}</span>
+                    </div>
+                    <button matIconButton (click)="editModule(m)" matTooltip="Rename">
+                      <mat-icon>edit</mat-icon>
+                    </button>
+                    <mat-slide-toggle [checked]="m.isActive"
+                                      (change)="toggleModule(m, $event.checked)"
+                                      [matTooltip]="m.isActive ? 'In use' : 'Retired'" />
+                  </div>
+                }
+              </div>
+            }
+          </div>
+        </mat-tab>
+
+        <mat-tab label="Forms">
+          <div class="tab">
+            <div class="row bar">
+              <span class="spacer"></span>
+              <button matButton="filled" [disabled]="modules().length === 0" (click)="addForm()">
+                <mat-icon>add</mat-icon> Add a form
+              </button>
+            </div>
+
+            @if (loading()) {
+              <app-loading />
+            } @else if (modules().length === 0) {
+              <app-empty message="Add a module first — a form belongs to one" icon="widgets" />
+            } @else if (forms().length === 0) {
+              <app-empty message="No forms yet" icon="description" />
+            } @else {
+              <div class="card rows">
+                @for (f of forms(); track f.id) {
+                  <div class="entry" [class.off]="!f.isActive">
+                    <div class="meta">
+                      <span class="name">{{ f.name }}</span>
+                      <span class="muted small">{{ f.moduleName }}</span>
+                      <span class="muted small">{{ used(f.surfaces, 'part') }}</span>
+                      <span class="muted small">{{ used(f.usedBy, 'request') }}</span>
+                    </div>
+                    <button matIconButton (click)="editForm(f)" matTooltip="Change">
+                      <mat-icon>edit</mat-icon>
+                    </button>
+                    <mat-slide-toggle [checked]="f.isActive"
+                                      (change)="toggleForm(f, $event.checked)"
+                                      [matTooltip]="f.isActive ? 'In use' : 'Retired'" />
+                  </div>
+                }
+              </div>
+            }
+          </div>
+        </mat-tab>
+
+        <mat-tab label="Form parts">
+          <div class="tab">
+            <p class="muted small intro">
+              The ways of looking at a form — the form itself, its History, a Detail Report, a
+              Master Report. This is the grain most support conversations actually happen at:
+              "the delivery order <em>detail report</em> total is wrong" is a different problem
+              from "the delivery order <em>form</em> will not save".
+            </p>
+
+            <div class="row bar">
+              <span class="spacer"></span>
+              <button matButton="filled" [disabled]="forms().length === 0" (click)="addSurface()">
+                <mat-icon>add</mat-icon> Add a part
+              </button>
+            </div>
+
+            @if (loading()) {
+              <app-loading />
+            } @else if (forms().length === 0) {
+              <app-empty message="Add a form first — a part belongs to one" icon="description" />
+            } @else if (surfaces().length === 0) {
+              <app-empty message="No form parts yet" icon="tab" />
+            } @else {
+              <div class="card rows">
+                @for (x of surfaces(); track x.id) {
+                  <div class="entry" [class.off]="!x.isActive">
+                    <div class="meta">
+                      <span class="name">{{ x.name }}</span>
+                      <span class="muted small">{{ x.moduleName }} · {{ x.formName }}</span>
+                      <span class="muted small">{{ used(x.usedBy, 'request') }}</span>
+                    </div>
+                    <button matIconButton (click)="editSurface(x)" matTooltip="Change">
+                      <mat-icon>edit</mat-icon>
+                    </button>
+                    <mat-slide-toggle [checked]="x.isActive"
+                                      (change)="toggleSurface(x, $event.checked)"
+                                      [matTooltip]="x.isActive ? 'In use' : 'Retired'" />
+                  </div>
+                }
+              </div>
+            }
+          </div>
+        </mat-tab>
+
         <!-- --- pause reasons ------------------------------------------------------------- -->
         <mat-tab label="Pause reasons">
           <div class="tab">
@@ -452,15 +590,117 @@ export class SetupComponent implements OnInit {
     this.load();
   }
 
+  readonly modules = signal<ModuleDto[]>([]);
+  readonly forms = signal<FormDto[]>([]);
+  readonly surfaces = signal<FormSurfaceDto[]>([]);
+
   load(): void {
     this.loading.set(true);
     this.api.setupClients().subscribe({
       next: (c) => { this.clients.set(c); this.loading.set(false); },
       error: () => this.loading.set(false),
     });
+    this.api.setupModules().subscribe((m) => this.modules.set(m));
+    this.api.setupForms().subscribe((f) => this.forms.set(f));
+    this.api.setupFormSurfaces().subscribe((x) => this.surfaces.set(x));
     this.api.setupDepartments().subscribe((d) => this.departments.set(d));
     this.api.setupTeams().subscribe((t) => this.teams.set(t));
     this.api.setupPauseReasons().subscribe((r) => this.pauseReasons.set(r));
+  }
+
+  // --- the product catalog -------------------------------------------------------------------
+  //
+  // Retired, never deleted, like everything else here: a form with requests filed against it is
+  // history that reports still read, and removing it turns those rows into blanks.
+
+  addModule(): void {
+    this.openSimple({
+      title: 'Add a module',
+      nameLabel: 'Module name',
+      name: '',
+      save: (v, ctx) => this.api.createModule(v.name, ctx),
+    });
+  }
+
+  editModule(module: ModuleDto): void {
+    this.openSimple({
+      title: 'Rename this module',
+      nameLabel: 'Module name',
+      name: module.name,
+      save: (v, ctx) => this.api.updateModule(module.id, v.name, ctx),
+    });
+  }
+
+  toggleModule(module: ModuleDto, isActive: boolean): void {
+    this.api.setModuleActive(module.id, isActive)
+      .subscribe(() => this.after(true, isActive ? 'Back in use.' : 'Retired.'));
+  }
+
+  addForm(): void {
+    this.openSimple({
+      title: 'Add a form',
+      nameLabel: 'Form name',
+      name: '',
+      parentLabel: 'Module',
+      parentRequired: true,
+      parents: this.modules().filter((m) => m.isActive),
+      save: (v, ctx) => this.api.createForm(v.name, v.parentId!, ctx),
+    });
+  }
+
+  editForm(form: FormDto): void {
+    this.openSimple({
+      title: 'Change this form',
+      nameLabel: 'Form name',
+      name: form.name,
+      parentLabel: 'Module',
+      parentRequired: true,
+      parentId: form.moduleId,
+      parents: this.modules().filter((m) => m.isActive || m.id === form.moduleId),
+      save: (v, ctx) => this.api.updateForm(form.id, v.name, v.parentId!, ctx),
+    });
+  }
+
+  toggleForm(form: FormDto, isActive: boolean): void {
+    this.api.setFormActive(form.id, isActive)
+      .subscribe(() => this.after(true, isActive ? 'Back in use.' : 'Retired.'));
+  }
+
+  addSurface(): void {
+    this.openSimple({
+      title: 'Add a form part',
+      nameLabel: 'What it is called',
+      name: '',
+      parentLabel: 'Form',
+      parentRequired: true,
+      parents: this.formParents(),
+      save: (v, ctx) => this.api.createFormSurface(v.name, v.parentId!, ctx),
+    });
+  }
+
+  editSurface(surface: FormSurfaceDto): void {
+    this.openSimple({
+      title: 'Change this form part',
+      nameLabel: 'What it is called',
+      name: surface.name,
+      parentLabel: 'Form',
+      parentRequired: true,
+      parentId: surface.formId,
+      parents: this.formParents(),
+      save: (v, ctx) => this.api.updateFormSurface(surface.id, v.name, v.parentId!, ctx),
+    });
+  }
+
+  toggleSurface(surface: FormSurfaceDto, isActive: boolean): void {
+    this.api.setFormSurfaceActive(surface.id, isActive)
+      .subscribe(() => this.after(true, isActive ? 'Back in use.' : 'Retired.'));
+  }
+
+  /** Forms named with their module, because "Adjustment" on its own is ambiguous. */
+  private formParents(): { id: number; name: string }[] {
+    return this.forms()
+      .filter((f) => f.isActive)
+      .map((f) => ({ id: f.id, name: `${f.moduleName} · ${f.name}` }));
   }
 
   // --- clients -----------------------------------------------------------------------------
@@ -544,9 +784,11 @@ export class SetupComponent implements OnInit {
       title: 'Add a team',
       nameLabel: 'Team name',
       name: '',
-      departmentId: null,
-      departments: this.departments(),
-      save: (v, ctx) => this.api.createTeam({ name: v.name, departmentId: v.departmentId }, ctx),
+      parentLabel: 'Department (optional)',
+      parentNullLabel: 'No department',
+      parentId: null,
+      parents: this.departments(),
+      save: (v, ctx) => this.api.createTeam({ name: v.name, departmentId: v.parentId }, ctx),
     });
   }
 
@@ -555,9 +797,11 @@ export class SetupComponent implements OnInit {
       title: `Change ${team.name}`,
       nameLabel: 'Team name',
       name: team.name,
-      departmentId: team.departmentId ?? null,
-      departments: this.departments(),
-      save: (v, ctx) => this.api.updateTeam(team.id, { name: v.name, departmentId: v.departmentId }, ctx),
+      parentLabel: 'Department (optional)',
+      parentNullLabel: 'No department',
+      parentId: team.departmentId ?? null,
+      parents: this.departments(),
+      save: (v, ctx) => this.api.updateTeam(team.id, { name: v.name, departmentId: v.parentId }, ctx),
     });
   }
 

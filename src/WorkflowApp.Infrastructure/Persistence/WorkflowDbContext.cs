@@ -37,6 +37,8 @@ public class WorkflowDbContext : DbContext, IWorkflowDbContext
     public DbSet<Client> Clients => Set<Client>();
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<Module> Modules => Set<Module>();
+    public DbSet<Form> Forms => Set<Form>();
+    public DbSet<FormSurface> FormSurfaces => Set<FormSurface>();
     public DbSet<PauseReason> PauseReasons => Set<PauseReason>();
 
     // Requests

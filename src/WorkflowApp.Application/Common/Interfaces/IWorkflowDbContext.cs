@@ -39,6 +39,8 @@ public interface IWorkflowDbContext
     DbSet<Client> Clients { get; }
     DbSet<Project> Projects { get; }
     DbSet<Module> Modules { get; }
+    DbSet<Form> Forms { get; }
+    DbSet<FormSurface> FormSurfaces { get; }
     DbSet<PauseReason> PauseReasons { get; }
 
     // Requests

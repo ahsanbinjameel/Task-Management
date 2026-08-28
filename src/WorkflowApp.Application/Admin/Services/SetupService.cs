@@ -32,6 +32,23 @@ public interface ISetupService
     Task<Result<PauseReasonDetailDto>> UpdatePauseReasonAsync(long id, SavePauseReasonDto dto, CancellationToken ct = default);
     Task<Result<PauseReasonDetailDto>> SetPauseReasonActiveAsync(long id, bool isActive, CancellationToken ct = default);
 
+    // The product catalog. Same shape as everything else here, and retired rather than deleted for
+    // the same reason: a form with requests filed against it is history other screens still read.
+    Task<IReadOnlyList<ModuleDto>> ModulesAsync(CancellationToken ct = default);
+    Task<Result<ModuleDto>> CreateModuleAsync(SaveModuleDto dto, CancellationToken ct = default);
+    Task<Result<ModuleDto>> UpdateModuleAsync(long id, SaveModuleDto dto, CancellationToken ct = default);
+    Task<Result<ModuleDto>> SetModuleActiveAsync(long id, bool isActive, CancellationToken ct = default);
+
+    Task<IReadOnlyList<FormDto>> FormsAsync(CancellationToken ct = default);
+    Task<Result<FormDto>> CreateFormAsync(SaveFormDto dto, CancellationToken ct = default);
+    Task<Result<FormDto>> UpdateFormAsync(long id, SaveFormDto dto, CancellationToken ct = default);
+    Task<Result<FormDto>> SetFormActiveAsync(long id, bool isActive, CancellationToken ct = default);
+
+    Task<IReadOnlyList<FormSurfaceDto>> FormSurfacesAsync(CancellationToken ct = default);
+    Task<Result<FormSurfaceDto>> CreateFormSurfaceAsync(SaveFormSurfaceDto dto, CancellationToken ct = default);
+    Task<Result<FormSurfaceDto>> UpdateFormSurfaceAsync(long id, SaveFormSurfaceDto dto, CancellationToken ct = default);
+    Task<Result<FormSurfaceDto>> SetFormSurfaceActiveAsync(long id, bool isActive, CancellationToken ct = default);
+
     Task<IReadOnlyList<RoleDetailDto>> RolesAsync(CancellationToken ct = default);
     Task<Result<RoleDetailDto>> CreateRoleAsync(SaveRoleDto dto, CancellationToken ct = default);
     Task<Result<RoleDetailDto>> UpdateRoleAsync(long id, SaveRoleDto dto, CancellationToken ct = default);
@@ -128,6 +145,243 @@ public sealed class SetupService : ISetupService
 
         var used = await _db.Requests.CountAsync(r => r.ClientId == id, ct);
         return Result<ClientDto>.Success(new ClientDto(client.Id, client.Name, client.Code, isActive, used));
+    }
+
+    // --- the product catalog (PRODUCT-CORE §5) -------------------------------------------------
+    //
+    // Module → Form → Surface. Nothing in here references a client, and nothing may: the catalog
+    // describes your product, and a client is an instance of it. Uniqueness is scoped to the parent
+    // rather than global, because two modules can each reasonably have an "Adjustment".
+
+    public async Task<IReadOnlyList<ModuleDto>> ModulesAsync(CancellationToken ct = default) =>
+        await _db.Modules.AsNoTracking()
+            .OrderBy(m => m.Name)
+            .Select(m => new ModuleDto(
+                m.Id, m.Name, m.IsActive,
+                _db.Forms.Count(f => f.ModuleId == m.Id),
+                _db.Requests.Count(r => r.ModuleId == m.Id)))
+            .ToListAsync(ct);
+
+    public async Task<Result<ModuleDto>> CreateModuleAsync(SaveModuleDto dto, CancellationToken ct = default)
+    {
+        var name = dto.Name.Trim();
+
+        if (await _db.Modules.AnyAsync(m => m.Name.ToLower() == name.ToLower(), ct))
+            return Duplicate<ModuleDto>("module", name);
+
+        var module = new Module { Name = name, IsActive = true };
+        _db.Modules.Add(module);
+
+        _audit.Record(AuditActions.SetupChanged, entityType: nameof(Module),
+            newValues: new { module.Name });
+        await _db.SaveChangesAsync(ct);
+
+        return Result<ModuleDto>.Success(new ModuleDto(module.Id, module.Name, true, 0, 0));
+    }
+
+    public async Task<Result<ModuleDto>> UpdateModuleAsync(
+        long id, SaveModuleDto dto, CancellationToken ct = default)
+    {
+        var module = await _db.Modules.FirstOrDefaultAsync(m => m.Id == id, ct);
+        if (module is null) return NotFound<ModuleDto>("module");
+
+        var name = dto.Name.Trim();
+
+        if (await _db.Modules.AnyAsync(m => m.Id != id && m.Name.ToLower() == name.ToLower(), ct))
+            return Duplicate<ModuleDto>("module", name);
+
+        var before = new { module.Name };
+        module.Name = name;
+
+        _audit.Record(AuditActions.SetupChanged, entityType: nameof(Module), entityId: id,
+            previousValues: before, newValues: new { module.Name });
+        await _db.SaveChangesAsync(ct);
+
+        return Result<ModuleDto>.Success(await ModuleDtoAsync(module, ct));
+    }
+
+    public async Task<Result<ModuleDto>> SetModuleActiveAsync(
+        long id, bool isActive, CancellationToken ct = default)
+    {
+        var module = await _db.Modules.FirstOrDefaultAsync(m => m.Id == id, ct);
+        if (module is null) return NotFound<ModuleDto>("module");
+
+        module.IsActive = isActive;
+        _audit.Record(AuditActions.SetupChanged, entityType: nameof(Module), entityId: id,
+            previousValues: new { IsActive = !isActive }, newValues: new { IsActive = isActive });
+        await _db.SaveChangesAsync(ct);
+
+        return Result<ModuleDto>.Success(await ModuleDtoAsync(module, ct));
+    }
+
+    private async Task<ModuleDto> ModuleDtoAsync(Module module, CancellationToken ct) =>
+        new(module.Id, module.Name, module.IsActive,
+            await _db.Forms.CountAsync(f => f.ModuleId == module.Id, ct),
+            await _db.Requests.CountAsync(r => r.ModuleId == module.Id, ct));
+
+    public async Task<IReadOnlyList<FormDto>> FormsAsync(CancellationToken ct = default) =>
+        await _db.Forms.AsNoTracking()
+            .Join(_db.Modules.AsNoTracking(), f => f.ModuleId, m => m.Id, (f, m) => new { f, m })
+            .OrderBy(x => x.m.Name).ThenBy(x => x.f.Name)
+            .Select(x => new FormDto(
+                x.f.Id, x.f.Name, x.f.ModuleId, x.m.Name, x.f.IsActive,
+                _db.FormSurfaces.Count(s => s.FormId == x.f.Id),
+                _db.Requests.Count(r => r.FormId == x.f.Id)))
+            .ToListAsync(ct);
+
+    public async Task<Result<FormDto>> CreateFormAsync(SaveFormDto dto, CancellationToken ct = default)
+    {
+        var name = dto.Name.Trim();
+
+        var module = await _db.Modules.FirstOrDefaultAsync(m => m.Id == dto.ModuleId, ct);
+        if (module is null) return NotFound<FormDto>("module");
+
+        if (await _db.Forms.AnyAsync(
+                f => f.ModuleId == dto.ModuleId && f.Name.ToLower() == name.ToLower(), ct))
+            return Duplicate<FormDto>("form", name);
+
+        var form = new Form { Name = name, ModuleId = dto.ModuleId, IsActive = true };
+        _db.Forms.Add(form);
+
+        _audit.Record(AuditActions.SetupChanged, entityType: nameof(Form),
+            newValues: new { form.Name, Module = module.Name });
+        await _db.SaveChangesAsync(ct);
+
+        return Result<FormDto>.Success(
+            new FormDto(form.Id, form.Name, module.Id, module.Name, true, 0, 0));
+    }
+
+    public async Task<Result<FormDto>> UpdateFormAsync(
+        long id, SaveFormDto dto, CancellationToken ct = default)
+    {
+        var form = await _db.Forms.FirstOrDefaultAsync(f => f.Id == id, ct);
+        if (form is null) return NotFound<FormDto>("form");
+
+        var module = await _db.Modules.FirstOrDefaultAsync(m => m.Id == dto.ModuleId, ct);
+        if (module is null) return NotFound<FormDto>("module");
+
+        var name = dto.Name.Trim();
+
+        if (await _db.Forms.AnyAsync(
+                f => f.Id != id && f.ModuleId == dto.ModuleId && f.Name.ToLower() == name.ToLower(), ct))
+            return Duplicate<FormDto>("form", name);
+
+        var before = new { form.Name, form.ModuleId };
+        form.Name = name;
+        form.ModuleId = dto.ModuleId;
+
+        _audit.Record(AuditActions.SetupChanged, entityType: nameof(Form), entityId: id,
+            previousValues: before, newValues: new { form.Name, form.ModuleId });
+        await _db.SaveChangesAsync(ct);
+
+        return Result<FormDto>.Success(await FormDtoAsync(form, module.Name, ct));
+    }
+
+    public async Task<Result<FormDto>> SetFormActiveAsync(
+        long id, bool isActive, CancellationToken ct = default)
+    {
+        var form = await _db.Forms.FirstOrDefaultAsync(f => f.Id == id, ct);
+        if (form is null) return NotFound<FormDto>("form");
+
+        form.IsActive = isActive;
+        _audit.Record(AuditActions.SetupChanged, entityType: nameof(Form), entityId: id,
+            previousValues: new { IsActive = !isActive }, newValues: new { IsActive = isActive });
+        await _db.SaveChangesAsync(ct);
+
+        var moduleName = await _db.Modules.Where(m => m.Id == form.ModuleId)
+            .Select(m => m.Name).FirstAsync(ct);
+
+        return Result<FormDto>.Success(await FormDtoAsync(form, moduleName, ct));
+    }
+
+    private async Task<FormDto> FormDtoAsync(Form form, string moduleName, CancellationToken ct) =>
+        new(form.Id, form.Name, form.ModuleId, moduleName, form.IsActive,
+            await _db.FormSurfaces.CountAsync(s => s.FormId == form.Id, ct),
+            await _db.Requests.CountAsync(r => r.FormId == form.Id, ct));
+
+    public async Task<IReadOnlyList<FormSurfaceDto>> FormSurfacesAsync(CancellationToken ct = default) =>
+        await _db.FormSurfaces.AsNoTracking()
+            .Join(_db.Forms.AsNoTracking(), s => s.FormId, f => f.Id, (s, f) => new { s, f })
+            .Join(_db.Modules.AsNoTracking(), x => x.f.ModuleId, m => m.Id, (x, m) => new { x.s, x.f, m })
+            .OrderBy(x => x.m.Name).ThenBy(x => x.f.Name).ThenBy(x => x.s.Name)
+            .Select(x => new FormSurfaceDto(
+                x.s.Id, x.s.Name, x.s.FormId, x.f.Name, x.m.Name, x.s.IsActive,
+                _db.Requests.Count(r => r.FormSurfaceId == x.s.Id)))
+            .ToListAsync(ct);
+
+    public async Task<Result<FormSurfaceDto>> CreateFormSurfaceAsync(
+        SaveFormSurfaceDto dto, CancellationToken ct = default)
+    {
+        var name = dto.Name.Trim();
+
+        var form = await _db.Forms.FirstOrDefaultAsync(f => f.Id == dto.FormId, ct);
+        if (form is null) return NotFound<FormSurfaceDto>("form");
+
+        if (await _db.FormSurfaces.AnyAsync(
+                s => s.FormId == dto.FormId && s.Name.ToLower() == name.ToLower(), ct))
+            return Duplicate<FormSurfaceDto>("surface", name);
+
+        var surface = new FormSurface { Name = name, FormId = dto.FormId, IsActive = true };
+        _db.FormSurfaces.Add(surface);
+
+        _audit.Record(AuditActions.SetupChanged, entityType: nameof(FormSurface),
+            newValues: new { surface.Name, Form = form.Name });
+        await _db.SaveChangesAsync(ct);
+
+        return Result<FormSurfaceDto>.Success(await SurfaceDtoAsync(surface, ct));
+    }
+
+    public async Task<Result<FormSurfaceDto>> UpdateFormSurfaceAsync(
+        long id, SaveFormSurfaceDto dto, CancellationToken ct = default)
+    {
+        var surface = await _db.FormSurfaces.FirstOrDefaultAsync(s => s.Id == id, ct);
+        if (surface is null) return NotFound<FormSurfaceDto>("surface");
+
+        if (!await _db.Forms.AnyAsync(f => f.Id == dto.FormId, ct))
+            return NotFound<FormSurfaceDto>("form");
+
+        var name = dto.Name.Trim();
+
+        if (await _db.FormSurfaces.AnyAsync(
+                s => s.Id != id && s.FormId == dto.FormId && s.Name.ToLower() == name.ToLower(), ct))
+            return Duplicate<FormSurfaceDto>("surface", name);
+
+        var before = new { surface.Name, surface.FormId };
+        surface.Name = name;
+        surface.FormId = dto.FormId;
+
+        _audit.Record(AuditActions.SetupChanged, entityType: nameof(FormSurface), entityId: id,
+            previousValues: before, newValues: new { surface.Name, surface.FormId });
+        await _db.SaveChangesAsync(ct);
+
+        return Result<FormSurfaceDto>.Success(await SurfaceDtoAsync(surface, ct));
+    }
+
+    public async Task<Result<FormSurfaceDto>> SetFormSurfaceActiveAsync(
+        long id, bool isActive, CancellationToken ct = default)
+    {
+        var surface = await _db.FormSurfaces.FirstOrDefaultAsync(s => s.Id == id, ct);
+        if (surface is null) return NotFound<FormSurfaceDto>("surface");
+
+        surface.IsActive = isActive;
+        _audit.Record(AuditActions.SetupChanged, entityType: nameof(FormSurface), entityId: id,
+            previousValues: new { IsActive = !isActive }, newValues: new { IsActive = isActive });
+        await _db.SaveChangesAsync(ct);
+
+        return Result<FormSurfaceDto>.Success(await SurfaceDtoAsync(surface, ct));
+    }
+
+    private async Task<FormSurfaceDto> SurfaceDtoAsync(FormSurface surface, CancellationToken ct)
+    {
+        var names = await _db.Forms.AsNoTracking()
+            .Where(f => f.Id == surface.FormId)
+            .Join(_db.Modules.AsNoTracking(), f => f.ModuleId, m => m.Id,
+                (f, m) => new { Form = f.Name, Module = m.Name })
+            .FirstAsync(ct);
+
+        return new FormSurfaceDto(
+            surface.Id, surface.Name, surface.FormId, names.Form, names.Module, surface.IsActive,
+            await _db.Requests.CountAsync(r => r.FormSurfaceId == surface.Id, ct));
     }
 
     // --- departments -------------------------------------------------------------------------

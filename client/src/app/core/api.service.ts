@@ -2,7 +2,9 @@ import { HttpClient, HttpContext, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
-  AcceptanceCriteriaDto, ActiveWorkforceDto, ActivityEventDto, AssignableUserDto, AssignmentCandidateDto, AttachmentDto,
+  AcceptanceCriteriaDto, ActiveWorkforceDto, ActivityEventDto, AssignableUserDto,
+  AssignmentCandidateDto, AttachmentDto, FormDto, FormOptionDto, FormSurfaceDto,
+  FormSurfaceOptionDto, ModuleDto,
   AttachmentKind,
   AuditLogDto, ClientOptionDto, ModuleOptionDto, HomeDashboardDto, QuickWorkDto, StartQuickWorkDto,
   CreateRequestBatchDto, RequestBatchDetailDto, RequestBatchSummaryDto, ApproveTogetherDto,
@@ -128,6 +130,73 @@ export class ApiService {
     return this.http.get<ModuleOptionDto[]>('/api/lookups/modules', { params: params({ search }) });
   }
 
+  /**
+   * The product-catalog pickers (PRODUCT-CORE §5). Note that neither takes a client id, and
+   * neither can be given one: the catalog describes the product, not a client's copy of it.
+   */
+  formOptions(moduleId?: number | null, search?: string): Observable<FormOptionDto[]> {
+    return this.http.get<FormOptionDto[]>(
+      '/api/lookups/forms', { params: params({ moduleId, search }) });
+  }
+
+  formSurfaceOptions(formId?: number | null, search?: string): Observable<FormSurfaceOptionDto[]> {
+    return this.http.get<FormSurfaceOptionDto[]>(
+      '/api/lookups/form-surfaces', { params: params({ formId, search }) });
+  }
+
+  // --- the catalog, administered --------------------------------------------------------------
+
+  setupModules(): Observable<ModuleDto[]> {
+    return this.http.get<ModuleDto[]>('/api/setup/modules');
+  }
+
+  createModule(name: string, context?: HttpContext): Observable<ModuleDto> {
+    return this.http.post<ModuleDto>('/api/setup/modules', { name }, { context });
+  }
+
+  updateModule(id: number, name: string, context?: HttpContext): Observable<ModuleDto> {
+    return this.http.put<ModuleDto>(`/api/setup/modules/${id}`, { name }, { context });
+  }
+
+  setModuleActive(id: number, isActive: boolean): Observable<ModuleDto> {
+    return this.http.put<ModuleDto>(`/api/setup/modules/${id}/active`, { isActive });
+  }
+
+  setupForms(): Observable<FormDto[]> {
+    return this.http.get<FormDto[]>('/api/setup/forms');
+  }
+
+  createForm(name: string, moduleId: number, context?: HttpContext): Observable<FormDto> {
+    return this.http.post<FormDto>('/api/setup/forms', { name, moduleId }, { context });
+  }
+
+  updateForm(id: number, name: string, moduleId: number, context?: HttpContext): Observable<FormDto> {
+    return this.http.put<FormDto>(`/api/setup/forms/${id}`, { name, moduleId }, { context });
+  }
+
+  setFormActive(id: number, isActive: boolean): Observable<FormDto> {
+    return this.http.put<FormDto>(`/api/setup/forms/${id}/active`, { isActive });
+  }
+
+  setupFormSurfaces(): Observable<FormSurfaceDto[]> {
+    return this.http.get<FormSurfaceDto[]>('/api/setup/form-surfaces');
+  }
+
+  createFormSurface(name: string, formId: number, context?: HttpContext): Observable<FormSurfaceDto> {
+    return this.http.post<FormSurfaceDto>('/api/setup/form-surfaces', { name, formId }, { context });
+  }
+
+  updateFormSurface(
+    id: number, name: string, formId: number, context?: HttpContext,
+  ): Observable<FormSurfaceDto> {
+    return this.http.put<FormSurfaceDto>(
+      `/api/setup/form-surfaces/${id}`, { name, formId }, { context });
+  }
+
+  setFormSurfaceActive(id: number, isActive: boolean): Observable<FormSurfaceDto> {
+    return this.http.put<FormSurfaceDto>(`/api/setup/form-surfaces/${id}/active`, { isActive });
+  }
+
   // --- requests ------------------------------------------------------------------------------
 
   requestFilterOptions(filter: {
@@ -175,6 +244,8 @@ export class ApiService {
     estimatedEffortHours?: number; dueDate?: string | null; acceptanceCriteria?: string;
     duplicateOfRequestId?: number;
     clientName?: string | null;
+    /** Where in the product this is (PRODUCT-CORE §5). Set when approving; never a client id. */
+    moduleId?: number; formId?: number; formSurfaceId?: number;
     /** Required when the outcome is SendForVerification. Produces a check, never a task. */
     verification?: SendForVerificationDto;
   }, context?: HttpContext): Observable<TriageResultDto> {

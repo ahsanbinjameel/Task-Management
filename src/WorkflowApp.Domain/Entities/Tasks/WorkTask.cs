@@ -17,9 +17,12 @@ public class WorkTask : BaseEntity
     public string Title { get; set; } = default!;
     public string Description { get; set; } = default!;
 
+    // The two axes, carried from the request it was approved from (PRODUCT-CORE §5).
     public long? ProjectId { get; set; }
     public long? ClientId { get; set; }
     public long? ModuleId { get; set; }
+    public long? FormId { get; set; }
+    public long? FormSurfaceId { get; set; }
     public RequestType Type { get; set; }
 
     /// <summary>Priority approved at triage — the operative one for scheduling.</summary>

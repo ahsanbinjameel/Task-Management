@@ -96,6 +96,17 @@ public sealed record TriageDecisionDto
     [MaxLength(200)]
     public string? ClientName { get; init; }
 
+    // Where in the product this actually is (PRODUCT-CORE §5, §12D). This is a triage concern by
+    // design: the requester gives rough input — a client and a sentence — and the reviewer refines
+    // it into structured product context. Forcing four dropdowns on the person reporting a problem
+    // is how you stop them reporting problems.
+    //
+    // Each is written to the request and inherited by the task from there, the same way the client
+    // already is, so the two can never disagree. Null means "leave whatever the request has".
+    public long? ModuleId { get; init; }
+    public long? FormId { get; init; }
+    public long? FormSurfaceId { get; init; }
+
     public decimal? EstimatedEffortHours { get; init; }
     public DateTimeOffset? DueDate { get; init; }
 

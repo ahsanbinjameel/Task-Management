@@ -79,6 +79,8 @@ public sealed class TaskCreationService : ITaskCreationService
             ProjectId = request.ProjectId,
             ClientId = request.ClientId,
             ModuleId = request.ModuleId,
+            FormId = request.FormId,
+            FormSurfaceId = request.FormSurfaceId,
 
             // The approved priority, not the requested urgency.
             Priority = approvedPriority,
@@ -158,6 +160,8 @@ public sealed class TaskCreationService : ITaskCreationService
             ProjectId = parent.ProjectId,
             ClientId = parent.ClientId,
             ModuleId = parent.ModuleId,
+            FormId = parent.FormId,
+            FormSurfaceId = parent.FormSurfaceId,
 
             Priority = request.Priority ?? parent.Priority,
             EstimatedEffortHours = request.EstimatedEffortHours,

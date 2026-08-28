@@ -305,6 +305,28 @@ import {
 
                 @if (outcome === 'Approve') {
                   <div class="approve-fields">
+                    <!--
+                      Where in the product this is (PRODUCT-CORE §5, §12D). Triage is the right
+                      place for it: the requester gave a client and a sentence, and turning that
+                      into structured product context is the reviewer's job, not theirs.
+
+                      Three pickers, narrowing left to right — a form belongs to a module and a
+                      surface to a form. None of them takes a client, and none of them can: the
+                      catalog describes the product, and each client runs an instance of it.
+                    -->
+                    <app-search-select class="full" label="Module (optional)"
+                                       [options]="moduleOptions()" [ngModel]="moduleId"
+                                       (ngModelChange)="pickModule($event)" name="module" />
+
+                    <app-search-select class="full" label="Form (optional)"
+                                       [options]="formOptions()" [ngModel]="formId"
+                                       (ngModelChange)="pickForm($event)" name="form"
+                                       [disabled]="moduleId === null" />
+
+                    <app-search-select class="full" label="Which part of it (optional)"
+                                       [options]="surfaceOptions()" [(ngModel)]="surfaceId"
+                                       name="surface" [disabled]="formId === null" />
+
                     <app-search-select class="full" label="Approved priority"
                                        [options]="priorityOptions" [(ngModel)]="priority" />
 
@@ -514,6 +536,15 @@ export class RequestDetailComponent implements OnInit {
   priority: Priority = 'Normal';
   estimate: number | null = null;
   criteria = '';
+
+  // The product-catalog axis, set at triage.
+  moduleId: number | null = null;
+  formId: number | null = null;
+  surfaceId: number | null = null;
+
+  readonly moduleOptions = signal<SelectOption[]>([]);
+  readonly formOptions = signal<SelectOption[]>([]);
+  readonly surfaceOptions = signal<SelectOption[]>([]);
   reason = '';
   duplicateOf: number | null = null;
 
@@ -651,6 +682,54 @@ export class RequestDetailComponent implements OnInit {
     }
   }
 
+  /**
+   * Each level clears the ones under it, and reloads them.
+   *
+   * The server does the same thing on the way in, for the same reason: a request moved from Sales
+   * to Accounts while still pointing at the Delivery Order form would name a combination that does
+   * not exist, and a report grouped by module would then count it under Accounts and name a Sales
+   * form. Doing it here as well is so the reader sees the stale choice disappear rather than
+   * submitting it and being quietly corrected.
+   */
+  pickModule(moduleId: number | null): void {
+    this.moduleId = moduleId;
+    this.formId = null;
+    this.surfaceId = null;
+    this.formOptions.set([]);
+    this.surfaceOptions.set([]);
+    if (moduleId !== null) this.loadForms(moduleId);
+  }
+
+  pickForm(formId: number | null): void {
+    this.formId = formId;
+    this.surfaceId = null;
+    this.surfaceOptions.set([]);
+    if (formId !== null) this.loadSurfaces(formId);
+  }
+
+  private loadModules(): void {
+    this.api.modules().subscribe({
+      next: (modules) => this.moduleOptions.set(
+        modules.map((m) => ({ value: m.id, label: m.name }))),
+      error: () => undefined,
+    });
+  }
+
+  private loadForms(moduleId: number): void {
+    this.api.formOptions(moduleId).subscribe({
+      next: (forms) => this.formOptions.set(forms.map((f) => ({ value: f.id, label: f.name }))),
+      error: () => undefined,
+    });
+  }
+
+  private loadSurfaces(formId: number): void {
+    this.api.formSurfaceOptions(formId).subscribe({
+      next: (surfaces) => this.surfaceOptions.set(
+        surfaces.map((x) => ({ value: x.id, label: x.name }))),
+      error: () => undefined,
+    });
+  }
+
   /** Only people who act on tasks are offered the task. See the note in the template. */
   canSeeTask = () => this.auth.has(Perm.taskAssign) || this.auth.has(Perm.taskWork)
     || this.auth.has(Perm.taskReview) || this.auth.has(Perm.taskQCReview);
@@ -658,6 +737,9 @@ export class RequestDetailComponent implements OnInit {
   ngOnInit(): void {
     this.requestId = Number(this.id());
     this.load();
+
+    // Only for the people who triage — everyone else is never shown the pickers.
+    if (this.auth.has(Perm.taskReview)) this.loadModules();
 
     if (this.canSendForVerification()) {
       this.api.assignableCheckers().subscribe((checkers) => {
@@ -780,6 +862,11 @@ export class RequestDetailComponent implements OnInit {
       approvedPriority: this.outcome === 'Approve' ? this.priority : undefined,
       estimatedEffortHours: this.outcome === 'Approve' ? (this.estimate ?? undefined) : undefined,
       acceptanceCriteria: this.outcome === 'Approve' ? (this.criteria.trim() || undefined) : undefined,
+      // Sent only when approving. The other outcomes do not create work, so placing it precisely
+      // is effort spent on something that may never be built.
+      moduleId: this.outcome === 'Approve' ? (this.moduleId ?? undefined) : undefined,
+      formId: this.outcome === 'Approve' ? (this.formId ?? undefined) : undefined,
+      formSurfaceId: this.outcome === 'Approve' ? (this.surfaceId ?? undefined) : undefined,
       duplicateOfRequestId: this.duplicateOf ?? undefined,
       verification: this.outcome === 'SendForVerification'
         ? {

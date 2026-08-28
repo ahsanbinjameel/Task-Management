@@ -97,3 +97,44 @@ public sealed record SetRolePermissionsDto
 {
     public IReadOnlyList<string> Permissions { get; init; } = Array.Empty<string>();
 }
+
+// --- the product catalog (PRODUCT-CORE §5) -------------------------------------------------------
+//
+// Module → Form → Surface, and no reference to Client anywhere in it. Your product has these; each
+// client runs an instance of it. Modelling them per client would give every client a private copy
+// of the same form and make "which forms generate the most support" unanswerable.
+
+/// <summary>A part of the product. <c>Forms</c> is how many hang off it, for the retire warning.</summary>
+public sealed record ModuleDto(long Id, string Name, bool IsActive, int Forms, int UsedBy);
+
+public sealed record SaveModuleDto
+{
+    [Required, MaxLength(200)]
+    public string Name { get; init; } = default!;
+}
+
+/// <summary>A screen or document inside a module.</summary>
+public sealed record FormDto(
+    long Id, string Name, long ModuleId, string ModuleName, bool IsActive, int Surfaces, int UsedBy);
+
+public sealed record SaveFormDto
+{
+    [Required, MaxLength(200)]
+    public string Name { get; init; } = default!;
+
+    [Required]
+    public long ModuleId { get; init; }
+}
+
+/// <summary>A way of looking at a form: the form itself, History, Detail Report, Master Report.</summary>
+public sealed record FormSurfaceDto(
+    long Id, string Name, long FormId, string FormName, string ModuleName, bool IsActive, int UsedBy);
+
+public sealed record SaveFormSurfaceDto
+{
+    [Required, MaxLength(200)]
+    public string Name { get; init; } = default!;
+
+    [Required]
+    public long FormId { get; init; }
+}

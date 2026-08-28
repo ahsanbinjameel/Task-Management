@@ -10,6 +10,12 @@ public sealed record ModuleOptionDto(long Id, string Name, string? ProjectName);
 
 public sealed record ClientOptionDto(long Id, string Name);
 
+/// <summary>A form for the picker. The module comes with it, because "Adjustment" alone is ambiguous.</summary>
+public sealed record FormOptionDto(long Id, string Name, long ModuleId, string ModuleName);
+
+/// <summary>A surface for the picker, carrying its form so the choice reads in full.</summary>
+public sealed record FormSurfaceOptionDto(long Id, string Name, long FormId, string FormName);
+
 
 /// <summary>
 /// Client names, for the type-ahead on the request form.
@@ -45,6 +51,18 @@ public interface ILookupService
     /// structure that an administrator maintains, not a label somebody invents at the point of use.
     /// </summary>
     Task<IReadOnlyList<ModuleOptionDto>> ModulesAsync(string? search, CancellationToken ct = default);
+
+    /// <summary>
+    /// Forms, optionally narrowed to one module. The narrowing is by <em>module</em> and never by
+    /// client — the catalog describes the product, not any one client's copy of it
+    /// (PRODUCT-CORE §5).
+    /// </summary>
+    Task<IReadOnlyList<FormOptionDto>> FormsAsync(
+        long? moduleId, string? search, CancellationToken ct = default);
+
+    /// <summary>The ways of looking at a form: the form itself, History, Detail/Master Report.</summary>
+    Task<IReadOnlyList<FormSurfaceOptionDto>> FormSurfacesAsync(
+        long? formId, string? search, CancellationToken ct = default);
 }
 
 public sealed class LookupService : ILookupService
@@ -52,6 +70,48 @@ public sealed class LookupService : ILookupService
     private readonly IWorkflowDbContext _db;
 
     public LookupService(IWorkflowDbContext db) => _db = db;
+
+    public async Task<IReadOnlyList<FormOptionDto>> FormsAsync(
+        long? moduleId, string? search, CancellationToken ct = default)
+    {
+        var query = _db.Forms.AsNoTracking().Where(f => f.IsActive);
+
+        if (moduleId is { } id) query = query.Where(f => f.ModuleId == id);
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim();
+            query = query.Where(f => f.Name.Contains(term));
+        }
+
+        return await query
+            .Join(_db.Modules.AsNoTracking(), f => f.ModuleId, m => m.Id, (f, m) => new { f, m })
+            .OrderBy(x => x.m.Name).ThenBy(x => x.f.Name)
+            .Select(x => new FormOptionDto(x.f.Id, x.f.Name, x.f.ModuleId, x.m.Name))
+            .Take(200)
+            .ToListAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<FormSurfaceOptionDto>> FormSurfacesAsync(
+        long? formId, string? search, CancellationToken ct = default)
+    {
+        var query = _db.FormSurfaces.AsNoTracking().Where(s => s.IsActive);
+
+        if (formId is { } id) query = query.Where(s => s.FormId == id);
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim();
+            query = query.Where(s => s.Name.Contains(term));
+        }
+
+        return await query
+            .Join(_db.Forms.AsNoTracking(), s => s.FormId, f => f.Id, (s, f) => new { s, f })
+            .OrderBy(x => x.f.Name).ThenBy(x => x.s.Name)
+            .Select(x => new FormSurfaceOptionDto(x.s.Id, x.s.Name, x.s.FormId, x.f.Name))
+            .Take(200)
+            .ToListAsync(ct);
+    }
 
     public async Task<IReadOnlyList<ModuleOptionDto>> ModulesAsync(
         string? search, CancellationToken ct = default)

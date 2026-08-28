@@ -94,9 +94,15 @@ BEGIN TRANSACTION;
     DELETE FROM LoginAttempts;
     DELETE FROM RefreshTokens;
 
-    -- --- organisation lookups -----------------------------------------------------------
-    -- Not seeded — whatever is here was typed in during testing. Modules hang off projects,
-    -- projects off clients, teams off departments.
+    -- --- organisation lookups + the product catalog ---------------------------------------
+    -- Not seeded — whatever is here was typed in during testing.
+    --
+    -- Child-first, as everywhere else in this script. The catalog is Module -> Form -> Surface
+    -- and the FKs are Restrict, so a surface has to go before its form and a form before its
+    -- module. Note that the catalog does NOT hang off Clients: it describes the product, and a
+    -- client is an instance of it (PRODUCT-CORE section 5).
+    DELETE FROM FormSurfaces;
+    DELETE FROM Forms;
     DELETE FROM Modules;
     DELETE FROM Projects;
     DELETE FROM Clients;

@@ -114,7 +114,7 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | `Workflow/WorkflowExceptions.cs` | `InvalidWorkflowTransitionException`, `TransitionReasonRequiredException` |
 | `Entities/Identity/UserRolePermission.cs` | `User`, `Role`, `Permission`, `UserRole`, `RolePermission`, `LoginAttempt`, `RefreshToken` |
 | `Entities/Workforce/ShiftAndActivity.cs` | `ShiftSession` (incl. `EndedImproperly`, `EndedByUserId`, `EndNote`), `ActivityEvent` |
-| `Entities/Requests/Organization.cs` | `Department`, `Team`, `Client`, `Project`, `Module`, `PauseReason` |
+| `Entities/Requests/Organization.cs` | `Department`, `Team`, `Client`, `Project`, `PauseReason`, and the **product catalog**: `Module` → `Form` → `FormSurface`. The catalog is client-independent by design (§6); `Module.ProjectId` is vestigial and must not be used for it |
 | `Entities/Requests/Request.cs` | `Request` (incl. `BatchId`/`OrdinalInBatch`), `RequestClarification`, `AttachmentKind`, `Attachment` (owner is exactly one of request/task/batch; `Kind` says what it is *for*, `QCReviewId` ties evidence to its attempt) |
 | `Entities/Requests/RequestBatch.cs` | `RequestBatch` — several things asked for at once. Holds the shared client/note/files; carries **no status of its own** |
 | `Entities/Tasks/WorkTask.cs` | `WorkTask`, `TaskCollaborator` |
@@ -131,6 +131,7 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | `Common/TaskTransitionService.cs` | ✅ | Pure transition validation (workflow map + permission + reason + override) |
 | `Common/StatusLabels.cs` | ✅ | **The words users see for internal status names.** Mirrored on the client by `core/labels.ts` — change both together |
 | `Common/ColumnFilters.cs` | ✅ | The grid filter row server-side: `col[key] → value`, read as text/id/bool/enum/date. Unknown keys ignored, blank values narrow nothing |
+| `Common/ProductLocation.cs` | ✅ | The one place that joins module/form/surface into "Sales · Delivery Order · Detail Report". Never stored — it is a rendering of three ids |
 | `Common/StatusViews.cs` | ✅ | **Who is shown which statuses.** Groups internal states into per-audience views (requester / worker / coordinator), resolves the audience from permissions, and folds a request's status onto its task |
 | `Common/Interfaces/IWorkflowDbContext.cs` | ✅ | The persistence surface the Application layer sees (all DbSets + `Database` + `SaveChangesAsync`) |
 | `Common/Interfaces/IIdentityAbstractions.cs` | ✅ | `ICurrentUser`, `IDateTimeProvider`, `IPasswordHasher`, `ITokenService`, `AccessToken`, `IssuedRefreshToken` |
@@ -202,7 +203,7 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | `Persistence/Interceptors/AuditableEntityInterceptor.cs` | ✅ | **Sole** writer of CreatedAt/UpdatedAt/CreatedByUserId/UpdatedByUserId — never set these by hand |
 | `Persistence/Interceptors/IntegrationEventDispatchInterceptor.cs` | ✅ | Derives real-time events from the change tracker; dispatches **after** commit, drops them on rollback |
 | `Persistence/Seed/DatabaseSeeder.cs` | ✅ | Idempotent: permissions, roles+grants, pause reasons, bootstrap admin |
-| `Persistence/Migrations/` | ✅ | 9 migrations: `InitialCreate` (squashed while still unapplied — **do not squash again**), `OptionalUserEmail`, `RequiredSubtasks`, `PauseCategoryAndAwayState`, `RequestActivityHistory`, `QuickWork`, `RequestBatches`, `AttachmentProof`, `Verifications`, + model snapshot. **All tracked in git — the schema travels with the code; never move a database backup between machines** |
+| `Persistence/Migrations/` | ✅ | 10 migrations: `InitialCreate` (squashed while still unapplied — **do not squash again**), `OptionalUserEmail`, `RequiredSubtasks`, `PauseCategoryAndAwayState`, `RequestActivityHistory`, `QuickWork`, `RequestBatches`, `AttachmentProof`, `Verifications`, `ProductCatalog`, + model snapshot. **All tracked in git — the schema travels with the code; never move a database backup between machines** |
 | `Identity/JwtTokenService.cs` | ✅ | Access-token issuance + `AppClaimTypes`; refresh token generation and SHA-256 hashing |
 | `Identity/PasswordHasherAdapter.cs` | ✅ | Wraps `PasswordHasher<User>` (PBKDF2-HMAC-SHA256) |
 | `Storage/DiskFileStorage.cs` | ✅ | Generated stored names, path-traversal guard, hash-while-writing |
@@ -261,6 +262,7 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | GET | `/health` | anonymous, no DB call |
 | GET/POST/PUT | `/api/setup/clients`, `/departments`, `/teams`, `/pause-reasons` (+ `/{id}`, `/{id}/active`) | `Admin.ManageConfig` |
 | GET/POST/PUT/DELETE | `/api/setup/roles`, `/{id}`, `/{id}/permissions` | `Admin.ManageConfig` **and** `Admin.ManageRoles` |
+| GET/POST/PUT | `/api/setup/modules`, `/forms`, `/form-surfaces` (+ `/{id}`, `/{id}/active`) | `Admin.ManageConfig` |
 
 ### Endpoints (Phase 2)
 
@@ -293,6 +295,7 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | GET/DELETE | `/api/attachments/{id}` | authenticated (uploader only to delete) |
 | GET | `/api/tasks`, `/api/tasks/{id}`, `/my-queue`, `/pause-reasons`, `/active-session` | authenticated |
 | GET | `/api/tasks/assignment-queue`, `/assignable-users` | `Task.Assign` |
+| GET | `/api/tasks/{id}/assignment-candidates` | `Task.Assign` |
 | GET | `/api/tasks/workload` | `Workforce.ViewAll` |
 | POST | `/api/tasks/{id}/transition` | per-transition (see `TaskWorkflow`) |
 | PUT/POST/DELETE | `/api/tasks/{id}/assignee\|roles\|collaborators`, `PATCH /api/tasks/{id}` | `Task.Assign` |
@@ -308,6 +311,7 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | GET | `/api/tasks/{id}/qc`, `/acceptance-criteria` | authenticated |
 | GET | `/api/tasks/{id}/closure-check` | `Task.Close` |
 | POST | `/api/tasks/{id}/close` | `Task.Close` |
+| POST | `/api/tasks/{id}/accept`, `/reject` | authenticated — **the requester of the originating request only**, enforced on the record |
 
 ### Endpoints (Phase 8)
 
@@ -336,7 +340,7 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | POST | `/api/verifications/{id}/start`, `/result` | `Verification.Work` **and** be the assigned checker |
 | POST | `/api/verifications/{id}/cancel` | `Verification.Create` (reason required) |
 | POST | `/api/verifications/{id}/attachments` | the assigned checker only |
-| GET | `/api/lookups/modules` | authenticated |
+| GET | `/api/lookups/modules`, `/forms?moduleId=`, `/form-surfaces?formId=` | authenticated |
 
 `POST /api/requests/{id}/triage` gains the `SendForVerification` outcome, which carries a
 `verification` object and returns `verificationId`/`verificationNumber` instead of a task.
@@ -427,6 +431,17 @@ running the API instead (`--launch-profile Development`), which does load user-s
 12. **`Task.Work`, `Verification.Work` and `Workforce.TrackShift` are independent.** None implies
     another, and every combination is a legitimate configuration. Administering the system implies
     none of them.
+13. **Once execution starts, a task's committed scope does not silently grow.** New points that
+    arrive after work has begun become *new linked requests*, never an invisible extension of the
+    running task (PRODUCT-CORE §6).
+14. **Requester acceptance is a per-work-type closure *policy*, not a universal invariant.** Work
+    with a requester behind it is confirmed by them; work with none closes on the quality check. It
+    is reported beside the closure checklist rather than as one of its requirements, so a
+    coordinator whose requester has gone quiet is told rather than blocked (PRODUCT-CORE §7).
+15. **The ERP context is two orthogonal axes, not one tree.**
+    `Request = Client? × ProductLocation(Module → Form → Surface)`. The catalog is
+    client-independent and nothing in it may reference a client; `ClientId` is nullable and there is
+    **no "Internal" client** (PRODUCT-CORE §5).
 
 ### DB-level guarantees already declared
 
@@ -986,6 +1001,29 @@ running the API instead (`--launch-profile Development`), which does load user-s
   light **Tasks**. `ShellComponent.isActive` matches the URL against every view in the group, exact
   for Home and prefix-with-boundary for the rest — the boundary is what stops `/task` lighting
   `/tasks`.
+- **The ERP context is two axes, and the catalog is client-independent** (PRODUCT-CORE §5). Your
+  product has modules and forms; each client runs an instance of it. So `Module → Form →
+  FormSurface` references no client at any level, and a request ties one point on each axis:
+  `Client? × ProductLocation`. A per-client tree would give every client a private copy of the same
+  form and make the questions worth asking unanswerable — "every Delivery Order detail-report issue
+  across all clients", "which forms generate the most support", "is this posting bug unique to ABC
+  or are four clients seeing it". Internal work is the client axis left empty; there is **no
+  "Internal" client** and there must never be one, because a fake row to satisfy a foreign key puts
+  invented data into every client report.
+  Two things a reader should know. `Module.ProjectId` survives from before this model and is the one
+  link that could be read as tying a module to a client (a `Project` carries a `ClientId`); nothing
+  in the catalog path sets or reads it, and it is kept only because dropping a column can only lose
+  data. And the module picker never filtered by client even before this change, so the runtime was
+  already client-independent — what was missing was the model saying so.
+- **The product location is set at triage, not at intake.** The requester gives a client and a
+  sentence; turning that into `Sales · Delivery Order · Detail Report` is the reviewer's job. Four
+  mandatory dropdowns in front of somebody reporting a broken invoice is how you stop them
+  reporting it. Each level clears the ones below it — on the client so the stale choice visibly
+  disappears, and again on the server so it cannot be submitted — because a request moved from
+  Sales to Accounts while still pointing at the Delivery Order form names a combination that does
+  not exist, and a report grouped by module would count it under Accounts while naming a Sales form.
+- **`Form` and `FormSurface` are unique within their parent, not globally.** Two modules may each
+  reasonably have an "Adjustment"; the same module having two is one form typed twice.
 - **Parked capabilities are one flag file, not scattered `@if`s** (`core/parked.ts`). Quick Work,
   dependencies, subtasks and the scope-change ceremony are built, tested, endpoint-complete and
   **not offered**: the widget is off the shell and the three tabs are off the task detail. Reading

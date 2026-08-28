@@ -319,6 +319,8 @@ export interface TaskSummaryDto {
   /** The product area, beside the client. Together these are the ERP context. */
   moduleId?: number | null;
   moduleName?: string | null;
+  /** Module, form and surface joined for reading: "Sales · Delivery Order · Detail Report". */
+  productLocation?: string | null;
   /** What "working" is supposed to look like, in the requester's own words. */
   expectedResult?: string | null;
   /** Screenshots and files worth seeing first. Excludes quality-check evidence. */
@@ -546,6 +548,8 @@ export interface TaskDetailDto {
   priority: Priority;
   clientId?: number | null;
   clientName?: string | null;
+  /** The product axis: "Sales · Delivery Order · Detail Report". Null until triage places it. */
+  productLocation?: string | null;
   primaryAssigneeUserId?: number | null;
   primaryAssigneeDisplayName?: string | null;
   reviewerUserId?: number | null;
@@ -1230,4 +1234,54 @@ export interface RecordVerificationResultDto {
 
 export interface CancelVerificationDto {
   reason: string;
+}
+
+// --- the product catalog (PRODUCT-CORE §5) --------------------------------------------------------
+//
+// Module → Form → Surface, and nothing in it references a client. Your product has these; a client
+// runs an instance of it. Per-client copies would make "which forms generate the most support"
+// unanswerable.
+
+export interface ModuleDto {
+  id: number;
+  name: string;
+  isActive: boolean;
+  /** How many forms hang off it — the retire warning. */
+  forms: number;
+  usedBy: number;
+}
+
+export interface FormDto {
+  id: number;
+  name: string;
+  moduleId: number;
+  moduleName: string;
+  isActive: boolean;
+  surfaces: number;
+  usedBy: number;
+}
+
+export interface FormSurfaceDto {
+  id: number;
+  name: string;
+  formId: number;
+  formName: string;
+  moduleName: string;
+  isActive: boolean;
+  usedBy: number;
+}
+
+/** A form for the picker. The module comes with it, because "Adjustment" alone is ambiguous. */
+export interface FormOptionDto {
+  id: number;
+  name: string;
+  moduleId: number;
+  moduleName: string;
+}
+
+export interface FormSurfaceOptionDto {
+  id: number;
+  name: string;
+  formId: number;
+  formName: string;
 }

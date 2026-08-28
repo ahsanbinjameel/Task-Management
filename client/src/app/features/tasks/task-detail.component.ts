@@ -414,6 +414,14 @@ import { AttachmentUploadComponent } from '../../shared/attachment-upload.compon
           <aside class="side stack">
             <div class="card card-pad">
               <h2 class="card-title">Details</h2>
+              <!--
+                Where in the product this is. Sits directly under the client because together they
+                are the two axes a request is placed on (PRODUCT-CORE §5) — the client is which
+                instance, this is which part of the product.
+              -->
+              @if (t.productLocation) {
+                <app-field label="Where in the product">{{ t.productLocation }}</app-field>
+              }
               @if (t.clientName) {
                 <app-field label="Client">
                   {{ t.clientName }}

@@ -147,6 +147,21 @@ public sealed class TaskQueryService : ITaskQueryService
                 .Select(u => u.DisplayName).FirstOrDefaultAsync(ct)
             : null;
 
+        // Where in the product this is, joined into one line by the one place that formats it.
+        var productLocation = ProductLocation.Format(
+            task.ModuleId is { } moduleId
+                ? await _db.Modules.AsNoTracking().Where(m => m.Id == moduleId)
+                    .Select(m => m.Name).FirstOrDefaultAsync(ct)
+                : null,
+            task.FormId is { } formId
+                ? await _db.Forms.AsNoTracking().Where(f => f.Id == formId)
+                    .Select(f => f.Name).FirstOrDefaultAsync(ct)
+                : null,
+            task.FormSurfaceId is { } surfaceId
+                ? await _db.FormSurfaces.AsNoTracking().Where(x => x.Id == surfaceId)
+                    .Select(x => x.Name).FirstOrDefaultAsync(ct)
+                : null);
+
         // What was asked for, carried onto the work. This is what stops a worker having to go and
         // read the request to find the screenshot or what "working" is supposed to look like.
         var requestContext = task.RequestId is { } requestId
@@ -334,7 +349,7 @@ public sealed class TaskQueryService : ITaskQueryService
 
         return Result<TaskDetailDto>.Success(ScopeToAudience(new TaskDetailDto(
             task.Id, task.TaskNumber, task.RequestId, requestNumber, task.Title, task.Description,
-            task.Type, task.Status, task.Priority, task.ClientId, clientName,
+            task.Type, task.Status, task.Priority, task.ClientId, clientName, productLocation,
             task.PrimaryAssigneeUserId, assigneeName, task.ReviewerUserId, task.QCUserId,
             task.EstimatedEffortHours, task.DueDate, task.AcceptanceCriteria, task.Resolution,
             task.ProgressPercent, task.QueueOrder, task.ParentTaskId,
@@ -952,6 +967,29 @@ public sealed class TaskQueryService : ITaskQueryService
                 .Where(m => moduleIds.Contains(m.Id))
                 .ToDictionaryAsync(m => m.Id, m => m.Name, ct);
 
+        // The rest of the product-catalog axis. Three ids joined into one readable line by
+        // ProductLocation, which is the only place that formatting lives.
+        var formIds = tasks.Where(t => t.FormId.HasValue)
+            .Select(t => t.FormId!.Value).Distinct().ToList();
+
+        var formNames = formIds.Count == 0
+            ? new Dictionary<long, string>()
+            : await _db.Forms.AsNoTracking()
+                .Where(f => formIds.Contains(f.Id))
+                .ToDictionaryAsync(f => f.Id, f => f.Name, ct);
+
+        var surfaceIds = tasks.Where(t => t.FormSurfaceId.HasValue)
+            .Select(t => t.FormSurfaceId!.Value).Distinct().ToList();
+
+        var surfaceNames = surfaceIds.Count == 0
+            ? new Dictionary<long, string>()
+            : await _db.FormSurfaces.AsNoTracking()
+                .Where(x => surfaceIds.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id, x => x.Name, ct);
+
+        string? NameFrom(IReadOnlyDictionary<long, string> names, long? id) =>
+            id is { } key && names.TryGetValue(key, out var found) ? found : null;
+
         // Is there a picture? Counted across the task and the request it came from, because to the
         // person about to start the work they are one pile. QC evidence is left out on purpose:
         // it belongs to a numbered attempt, and it is not context for starting.
@@ -1048,7 +1086,11 @@ public sealed class TaskQueryService : ITaskQueryService
                 NameOf(t.QCUserId),
                 helpers,
                 t.ModuleId,
-                t.ModuleId is { } mid && moduleNames.TryGetValue(mid, out var module) ? module : null,
+                NameFrom(moduleNames, t.ModuleId),
+                ProductLocation.Format(
+                    NameFrom(moduleNames, t.ModuleId),
+                    NameFrom(formNames, t.FormId),
+                    NameFrom(surfaceNames, t.FormSurfaceId)),
                 origin?.ExpectedResult,
                 attachmentCounts.Count(a =>
                     a.TaskId == t.Id || (a.RequestId != null && a.RequestId == t.RequestId)));

@@ -217,6 +217,28 @@ public sealed class RequestTriageService : IRequestTriageService
         if (!string.IsNullOrWhiteSpace(decision.ClientName))
             request.ClientId = await _lookups.ResolveClientAsync(decision.ClientName, ct);
 
+        // The other axis: where in the product this is (PRODUCT-CORE §5). Written to the request
+        // for the same reason the client is, and inherited by the task a few lines down.
+        //
+        // Each level clears the ones below it. Moving a request from Sales to Accounts while it
+        // still points at the Delivery Order form would leave a combination that does not exist,
+        // and a report grouped by module would then count it under Accounts and name a Sales form.
+        if (decision.ModuleId is { } moduleId && moduleId != request.ModuleId)
+        {
+            request.ModuleId = moduleId;
+            request.FormId = null;
+            request.FormSurfaceId = null;
+        }
+
+        if (decision.FormId is { } formId && formId != request.FormId)
+        {
+            request.FormId = formId;
+            request.FormSurfaceId = null;
+        }
+
+        if (decision.FormSurfaceId is { } surfaceId)
+            request.FormSurfaceId = surfaceId;
+
         var task = await _taskCreation.CreateFromRequestAsync(
             request, reviewerId, priority, decision.EstimatedEffortHours, decision.DueDate,
             decision.AcceptanceCriteria, ct);

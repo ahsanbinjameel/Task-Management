@@ -124,6 +124,11 @@ public sealed record TaskSummaryDto(
     /// <summary>The product area, beside the client. Together these are the ERP context.</summary>
     long? ModuleId = null,
     string? ModuleName = null,
+    /// <summary>
+    /// Module, form and surface joined for reading — "Sales · Delivery Order · Detail Report".
+    /// Null when triage has not placed it yet, so a row can leave the line out entirely.
+    /// </summary>
+    string? ProductLocation = null,
     /// <summary>What "working" is supposed to look like, in the requester's own words.</summary>
     string? ExpectedResult = null,
     /// <summary>
@@ -246,6 +251,11 @@ public sealed record TaskDetailDto(
     // The name as well as the id: a screen cannot show "ABC Company" from a number, which is why
     // the client was invisible everywhere despite being on the record.
     string? ClientName,
+    /// <summary>
+    /// The other axis (PRODUCT-CORE §5): "Sales · Delivery Order · Detail Report". The client says
+    /// which instance, this says which part of the product. Null until triage places it.
+    /// </summary>
+    string? ProductLocation,
     long? PrimaryAssigneeUserId,
     string? PrimaryAssigneeDisplayName,
     long? ReviewerUserId,

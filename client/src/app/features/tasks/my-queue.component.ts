@@ -62,11 +62,11 @@ import { ViewTabsComponent } from '../../shared/view-tabs.component';
                   Where in the product this is. First thing a worker asks and, until now, the
                   first thing they had to open the task to find out (PRODUCT-CORE §12A).
                 -->
-                @if (task.clientName || task.moduleName) {
+                @if (task.clientName || task.productLocation) {
                   <div class="context small">
                     @if (task.clientName) { <span class="client">{{ task.clientName }}</span> }
-                    @if (task.clientName && task.moduleName) { <span class="dot">·</span> }
-                    @if (task.moduleName) { <span>{{ task.moduleName }}</span> }
+                    @if (task.clientName && task.productLocation) { <span class="dot">·</span> }
+                    @if (task.productLocation) { <span>{{ task.productLocation }}</span> }
                   </div>
                 }
 
