@@ -77,7 +77,33 @@ const matching = (group: AbstractControl): ValidationErrors | null =>
             <span class="muted small">What you can do</span>
             <strong>{{ roles() }}</strong>
           </div>
+          <div>
+            <span class="muted small">Your hours</span>
+            <strong>{{ auth.tracksShift() ? 'Recorded on a shift' : 'Not recorded' }}</strong>
+          </div>
         </div>
+
+        <!--
+          The one fact people came looking for and could not find. An account without
+          Workforce.TrackShift has no shift control anywhere in the app — by design, since the
+          server would refuse to open one — and the absence of a button explains nothing on its
+          own. Saying it here is what turns "where is Start shift?" into an answer.
+        -->
+        @if (!auth.tracksShift()) {
+          <p class="muted small browser">
+            <mat-icon>info_outline</mat-icon>
+            <span>
+              @if (auth.has(Perm.taskWork)) {
+                Your attendance is not tracked, so there is no shift control in the top bar. You do
+                not need one — work on a task starts straight from the task.
+              } @else {
+                Your attendance is not tracked and this account does not carry out tasks, so
+                neither the shift control nor the task timer is offered. Both come from the roles
+                you hold.
+              }
+            </span>
+          </p>
+        }
 
       </section>
 

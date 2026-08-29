@@ -52,6 +52,12 @@ public class ShiftServiceTests
         Assert.Equal("127.0.0.1", shift.StartIpAddress);
     }
 
+    /// <summary>
+    /// Which is why anything that mints a token outside <c>AuthService.LoginAsync</c> has to move
+    /// the user out of <c>NotLoggedIn</c> itself. Demo mode did not, and stranded its whole cast
+    /// here: no shift could be opened, so no task timer could be started —
+    /// see <c>IDemoEnvironment.SignInAsync</c>.
+    /// </summary>
     [Fact]
     public async Task Starting_a_shift_requires_being_logged_in_first()
     {

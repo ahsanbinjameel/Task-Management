@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using WorkflowApp.Application.Common.Options;
 using WorkflowApp.Application.Common;
 using WorkflowApp.Application.Common.Interfaces;
+using WorkflowApp.Application.Common.Services;
 using WorkflowApp.Application.Demo;
 using WorkflowApp.Domain.Entities.Identity;
 using WorkflowApp.Domain.Entities.Requests;
@@ -179,6 +180,23 @@ public sealed class DemoEnvironment : IDemoEnvironment
             .ToListAsync(ct);
 
         return new DemoPrincipal(user, roles, permissions);
+    }
+
+    public async Task SignInAsync(long demoUserId, CancellationToken ct = default)
+    {
+        if (!IsConfigured) return;
+
+        await using var db = Open();
+
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == demoUserId, ct);
+        if (user is null) return;
+
+        // The same rule login applies, not a demo-flavoured copy of it. The logger is built over
+        // *this* context rather than injected, because the injected one follows the caller's token
+        // and on entry that is the live catalog.
+        WorkforceSignIn.Apply(user, new ActivityLogger(db, _clock), _clock.UtcNow);
+
+        await db.SaveChangesAsync(ct);
     }
 
     public async Task ResetAsync(CancellationToken ct = default)

@@ -5,6 +5,7 @@ using WorkflowApp.Application.Common.Interfaces;
 using WorkflowApp.Application.Notifications;
 using WorkflowApp.Application.Common.Models;
 using WorkflowApp.Application.Common.Services;
+using WorkflowApp.Application.Identity.Services;
 using WorkflowApp.Application.Tasks.Dtos;
 using WorkflowApp.Domain.Entities.Tasks;
 using WorkflowApp.Domain.Enums;
@@ -69,6 +70,7 @@ public sealed class WorkSessionService : IWorkSessionService
     private readonly ITaskDependencyService _dependencies;
     private readonly IActivityLogger _activity;
     private readonly INotificationService _notifications;
+    private readonly IPermissionService _permissions;
     private readonly IDateTimeProvider _clock;
     private readonly ILogger<WorkSessionService> _logger;
 
@@ -78,6 +80,7 @@ public sealed class WorkSessionService : IWorkSessionService
         ITaskDependencyService dependencies,
         IActivityLogger activity,
         INotificationService notifications,
+        IPermissionService permissions,
         IDateTimeProvider clock,
         ILogger<WorkSessionService> logger)
     {
@@ -86,6 +89,7 @@ public sealed class WorkSessionService : IWorkSessionService
         _dependencies = dependencies;
         _activity = activity;
         _notifications = notifications;
+        _permissions = permissions;
         _clock = clock;
         _logger = logger;
     }
@@ -102,12 +106,20 @@ public sealed class WorkSessionService : IWorkSessionService
             return Result<TaskDetailDto>.Failure(Error.Forbidden(
                 "task.not_assignee", "Only the assignee can start work on this task."));
 
-        // Time cannot be recorded against a day the employee is not on.
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
         if (user is null)
             return Result<TaskDetailDto>.Failure(Error.NotFound("user.not_found", "User not found."));
 
-        if (!await _db.ShiftSessions.AnyAsync(s => s.UserId == userId && s.ShiftEnd == null, ct))
+        // Time cannot be recorded against a day the employee is not on — but only people whose
+        // attendance is actually measured have such a day at all.
+        // Task.Work and Workforce.TrackShift are independent by design (see
+        // Permissions.WorkforceTrackShift), so demanding an open shift from everyone made one of
+        // those combinations a dead end: the timer refused to start, the message said to start a
+        // shift, and the only control that could do it is hidden from exactly those people —
+        // deliberately, because StartShiftAsync would refuse them too. Asked of the user rather
+        // than of the caller's token, for the same reason ShiftService asks it that way.
+        if (await _permissions.HasPermissionAsync(userId, Permissions.WorkforceTrackShift, ct)
+            && !await _db.ShiftSessions.AnyAsync(s => s.UserId == userId && s.ShiftEnd == null, ct))
             return Result<TaskDetailDto>.Failure(Error.Conflict(
                 "shift.not_open", "Start your shift before working on a task."));
 

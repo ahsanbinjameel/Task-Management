@@ -121,18 +121,10 @@ public sealed class AuthService : IAuthService
         user.LockoutEndAt = null;
         user.LastLoginAt = now;
 
-        // Authentication only establishes an auth session. The shift is a separate concept and is
-        // started explicitly (see ShiftService), so we advance no further than "logged in, no shift".
-        // Re-authenticating mid-shift must not disturb an already-open shift's state.
-        if (user.WorkforceState == WorkforceState.NotLoggedIn)
-            user.WorkforceState = WorkforceState.LoggedInShiftNotStarted;
-
-        _activity.Record(
-            user.Id, ActivityLabels.LoggedIn,
-            resultingState: user.WorkforceState == WorkforceState.LoggedInShiftNotStarted
-                ? WorkforceState.LoggedInShiftNotStarted
-                : null,
-            occurredAt: now);
+        // Authentication only establishes an auth session. Shared with demo mode, which mints its
+        // own tokens and has to arrive the same way — see WorkforceSignIn for why it is a named
+        // rule rather than these four lines.
+        WorkforceSignIn.Apply(user, _activity, now);
 
         _db.LoginAttempts.Add(new LoginAttempt
         {

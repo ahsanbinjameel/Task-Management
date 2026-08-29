@@ -28,7 +28,13 @@ import { Perm } from '../../core/permissions';
 import { PARKED } from '../../core/parked';
 import { DurationPipe } from '../../core/format';
 import { requestTypeLabel, taskStatusLabel } from '../../core/labels';
-import { AttachmentDto, RequestType, TaskDetailDto, WorkTaskStatus } from '../../core/models';
+import {
+  AttachmentDto,
+  RequestType,
+  TaskDetailDto,
+  WorkforceStatusDto,
+  WorkTaskStatus,
+} from '../../core/models';
 import {
   ChipComponent,
   FieldComponent,
@@ -36,6 +42,7 @@ import {
   PageHeaderComponent,
 } from '../../shared/ui';
 import { HttpContext } from '@angular/common/http';
+import { switchMap } from 'rxjs/operators';
 import { ConfirmDialog, ConfirmData, ReasonDialog, ReasonData } from '../../shared/dialogs';
 
 /** Smaller tasks that no longer need doing — what "2 of 3 done" counts. */
@@ -582,6 +589,15 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
   readonly busy = signal(false);
 
   /**
+   * The caller's own shift, fetched only for people who actually execute work.
+   *
+   * The timer needs an open shift from anyone whose attendance is measured, and the server says so
+   * with a 409 the moment Start is pressed. Knowing it beforehand is what lets this screen open the
+   * shift as part of starting, instead of refusing and pointing at a control in the top bar.
+   */
+  readonly shift = signal<WorkforceStatusDto | null>(null);
+
+  /**
    * Which tab is open, as a name in the URL rather than an index in a signal.
    *
    * Three things fall out of that. A link can point at a tab — `?tab=qc` from a notification lands
@@ -650,11 +666,23 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
 
   readonly canStart = computed(() => {
     const t = this.task();
-    if (!t || !this.isMine() || this.isRunning()) return false;
+    // Task.Work is what the endpoint is gated on. Without it the button was still offered to
+    // whoever happened to be the assignee, and produced a 403 nothing on the page explained.
+    if (!t || !this.auth.has(Perm.taskWork) || !this.isMine() || this.isRunning()) return false;
     if (t.blockedBy.length > 0) return false;
     return ['Assigned', 'ReadyToStart', 'Paused', 'Blocked', 'QCFailedRework', 'Reopened'].includes(
       t.status,
     );
+  });
+
+  /**
+   * True when starting work has to open a shift first. Only ever true for people whose attendance
+   * is tracked — someone who is not on the clock has no shift to open, and the server no longer
+   * asks them for one.
+   */
+  readonly needsShift = computed(() => {
+    const s = this.shift();
+    return !!s && s.isShiftTracked && !s.isOnShift;
   });
 
   readonly canStartQc = computed(() => {
@@ -759,6 +787,9 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((params) => this.tab.set(params.get('tab') ?? 'overview'));
 
+    // Only people who work on tasks have a shift worth asking about.
+    if (this.auth.has(Perm.taskWork)) this.loadShift();
+
     this.realtime.subscribeToTask(this.taskId);
 
     // Re-fetch rather than patch: the event is a pointer, and the record is the truth. Filtered to
@@ -774,6 +805,15 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
 
   reload(): void {
     this.load(false);
+    if (this.auth.has(Perm.taskWork)) this.loadShift();
+  }
+
+  private loadShift(): void {
+    this.api.myShiftStatus().subscribe({
+      next: (s) => this.shift.set(s),
+      // Nothing on this screen depends on it being there — the server still enforces the rule.
+      error: () => this.shift.set(null),
+    });
   }
 
   private load(showSpinner = true): void {
@@ -800,7 +840,23 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
     if (!this.pendingStart) return;
     this.pendingStart = false;
 
-    if (this.canStart()) this.start();
+    if (!this.canStart()) return;
+
+    // Which confirmation is right depends on whether a shift has to be opened too, and that
+    // request may still be in flight on this path — the task arrived first. Waiting for it is the
+    // difference between one dialog that does the whole thing and a 409 the reader did not ask for.
+    if (this.shift() === null) {
+      this.api.myShiftStatus().subscribe({
+        next: (s) => {
+          this.shift.set(s);
+          this.start();
+        },
+        error: () => this.start(),
+      });
+      return;
+    }
+
+    this.start();
   }
 
   private run(call: import('rxjs').Observable<TaskDetailDto>, message: string): void {
@@ -825,22 +881,35 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
     // the one-active-session rule means whatever else was running is closed in the same commit.
     // Reachable in one click from a queue row (?start=1), which is exactly the path where someone
     // meant to open the task and read it — so the timer must not start unannounced.
+    //
+    // Someone whose attendance is tracked also needs their shift open, and the shift control lives
+    // in the top bar. Refusing here and telling them to go and find it is one refusal and two
+    // clicks for something they have already asked for, so the shift is opened as part of the same
+    // action — and the confirmation says so, because that is when their hours start being recorded.
+    const needsShift = this.needsShift();
+
     this.dialog
       .open<ConfirmDialog, ConfirmData>(ConfirmDialog, {
         data: {
-          title: 'Start work on this task?',
-          message:
-            'The timer starts now and the time counts against this task. Anything else you had '
-            + 'running is paused — only one task can be active at a time.',
-          confirmText: 'Start the timer',
-          submit: (ctx: HttpContext) => this.api.startWork(this.taskId, ctx),
+          title: needsShift ? 'Start your shift and begin work?' : 'Start work on this task?',
+          message: needsShift
+            ? 'Your shift is not open yet, so this opens it: your hours are recorded from now '
+              + 'until you end it, and the timer on this task starts with it.'
+            : 'The timer starts now and the time counts against this task. Anything else you had '
+              + 'running is paused — only one task can be active at a time.',
+          confirmText: needsShift ? 'Start shift and work' : 'Start the timer',
+          submit: (ctx: HttpContext) =>
+            needsShift
+              ? this.api.startShift(ctx).pipe(switchMap(() => this.api.startWork(this.taskId, ctx)))
+              : this.api.startWork(this.taskId, ctx),
         },
       })
       .afterClosed()
       .subscribe((task?: unknown) => {
         if (!task) return;
         this.task.set(task as TaskDetailDto);
-        this.toast.success('Timer started.');
+        if (needsShift) this.loadShift();
+        this.toast.success(needsShift ? 'Shift started, timer running.' : 'Timer started.');
       });
   }
 

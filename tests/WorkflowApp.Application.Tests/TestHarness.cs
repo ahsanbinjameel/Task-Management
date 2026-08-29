@@ -167,7 +167,7 @@ public sealed class TestHarness : IDisposable
             NullLogger<TaskAssignmentService>.Instance);
 
         WorkSessions = new WorkSessionService(
-            Db, TaskQueries, Dependencies, Activity, Notifications, Clock,
+            Db, TaskQueries, Dependencies, Activity, Notifications, PermissionService, Clock,
             NullLogger<WorkSessionService>.Instance);
 
         // Real storage under a throwaway directory, not a stub: the attachment path writes files,
@@ -350,6 +350,32 @@ public sealed class TestHarness : IDisposable
 
         await Db.SaveChangesAsync();
         return this;
+    }
+
+    /// <summary>
+    /// A role granting exactly the keys given. For the combinations the default roles do not cover
+    /// — Task.Work without Workforce.TrackShift, say, which is a supported configuration rather
+    /// than an oversight.
+    /// </summary>
+    public async Task<Role> CreateRoleAsync(string name, params string[] permissionKeys)
+    {
+        var role = new Role { Name = name, IsSystemRole = false };
+        Db.Roles.Add(role);
+        await Db.SaveChangesAsync();
+
+        var ids = await Db.Permissions
+            .Where(p => permissionKeys.Contains(p.Key))
+            .Select(p => p.Id)
+            .ToListAsync();
+
+        Db.RolePermissions.AddRange(ids.Select(id => new RolePermission
+        {
+            RoleId = role.Id,
+            PermissionId = id
+        }));
+
+        await Db.SaveChangesAsync();
+        return role;
     }
 
     /// <summary>Creates an active user with a known password and optional roles.</summary>

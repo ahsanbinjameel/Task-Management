@@ -218,6 +218,12 @@ public sealed class DemoController : ApiControllerBase
         var principal = await _demo.FindAsync(demoUserId, ct);
         if (principal is null) return null;
 
+        // Being handed a token is this account arriving, so the workforce state has to move the way
+        // it does on a real sign-in. Without it the cast stayed in NotLoggedIn, which has no
+        // transition to Available — so a demo worker was refused their own shift, and with no shift
+        // the task timer refused too. Done for switching as well as entering: both are an arrival.
+        await _demo.SignInAsync(demoUserId, ct);
+
         var access = _tokens.CreateAccessToken(
             principal.User, principal.Roles, principal.Permissions,
             isDemo: true, demoRealUserId: realUserId, demoRealUserName: realUserName);

@@ -441,7 +441,8 @@ running the API instead (`--launch-profile Development`), which does load user-s
     at all. Nothing may be decided on a request while a check on it is still open.
 12. **`Task.Work`, `Verification.Work` and `Workforce.TrackShift` are independent.** None implies
     another, and every combination is a legitimate configuration. Administering the system implies
-    none of them.
+    none of them. Consequently **the timer demands an open shift only from people whose attendance
+    is tracked** — see §6.
 13. **Once execution starts, a task's committed scope does not silently grow.** New points that
     arrive after work has begun become *new linked requests*, never an invisible extension of the
     running task (PRODUCT-CORE §6).
@@ -496,6 +497,31 @@ running the API instead (`--launch-profile Development`), which does load user-s
   Only **starting** a shift is gated: ending one and changing availability are not, because a user
   whose permission is revoked mid-shift must still be able to clock out unaided.
   `WorkforceStatusDto.IsShiftTracked` lets a client hide the controls instead of offering a 403.
+- **The timer asks for an open shift only from people whose attendance is tracked.**
+  `WorkSessionService.StartAsync` used to demand one from everybody, which quietly made
+  `Task.Work` without `Workforce.TrackShift` — a combination rule 12 calls legitimate — impossible
+  to use: the timer refused with `shift.not_open`, the message said to start a shift, and
+  `StartShiftAsync` refuses that same person with `shift.not_tracked`. The shift widget is hidden
+  from them too, correctly, so the instruction pointed at a control that does not exist. The check
+  is now conditional on the permission, asked of the *user* rather than the caller's token, for the
+  same reason `ShiftService` asks it that way. Nothing else changes for tracked people. An untracked
+  worker's `WorkforceState` is left alone throughout — `LoggedInShiftNotStarted` has no transition
+  to `Working`, so they never appear in who-is-working-now, which is right: nobody is measuring
+  their hours. Pinned by
+  `Work_starts_without_a_shift_for_someone_whose_attendance_is_not_tracked`.
+- **Starting work opens the shift when one is needed.** The task detail knows the caller's shift
+  (`GET /api/shifts/current`, fetched only for `Task.Work` holders), so for a tracked worker who is
+  off shift the confirmation says both things and does both calls. The alternative was a 409 telling
+  them to go and find a control in the top bar — a refusal and two extra clicks for something they
+  had already asked for. `?start=1` from a queue row waits for that status rather than racing it,
+  or it would show the wrong dialog and take the refusal anyway.
+- **"Start work" checks `Task.Work`, not just who the assignee is.** `canStart` tested assignment
+  and status only, so anyone holding a task saw a button that 403s. The endpoint was always gated;
+  the button had simply never been.
+- **Settings states whether your hours are recorded.** An account without `Workforce.TrackShift`
+  has no shift control anywhere in the app and no explanation for its absence — the one question
+  people actually arrived at Settings with. It is a fact next to the roles that produce it, not a
+  paragraph of guidance.
 - **QC and closure own their transitions; the generic endpoint cannot reach them.**
   `POST /api/tasks/{id}/transition` refuses `QCPassed`, `QCFailedRework` and `Closed` with
   `workflow.dedicated_endpoint_required`. Those three states each carry a record that must be
@@ -978,7 +1004,7 @@ running the API instead (`--launch-profile Development`), which does load user-s
   which is exactly how the first checks list rendered. Every real grid in this app is an Angular
   Material `mat-table`; the header/row/cell styling in `styles.scss` is written against
   `.mat-mdc-header-cell` and `.mat-mdc-row` and applies to nothing else.
-- **There is no demo mode, and nothing added from here on goes into one.** A `Demo` launch profile
+- **The SQLite `Demo` launch profile is gone; today's demo mode is a different thing.** A `Demo` launch profile
   existed until 2026-08-27: SQLite, `EnsureCreated()` instead of migrations, a seeded cast of seven
   sample accounts on one well-known password, and its own branches through `Program.cs`,
   `DependencyInjection`, `WorkflowDbContext` and the security headers. It is **removed** —
@@ -1004,6 +1030,24 @@ running the API instead (`--launch-profile Development`), which does load user-s
   `DateTimeOffset`-to-ticks converter and the RowVersion strip in `OnModelCreating` were exactly
   that tax. SQL Server is the only store, in every environment. The InMemory provider stays,
   because a test suite is not a second product.
+- **Being handed a demo token is an arrival, so it moves the workforce state.** A demo token is
+  minted by `DemoController`, not issued by `AuthService.LoginAsync` — and login is the only other
+  thing that moves a user out of `NotLoggedIn`. Skipping it stranded the entire cast there, and
+  `NotLoggedIn` has no transition to `Available`, so **every demo account was permanently unable to
+  open a shift** (`workforce.transition_not_allowed`) and therefore unable to start the timer on a
+  task. `IDemoEnvironment.SignInAsync` does the arrival half of a login — state to
+  `LoggedInShiftNotStarted`, one `Logged In` activity event, via the shared `WorkforceSignIn.Apply`
+  that `AuthService` itself now calls — and `IssueAsync` calls it for
+  switching as well as entering, because both are an arrival. It lives on `IDemoEnvironment` rather
+  than in the controller for the usual reason: the controller's DbContext follows the caller's
+  token, which on entry is the *live* catalog — which is also why a real
+  `POST /api/auth/login` cannot be used to enter a demonstration: it is `[AllowAnonymous]`, there is
+  no token yet, so it always resolves to live. Making login demo-aware would need a pre-token
+  signal (the one thing `IDemoSession` refuses), would drop the `Admin.DemoMode` gate to anyone who
+  knows a demo password, and would hand demo sessions the refresh token they deliberately do not
+  get. Idempotent, and it leaves an open shift alone, so
+  switching to a cast member mid-demonstration does not knock them off the clock. The precondition
+  it satisfies is pinned by `Starting_a_shift_requires_being_logged_in_first`.
 - **Activity events ordered by `(OccurredAt, Id)` everywhere.** Two events can share a timestamp;
   without the `Id` tie-break, "the latest state" resolves arbitrarily and timelines go wrong.
 - **The sidebar is the user's job, not the schema's table of contents** (PRODUCT-CORE §11). It
@@ -1235,7 +1279,7 @@ capabilities. Both are client-only — no endpoint, permission, guard, route or 
 nothing was deleted. Steps 3–7 (My Tasks, requester acceptance, assignment, the ERP catalog at
 triage, fast multi-point intake) are still to come.
 
-**Tests:** 397 passing (`dotnet test`) — 29 domain state machines, 368 application services.
+**Tests:** 440 passing (`dotnet test`) — 29 domain state machines, 411 application services.
 All on EF Core InMemory or pure functions, so the suite runs with no SQL Server.
 
 ## 9. SQL Server: done and still outstanding

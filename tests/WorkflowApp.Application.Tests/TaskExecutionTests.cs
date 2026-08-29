@@ -5,6 +5,7 @@ using WorkflowApp.Application.Requests.Dtos;
 using WorkflowApp.Application.Tasks.Dtos;
 using WorkflowApp.Application.Tasks.Services;
 using WorkflowApp.Domain.Enums;
+using WorkflowApp.Domain.Workflow;
 using Xunit;
 
 namespace WorkflowApp.Application.Tests;
@@ -25,7 +26,9 @@ public class TaskExecutionTests
         var requester = await h.CreateUserAsync("rachel");
         var reviewer = await h.CreateUserAsync("victor");
         var coordinator = await h.CreateUserAsync("amara");
-        var worker = await h.CreateUserAsync("wu");
+        // Given the Worker role deliberately: it carries Workforce.TrackShift, which is what makes
+        // "cannot start the timer without an open shift" apply to this person at all.
+        var worker = await h.CreateUserAsync("wu", roles: DefaultRoles.Worker);
 
         h.ActingAsAdmin(reviewer.Id);
 
@@ -194,6 +197,35 @@ public class TaskExecutionTests
         var result = await f.H.WorkSessions.StartAsync(f.TaskId, f.WorkerId);
 
         Assert.Equal("shift.not_open", result.Error!.Code);
+    }
+
+    [Fact]
+    public async Task Work_starts_without_a_shift_for_someone_whose_attendance_is_not_tracked()
+    {
+        var f = await ApprovedTaskAsync();
+        using var _d = f.H;
+
+        // Task.Work without Workforce.TrackShift is a supported configuration, not an oversight:
+        // this person executes work, but nobody is measuring the hours they are present for. They
+        // are refused a shift by design, so demanding one before the timer would run made the
+        // combination impossible to use at all.
+        await f.H.CreateRoleAsync("OffClockWorker", Permissions.TaskWork);
+        var offClock = await f.H.CreateUserAsync("olive", roles: "OffClockWorker");
+
+        f.H.ActingAsAdmin(f.CoordinatorId);
+        await f.H.Assignment.AssignAsync(f.TaskId, f.CoordinatorId,
+            new AssignTaskDto { AssigneeUserId = offClock.Id });
+
+        f.H.ActingAsAdmin(offClock.Id);
+        var result = await f.H.WorkSessions.StartAsync(f.TaskId, offClock.Id);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(WorkTaskStatus.InProgress, result.Value!.Status);
+
+        // ...and they still do not appear on shift. Availability is the shift's vocabulary, and
+        // somebody who never clocked in has no place in who-is-working-now.
+        var user = await f.H.Db.Users.SingleAsync(u => u.Id == offClock.Id);
+        Assert.False(WorkforceStateMachine.IsOnShift(user.WorkforceState));
     }
 
     [Fact]

@@ -63,6 +63,22 @@ public interface IDemoEnvironment
     Task<DemoPrincipal?> FindAsync(long demoUserId, CancellationToken ct = default);
 
     /// <summary>
+    /// Record that a member of the cast has arrived — the half of signing in that is about the
+    /// person rather than the credentials.
+    ///
+    /// A demo token is minted directly rather than issued by <c>AuthService.LoginAsync</c>, which
+    /// is the only other thing that moves a user out of <c>NotLoggedIn</c>. Skipping it left the
+    /// whole cast stranded there, and <c>NotLoggedIn</c> has no transition to <c>Available</c> — so
+    /// every demo account was permanently unable to open a shift, and therefore unable to start the
+    /// timer on a task. Idempotent, and it never disturbs somebody already on shift.
+    ///
+    /// It lives here rather than in the controller because the controller's own DbContext follows
+    /// the caller's token: on entry that is the live catalog, and this has to be written to the
+    /// demo one either way.
+    /// </summary>
+    Task SignInAsync(long demoUserId, CancellationToken ct = default);
+
+    /// <summary>
     /// Empty the demo catalog and rebuild it.
     ///
     /// Safe by construction rather than by care: it can only ever address the demo connection, so
