@@ -39,8 +39,10 @@ Deploy + operate: `docs/03-RUNBOOK.md` · User guide: `docs/USER-GUIDE.md` (task
 
 **Local dev DB:** `Server=localhost`, database `WorkflowApp_Dev` (`appsettings.Development.json`),
 on the local SQL Server 2019 Developer Edition default instance. Base/prod:
-`Server=localhost;Database=WorkflowApp`. Development sets
-`Database:ApplyMigrationsOnStartup: true`, so `dotnet run` creates, migrates and seeds it.
+`Server=localhost;Database=WorkflowApp`. Migrations are applied on startup **everywhere** by default (`Database:ApplyMigrationsOnStartup`,
+default `true`), so `dotnet run` on a machine that has never run it creates, migrates and seeds the
+database with no further setup. Set it to `false` to apply schema changes by hand instead;
+`scripts/sql/` holds the idempotent script.
 
 ### Commands
 
@@ -134,6 +136,8 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | `Common/ProductLocation.cs` | ✅ | The one place that joins module/form/surface into "Sales · Delivery Order · Detail Report". Never stored — it is a rendering of three ids |
 | `Common/StatusViews.cs` | ✅ | **Who is shown which statuses.** Groups internal states into per-audience views (requester / worker / coordinator), resolves the audience from permissions, and folds a request's status onto its task |
 | `Common/Interfaces/IWorkflowDbContext.cs` | ✅ | The persistence surface the Application layer sees (all DbSets + `Database` + `SaveChangesAsync`) |
+| `Common/Interfaces/IDemoSession.cs` | ✅ | Whether this request is a demonstration, read from the token. It is what selects the catalog |
+| `Demo/IDemoEnvironment.cs` | ✅ | The demo catalog: bring it up, list the cast, mint a principal, reset. The only way to reach the other database |
 | `Common/Interfaces/IIdentityAbstractions.cs` | ✅ | `ICurrentUser`, `IDateTimeProvider`, `IPasswordHasher`, `ITokenService`, `AccessToken`, `IssuedRefreshToken` |
 | `Common/Models/Result.cs` | ✅ | `Result` / `Result<T>` / `Error` / `ErrorType` — expected failures are returned, not thrown |
 | `Common/Models/PagedResult.cs` | ✅ | `PagedResult<T>`, `PageQuery` (clamps page/pageSize) |
@@ -203,7 +207,8 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | `Persistence/Interceptors/AuditableEntityInterceptor.cs` | ✅ | **Sole** writer of CreatedAt/UpdatedAt/CreatedByUserId/UpdatedByUserId — never set these by hand |
 | `Persistence/Interceptors/IntegrationEventDispatchInterceptor.cs` | ✅ | Derives real-time events from the change tracker; dispatches **after** commit, drops them on rollback |
 | `Persistence/Seed/DatabaseSeeder.cs` | ✅ | Idempotent: permissions, roles+grants, pause reasons, bootstrap admin |
-| `Persistence/Migrations/` | ✅ | 12 migrations: `InitialCreate` (squashed while still unapplied — **do not squash again**), `OptionalUserEmail`, `RequiredSubtasks`, `PauseCategoryAndAwayState`, `RequestActivityHistory`, `QuickWork`, `RequestBatches`, `AttachmentProof`, `Verifications`, `ProductCatalog`, `RequestRound`, `ImpersonationAudit`, + model snapshot. **All tracked in git — the schema travels with the code; never move a database backup between machines** |
+| `Persistence/Migrations/` | ✅ | 13 migrations: `InitialCreate` (squashed while still unapplied — **do not squash again**), `OptionalUserEmail`, `RequiredSubtasks`, `PauseCategoryAndAwayState`, `RequestActivityHistory`, `QuickWork`, `RequestBatches`, `AttachmentProof`, `Verifications`, `ProductCatalog`, `RequestRound`, `ImpersonationAudit`, `RemoveImpersonationAudit`, + model snapshot. **All tracked in git — the schema travels with the code; never move a database backup between machines** |
+| `Demo/DemoEnvironment.cs` | ✅ | Opens its own context on the demo connection; migrates, seeds the cast, drops and rebuilds on reset |
 | `Identity/JwtTokenService.cs` | ✅ | Access-token issuance + `AppClaimTypes`; refresh token generation and SHA-256 hashing |
 | `Identity/PasswordHasherAdapter.cs` | ✅ | Wraps `PasswordHasher<User>` (PBKDF2-HMAC-SHA256) |
 | `Storage/DiskFileStorage.cs` | ✅ | Generated stored names, path-traversal guard, hash-while-writing |
@@ -237,6 +242,7 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | `Controllers/LookupsController.cs` | ✅ | `api/lookups/clients` and `/modules` — the type-aheads. Signed in is enough |
 | `Services/DailyReportPdf.cs` | ✅ | The daily report as a document (MigraDoc). Header, summary, detail, quick work, notes, page numbers |
 | `Services/FileSystemFontResolver.cs` | ✅ | PDFsharp 6 ships no font handling; this finds one on the machine and fails at **startup** if it cannot |
+| `Controllers/DemoController.cs` | ✅ | Enter, switch, exit, reset. Issues an access token with no refresh — see the class note for why that absence is the safety property |
 | `Controllers/NotificationsController.cs` | ✅ | The bell icon + `AuditController` (audit stream) |
 | `Middleware/SecurityHeadersMiddleware.cs` | ✅ | nosniff, frame-deny, Referrer/Permissions-Policy, CSP |
 | `wwwroot/` | ✅ | **Build output** of the Angular client. Gitignored — a fresh clone must run `npm run build` |
@@ -365,9 +371,9 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | POST | `/api/quick-work/{id}/promote` | `Request.Create` (raises a request, never a task) |
 | GET/POST | `/api/notifications`, `/unread-count`, `/read`, `/read-all` | authenticated (own inbox) |
 | GET | `/api/audit`, `/api/audit/actions` | `Admin.ViewAudit` |
-| GET | `/api/auth/impersonation-targets` | `Admin.Impersonate` |
-| POST | `/api/auth/impersonate` | `Admin.Impersonate` |
-| POST | `/api/auth/stop-impersonating` | authenticated — the way back is read from the token, never from the body |
+| GET | `/api/demo/status` | authenticated — says whether a demonstration can be started, and the cast |
+| POST | `/api/demo/enter`, `/reset` | `Admin.DemoMode` |
+| POST | `/api/demo/switch`, `/exit` | authenticated — refused unless the token says a demonstration is running |
 | GET | `/health/ready` | anonymous; checks the database |
 
 ### Client (`client/`) — ✅
@@ -397,6 +403,7 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | `src/app/shared/file-drop.component.ts` | `app-file-drop` — choose / drag / **paste** (Win+Shift+S → Ctrl+V), with previews before anything is submitted |
 | `src/app/shared/attachment-upload.component.ts` | `app-attachment-upload` — the same three ways in, but straight onto a record that already exists. Carries the `kind`, and takes **exactly one** of `taskId`/`verificationId`, mirroring the server's owner rule |
 | `src/app/layout/` | Shell, permission-filtered nav, notification bell, shift widget, quick-work widget (live clock) |
+| `src/app/layout/demo-switcher.component.ts` | The header control shown only during a demonstration: change who is being shown, reset, leave |
 | `src/app/layout/nav-preference.ts` | The sidebar-rail preference. Shared, because both the rail's toggle and the Settings page write it |
 | `src/app/features/` | One folder per area: dashboard, tasks (+ `panels/`), requests (incl. `batch-detail`), qc, verifications, workforce, reports, admin, me |
 | `src/app/features/verifications/` | The checks list — `app-data-grid` in `mode="local"`, which is correct here because the whole set is loaded in one call. Plus the detail where a checker takes it and reports, and the dialogs that raise and assign |
@@ -978,12 +985,18 @@ running the API instead (`--launch-profile Development`), which does load user-s
   `appsettings.Demo.json`, `DemoDataSeeder`, the `DatabaseProvider` enum, the SQLite package
   reference and every `IsEnvironment("Demo")` check with it. Do not reintroduce it under any name,
   and do not mirror a new feature or requirement into an evaluation, sample or offline mode.
-  **Acting as another user is not this, and does not reopen it.** Added 2026-08-29: an
-  administrator holding `Admin.Impersonate` can act as somebody else from Settings. There is no
-  second database, no second provider, no seeded cast and no second code path — it is one extra
-  token claim against the same SQL Server, and every feature reaches it by being the product rather
-  than by being mirrored into a copy of it. What §6 forbids is a parallel implementation; this is
-  the opposite of one.
+  **Demo mode, added 2026-08-29, is the same application against a second catalog — and it is
+  deliberately not what was removed.** What went was a parallel *implementation*: a different
+  provider, a different schema-creation path, its own branches through `Program.cs`,
+  `DependencyInjection`, `WorkflowDbContext` and the security headers. Every objection above was to
+  that. What exists now shares none of it: same SQL Server, same provider, same migrations, same
+  entities, same services, same rules. `IDemoSession` reads one claim off the token and
+  `AddInfrastructure` picks a connection string from it; nothing above the DbContext knows demo mode
+  exists, so there is exactly one implementation of every feature and it is the one production runs.
+  The isolation is the catalog, and it is absolute — a demonstration cannot reach a real client's
+  record, and Reset cannot destroy one.
+  The line that still holds: **do not mirror a feature into a demo-flavoured variant.** A demo that
+  needed its own version of triage would be the thing §6 forbids, wearing a new name.
   It was a second implementation of the product that nobody deployed: SQLite has no `ROWVERSION`,
   so every concurrency guard ran as code with nothing behind it, and `EnsureCreated()` builds a
   schema no migration ever produced. Keeping both alive meant writing each feature twice and
@@ -1108,25 +1121,37 @@ running the API instead (`--launch-profile Development`), which does load user-s
   `--z-shell-nav`, `--z-drawer-scrim`, `--z-drawer` — and the number they have to beat is written
   down next to them rather than rediscovered. Material's overlay container stays at 1000, which is
   correct: a dialog is modal over everything, drawer included.
-- **Acting as another user narrows, never widens** (`Admin.Impersonate`). The session carries the
-  target's permissions and none of the administrator's, so it cannot be a way to keep authority
-  under a different name — and a demonstration of a reviewer's screen is the reviewer's screen
-  rather than an administrator's with a different name on it. Three refusals earn their place:
-  somebody who can themselves act as others cannot be acted as (otherwise a restricted administrator
-  steps through a colleague to get the power back, and the trail blames the colleague), a
-  deactivated account cannot be acted as, and acting does not chain — the recorded human is always
-  the one who started it. Pinned by `ImpersonationTests`.
-- **`AuditLog.ImpersonatedByUserId` is what makes acting-as affordable.** `ActorUserId` stays the
-  account the work was done as, so every existing read of the trail keeps meaning what it meant, and
-  the real human is recorded beside it — "Faisal, acting: Ahsan". It is stamped in `AuditService`
-  from `ICurrentUser`, not at the call sites, so none of the several dozen places that record
-  something can forget it. And it is carried through to `AuditLogDto` and shown on the audit screen:
-  a trail that records this and cannot display it is no better than one that never recorded it.
-- **The acting-as banner is across the top of every screen, not in a corner.** Work done while
-  acting is real work in the real database, and an administrator who forgets will attribute their
-  own work to a colleague. The banner reads its state from the token's own claim rather than a
-  client-side flag, because a separate flag could disagree with the server — and this is the one
-  state that must never be shown wrongly.
+- **Demo mode selects a catalog, not a code path** (`IDemoSession`, `AddInfrastructure`). The demo
+  token carries one claim; the DbContext is built per request and reads it to choose between
+  `Default` and `Demo`. Every service, rule and state machine above it is the production one,
+  unchanged and unaware — a request raised in a demonstration goes through the real
+  `RequestService`, the real triage gate and the real filtered indexes. That is the property worth
+  having: there is no second version of anything to keep in step, and nothing can be built for live
+  and forgotten for demo.
+- **The demo connection is derived from `Default`, never written down.** Suffix the catalog with
+  `_Demo` on whatever `Default` actually resolves to. Getting this wrong is not theoretical: a
+  tracked `"Demo": "Server=localhost;…"` was tried first and broke immediately on the machine whose
+  user-secrets point `Default` at `(localdb)\MSSQLLocalDB` — live worked, demo could not find a
+  server, and the error said "network-related" while the string looked perfectly correct. Deriving
+  is also the only form that needs no setup on a second machine.
+  `AddInfrastructure` **refuses to start** if the two resolve to the same catalog, because then
+  "demo" writes are live writes and Reset Demo would destroy real work.
+- **A demo session has an access token and no refresh token.** Refreshing mints a fresh token, and a
+  refresh path that forgot to carry the demo claim would hand a demo user a live-database session —
+  the one failure this feature must not have. Rather than defend that path it does not exist: the
+  client keeps its real tokens aside and a 401 inside a demonstration restores them, so a demo that
+  outlives its token drops the operator back into their own account instead of signing them out.
+- **Starting a demonstration is in Settings; switching between the cast is in the header.** They are
+  different acts. Starting is administrative and rare; switching happens repeatedly mid-sentence
+  while showing somebody the workflow, and a control you have to navigate to breaks that.
+  The switcher's cast is loaded from an `effect`, not the constructor: the shell is built once at
+  sign-in when demo mode is necessarily off, so a constructor check never fires and the menu opens
+  empty.
+- **The cast is one account per role, and Reset drops the catalog rather than emptying tables.** A
+  single all-powerful demo account would show every screen and none of the point — the workflow
+  travelling between people *is* the product. And a delete list is a thing to keep in step with the
+  schema forever; the one time somebody forgets a table is the demonstration that opens with the
+  last one's data still in it.
 - **Parked capabilities are one flag file, not scattered `@if`s** (`core/parked.ts`). Quick Work,
   dependencies, subtasks and the scope-change ceremony are built, tested, endpoint-complete and
   **not offered**: the widget is off the shell and the three tabs are off the task detail. Reading

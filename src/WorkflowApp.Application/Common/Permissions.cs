@@ -72,14 +72,13 @@ public static class Permissions
     public const string AdminViewAudit = "Admin.ViewAudit";
 
     /// <summary>
-    /// Act as another user, for demonstrating and for support.
+    /// Enter demo mode: run the application against the demo catalog, as one of the demo cast.
     ///
-    /// Its own permission rather than a side effect of <see cref="AdminManageUsers"/>: being able
-    /// to create an account and being able to <em>become</em> one are different powers, and a site
-    /// that wants somebody to do the first without the second must be able to say so in the role
-    /// editor rather than in code.
+    /// Its own permission rather than a side effect of <see cref="AdminManageUsers"/>, because it
+    /// is a different power — and because a site may reasonably want a salesperson who can
+    /// demonstrate the product without being able to touch a single real account.
     /// </summary>
-    public const string AdminImpersonate = "Admin.Impersonate";
+    public const string AdminDemoMode = "Admin.DemoMode";
 
     public static readonly string[] All =
     {
@@ -88,7 +87,7 @@ public static class Permissions
         TaskQCReview, TaskClose, TaskReopen, TaskCancel, TaskDefer, TaskOverride,
         VerificationCreate, VerificationWork, VerificationViewAll,
         WorkforceViewAll, WorkforceManageOthers, WorkforceTrackShift, DashboardManagement, ReportsView,
-        AdminManageUsers, AdminManageRoles, AdminManageConfig, AdminViewAudit, AdminImpersonate
+        AdminManageUsers, AdminManageRoles, AdminManageConfig, AdminViewAudit, AdminDemoMode
     };
 }
 

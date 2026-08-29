@@ -3,8 +3,7 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
   AcceptanceCriteriaDto, ActiveWorkforceDto, ActivityEventDto, AssignableUserDto,
-  AssignmentCandidateDto, AttachmentDto, FormDto, FormOptionDto, FormSurfaceDto,
-  ImpersonationTargetDto,
+  AssignmentCandidateDto, AttachmentDto, DemoStatusDto, FormDto, FormOptionDto, FormSurfaceDto,
   FormSurfaceOptionDto, ModuleDto,
   AttachmentKind,
   AuditLogDto, ClientOptionDto, ModuleOptionDto, HomeDashboardDto, QuickWorkDto, StartQuickWorkDto,
@@ -425,9 +424,15 @@ export class ApiService {
     return this.http.get<AssignableUserDto[]>('/api/tasks/assignable-users');
   }
 
-  /** Who this administrator could act as. Excludes other administrators, by design. */
-  impersonationTargets(): Observable<ImpersonationTargetDto[]> {
-    return this.http.get<ImpersonationTargetDto[]>('/api/auth/impersonation-targets');
+  // --- demo mode ------------------------------------------------------------------------------
+
+  demoStatus(): Observable<DemoStatusDto> {
+    return this.http.get<DemoStatusDto>('/api/demo/status');
+  }
+
+  /** Wipe the demo database and rebuild it. Cannot reach live data — see IDemoEnvironment. */
+  resetDemo(): Observable<void> {
+    return this.http.post<void>('/api/demo/reset', {});
   }
 
   /** Who this task could go to, with the facts to decide on. See AssignmentCandidateDto. */

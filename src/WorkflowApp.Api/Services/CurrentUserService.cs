@@ -28,15 +28,6 @@ public sealed class CurrentUserService : ICurrentUser
         ?? new HashSet<string>(StringComparer.Ordinal);
 
     /// <summary>
-    /// The real human when an administrator is acting as somebody else. Read from the token like
-    /// everything else about the caller, so there is one answer rather than two.
-    /// </summary>
-    public long? ImpersonatedByUserId =>
-        long.TryParse(Principal?.FindFirstValue(AppClaimTypes.ImpersonatedBy), out var id) ? id : null;
-
-    public string? ImpersonatedByUserName => Principal?.FindFirstValue(AppClaimTypes.ImpersonatedByName);
-
-    /// <summary>
     /// Behind IIS or a reverse proxy this is only correct once forwarded headers are configured —
     /// see the deployment runbook. Used for the audit trail, never for authorization.
     /// </summary>

@@ -12,19 +12,6 @@ public interface ICurrentUser
     /// <summary>Effective permissions carried as claims on the access token.</summary>
     IReadOnlySet<string> Permissions { get; }
 
-    /// <summary>
-    /// The real human behind this request when an administrator is acting as somebody else, and
-    /// null on an ordinary session.
-    ///
-    /// <see cref="UserId"/> stays the person being acted as, deliberately: every rule in the
-    /// application — who may approve, whose queue this lands in, who the requester is — has to
-    /// behave exactly as it would for them, or acting-as demonstrates something that is not the
-    /// product. This is the truth recorded alongside, so the audit trail can say
-    /// "Faisal, acting: Ahsan" rather than quietly crediting work to somebody who never did it.
-    /// </summary>
-    long? ImpersonatedByUserId { get; }
-
-    string? ImpersonatedByUserName { get; }
 
     string? IpAddress { get; }
     string? UserAgent { get; }
@@ -64,16 +51,18 @@ public sealed record IssuedRefreshToken(string RawToken, string TokenHash, DateT
 public interface ITokenService
 {
     /// <summary>
-    /// The access token for a session. <paramref name="impersonatedByUserId"/> is set only when an
-    /// administrator is acting as this user; it names the real human and is carried through to the
-    /// audit trail.
+    /// The access token for a session.
+    ///
+    /// The demo arguments mark it as a demonstration and name the real account that started it;
+    /// they change nothing about the permissions carried, which are always the user's own.
     /// </summary>
     AccessToken CreateAccessToken(
         User user,
         IEnumerable<string> roles,
         IEnumerable<string> permissions,
-        long? impersonatedByUserId = null,
-        string? impersonatedByUserName = null);
+        bool isDemo = false,
+        long? demoRealUserId = null,
+        string? demoRealUserName = null);
 
     /// <summary>Generates a cryptographically random refresh token plus its storable hash.</summary>
     IssuedRefreshToken CreateRefreshToken();

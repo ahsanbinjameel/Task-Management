@@ -54,10 +54,6 @@ public sealed class TestCurrentUser : ICurrentUser
     public bool IsAuthenticated => UserId.HasValue;
     public IReadOnlySet<string> Permissions { get; set; } = new HashSet<string>();
 
-    /// <summary>The real human, when a test is exercising acting-as. Null for everything else.</summary>
-    public long? ImpersonatedByUserId { get; set; }
-    public string? ImpersonatedByUserName { get; set; }
-
     public string? IpAddress { get; set; } = "127.0.0.1";
     public string? UserAgent { get; set; } = "xunit";
 }

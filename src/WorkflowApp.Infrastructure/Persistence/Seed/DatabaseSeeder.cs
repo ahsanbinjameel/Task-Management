@@ -253,7 +253,7 @@ public sealed class DatabaseSeeder
         Permissions.AdminManageRoles => "Manage roles and their permission grants.",
         Permissions.AdminManageConfig => "Manage system configuration and lookup data.",
         Permissions.AdminViewAudit => "Read the security audit log.",
-        Permissions.AdminImpersonate => "Act as another user, for demonstrations and support.",
+        Permissions.AdminDemoMode => "Enter demo mode and run the product against demo data.",
         _ => string.Empty
     };
 }

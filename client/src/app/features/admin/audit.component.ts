@@ -69,16 +69,7 @@ export class AuditComponent implements OnInit {
         options: this.actions().map((a) => ({ value: a, label: a })),
       },
     },
-    {
-      key: 'actor',
-      header: 'Actor',
-      // Names the human behind the account when an administrator was acting as somebody. Without
-      // this the row says the actor did it on their own, which for those rows is not true.
-      cell: (a) =>
-        a.impersonatedByDisplayName
-          ? `${a.actorDisplayName} (acting: ${a.impersonatedByDisplayName})`
-          : a.actorDisplayName,
-    },
+    { key: 'actor', header: 'Actor', cell: (a) => a.actorDisplayName },
     {
       // One box for both halves of the identity the endpoint understands: a type, or `#12` for a
       // particular row. Two controls for one column would be two chances to filter by half of it.

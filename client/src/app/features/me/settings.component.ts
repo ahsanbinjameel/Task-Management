@@ -1,4 +1,5 @@
 import { MatDialog } from '@angular/material/dialog';
+import { Router } from '@angular/router';
 import { Component, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import {
@@ -13,7 +14,6 @@ import { ApiService } from '../../core/api.service';
 import { AuthService } from '../../core/auth.service';
 import { ToastService } from '../../core/toast.service';
 import { Perm } from '../../core/permissions';
-import { ActAsDialog } from './act-as-dialog.component';
 import { roleLabel } from '../../core/labels';
 import { PageHeaderComponent } from '../../shared/ui';
 import { readRailPreference, writeRailPreference } from '../../layout/nav-preference';
@@ -175,22 +175,25 @@ const matching = (group: AbstractControl): ValidationErrors | null =>
               </a>
             }
             <!--
-              Acting as somebody else. A button rather than a link, because it changes the session
-              you are in rather than taking you to a page — and it says plainly that the work is
-              real, since the one dangerous misreading of this feature is "it is only a preview".
+              Starting a demonstration. A button rather than a link, because it changes which
+              database the session is talking to rather than taking you to a page — and it says so,
+              since the only dangerous misreading of this feature would be thinking it is a view of
+              live data.
             -->
-            @if (auth.has(Perm.adminImpersonate)) {
-              <button type="button" class="link-row" (click)="actAs()">
-                <mat-icon>visibility</mat-icon>
+            @if (auth.has(Perm.adminDemoMode)) {
+              <button type="button" class="link-row" [disabled]="startingDemo()"
+                      (click)="startDemo()">
+                <mat-icon>groups</mat-icon>
                 <span>
-                  <strong>Act as somebody else</strong><br />
+                  <strong>{{ startingDemo() ? 'Preparing demo…' : 'Start demo mode' }}</strong><br />
                   <span class="muted small">
-                    See the app as they see it. Real work, recorded as theirs with your name
-                    alongside
+                    Run the product on separate demo data, switching between the demo team from the
+                    header. Live data is untouched
                   </span>
                 </span>
               </button>
             }
+
           </div>
         </section>
       }
@@ -226,6 +229,7 @@ const matching = (group: AbstractControl): ValidationErrors | null =>
   `,
 })
 export class SettingsComponent {
+  private readonly router = inject(Router);
   private readonly dialog = inject(MatDialog);
   readonly Perm = Perm;
   readonly auth = inject(AuthService);
@@ -313,9 +317,26 @@ export class SettingsComponent {
       error: () => this.busy.set(false),
     });
   }
-  /** Opens the picker. The dialog performs the switch and navigates, so nothing is needed here. */
-  actAs(): void {
-    this.dialog.open(ActAsDialog, { width: 'min(520px, 92vw)', maxWidth: '92vw' });
+  readonly startingDemo = signal(false);
+
+  /**
+   * Begin a demonstration.
+   *
+   * The first one on a machine creates and migrates the demo database, which takes a moment;
+   * afterwards it is instant. The real session is kept — nothing signs out — so leaving demo mode
+   * later is a restore rather than a fresh sign-in.
+   */
+  startDemo(): void {
+    this.startingDemo.set(true);
+
+    this.auth.enterDemo().subscribe({
+      next: () => {
+        this.startingDemo.set(false);
+        this.toast.success('Demo mode. Nothing you do here touches live data.');
+        void this.router.navigateByUrl('/');
+      },
+      error: () => this.startingDemo.set(false),
+    });
   }
 
 }

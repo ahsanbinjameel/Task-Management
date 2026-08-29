@@ -28,9 +28,11 @@ public static class AuditActions
 {
     public const string LoginSucceeded = "Auth.LoginSucceeded";
 
-    /// <summary>An administrator began acting as somebody else. Logged at warning level too.</summary>
-    public const string ImpersonationStarted = "Auth.ImpersonationStarted";
-    public const string ImpersonationStopped = "Auth.ImpersonationStopped";
+    /// <summary>A demonstration was started, switched or ended. Recorded in the live catalog.</summary>
+    public const string DemoStarted = "Demo.Started";
+    public const string DemoSwitched = "Demo.Switched";
+    public const string DemoEnded = "Demo.Ended";
+    public const string DemoReset = "Demo.Reset";
     public const string LoginFailed = "Auth.LoginFailed";
     public const string Logout = "Auth.Logout";
     public const string TokenRefreshed = "Auth.TokenRefreshed";
@@ -127,10 +129,6 @@ public sealed class AuditService : IAuditService
         {
             Action = action,
             ActorUserId = actorUserId ?? _currentUser.UserId,
-
-            // Stamped here rather than at the call sites, so acting-as cannot be forgotten by one
-            // of the several dozen places that record something.
-            ImpersonatedByUserId = _currentUser.ImpersonatedByUserId,
             EntityType = entityType,
             EntityId = entityId,
             PreviousValues = Serialize(previousValues),

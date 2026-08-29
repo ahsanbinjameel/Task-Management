@@ -1,12 +1,23 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { HttpClient, HttpContext } from '@angular/common/http';
 import { Router } from '@angular/router';
-import { Observable, tap } from 'rxjs';
-import { AuthResponse, UserDto } from './models';
+import { Observable, catchError, of, tap } from 'rxjs';
+import { AuthResponse, DemoTokenDto, UserDto } from './models';
 
 const ACCESS_TOKEN = 'wfa.access';
 const REFRESH_TOKEN = 'wfa.refresh';
 const USER = 'wfa.user';
+
+/**
+ * Where the real session waits while a demonstration runs.
+ *
+ * Demo mode does not sign anybody out — it puts a demo token in front of the real one and gives it
+ * back afterwards. Keeping the real pair here rather than re-authenticating on the way out means
+ * exiting cannot fail, which matters when it happens in front of an audience.
+ */
+const LIVE_ACCESS = 'wf.live.access';
+const LIVE_REFRESH = 'wf.live.refresh';
+const LIVE_USER = 'wf.live.user';
 
 /**
  * Session state for the SPA.
@@ -40,9 +51,9 @@ export class AuthService {
    * server actually believes, so a separate client-side "I am pretending" boolean could disagree
    * with it — and the one state where the banner must never be wrong is this one.
    */
-  private readonly _actingFor = signal<string | null>(actingForFromToken());
-  readonly actingFor = this._actingFor.asReadonly();
-  readonly isActingAsSomeoneElse = computed(() => this._actingFor() !== null);
+  private readonly _demoRealUser = signal<string | null>(demoRealUserFromToken());
+  readonly demoRealUser = this._demoRealUser.asReadonly();
+  readonly inDemoMode = computed(() => this._demoRealUser() !== null);
 
   /** True when the account is on the clock and should see shift controls at all. */
   readonly tracksShift = computed(() => this.has('Workforce.TrackShift'));
@@ -75,23 +86,98 @@ export class AuthService {
   }
 
   /**
-   * Start acting as somebody else.
+   * Start a demonstration, keeping the real session in reserve.
    *
-   * The response is an ordinary session for that person, so it goes through `store` like any
-   * other — the whole point is that from here on the app is theirs, with their permissions and
-   * nobody else's. What comes back on the token, and only there, is who is really behind it.
+   * The demo token replaces the live one for every subsequent request — which is what points them
+   * at the demo database — while the live pair is set aside untouched. Nothing is signed out, so
+   * nothing has to be signed back in.
    */
-  impersonate(userId: number, context?: HttpContext): Observable<AuthResponse> {
+  enterDemo(demoUserId?: number): Observable<DemoTokenDto> {
     return this.http
-      .post<AuthResponse>('/api/auth/impersonate', { userId }, { context })
-      .pipe(tap((response) => this.store(response)));
+      .post<DemoTokenDto>('/api/demo/enter', { demoUserId })
+      .pipe(tap((response) => {
+        this.keepLiveSession();
+        this.applyDemoToken(response);
+      }));
   }
 
-  /** Hand the administrator their own session back. */
-  stopImpersonating(): Observable<AuthResponse> {
+  /** Change which of the cast is being shown. No sign-in, no sign-out. */
+  switchDemoUser(demoUserId: number): Observable<DemoTokenDto> {
     return this.http
-      .post<AuthResponse>('/api/auth/stop-impersonating', {})
-      .pipe(tap((response) => this.store(response)));
+      .post<DemoTokenDto>('/api/demo/switch', { demoUserId })
+      .pipe(tap((response) => this.applyDemoToken(response)));
+  }
+
+  /**
+   * End the demonstration and restore the real session.
+   *
+   * The server is told first and best-effort — it records that a demonstration ended — but the
+   * restore does not depend on it. A demonstration must always be escapable, including when the
+   * network is not co-operating.
+   */
+  exitDemo(): Observable<unknown> {
+    return this.http.post('/api/demo/exit', {}).pipe(
+      catchError(() => of(null)),
+      tap(() => this.restoreLiveSession()),
+    );
+  }
+
+  /**
+   * Put the real session back without asking the server.
+   *
+   * Also the answer to a demo token expiring: a demo session has no refresh token, deliberately, so
+   * the honest response to a 401 inside one is to end the demonstration rather than sign the
+   * operator out of their own account.
+   */
+  restoreLiveSession(): void {
+    const access = localStorage.getItem(LIVE_ACCESS);
+    const refresh = localStorage.getItem(LIVE_REFRESH);
+    const user = localStorage.getItem(LIVE_USER);
+
+    if (!access || !refresh || !user) {
+      // Nothing to go back to — which should not happen, but signing out is the only honest
+      // alternative to leaving somebody stranded in a session they cannot leave.
+      this.logout();
+      return;
+    }
+
+    localStorage.setItem(ACCESS_TOKEN, access);
+    localStorage.setItem(REFRESH_TOKEN, refresh);
+    localStorage.setItem(USER, user);
+
+    localStorage.removeItem(LIVE_ACCESS);
+    localStorage.removeItem(LIVE_REFRESH);
+    localStorage.removeItem(LIVE_USER);
+
+    const parsed = JSON.parse(user) as UserDto;
+    this._user.set(parsed);
+    this._permissions.set(new Set(parsed.permissions ?? []));
+    this._demoRealUser.set(null);
+  }
+
+  private keepLiveSession(): void {
+    const access = localStorage.getItem(ACCESS_TOKEN);
+    const refresh = localStorage.getItem(REFRESH_TOKEN);
+    const user = localStorage.getItem(USER);
+
+    if (access) localStorage.setItem(LIVE_ACCESS, access);
+    if (refresh) localStorage.setItem(LIVE_REFRESH, refresh);
+    if (user) localStorage.setItem(LIVE_USER, user);
+  }
+
+  /**
+   * A demo session has an access token and no refresh token — see DemoController for why that
+   * absence is the safety property. The live refresh token is deliberately left in place so the
+   * interceptor never tries to refresh a demo session into existence.
+   */
+  private applyDemoToken(response: DemoTokenDto): void {
+    localStorage.setItem(ACCESS_TOKEN, response.accessToken);
+    localStorage.setItem(USER, JSON.stringify(response.user));
+    localStorage.removeItem(REFRESH_TOKEN);
+
+    this._user.set(response.user);
+    this._permissions.set(new Set(response.user.permissions ?? []));
+    this._demoRealUser.set(demoRealUserFromToken());
   }
 
   login(userName: string, password: string): Observable<AuthResponse> {
@@ -135,14 +221,14 @@ export class AuthService {
     localStorage.setItem(ACCESS_TOKEN, response.accessToken);
     localStorage.setItem(REFRESH_TOKEN, response.refreshToken);
     this.setUser(response.user);
-    this._actingFor.set(actingForFromToken());
+    this._demoRealUser.set(demoRealUserFromToken());
   }
 
   clear(): void {
     localStorage.removeItem(ACCESS_TOKEN);
     localStorage.removeItem(REFRESH_TOKEN);
     localStorage.removeItem(USER);
-    this._actingFor.set(null);
+    this._demoRealUser.set(null);
     this._user.set(null);
     this._permissions.set(new Set());
   }
@@ -192,7 +278,7 @@ function readStoredUser(): UserDto | null {
  * server checks every call regardless. Any malformed token simply reads as "not acting", which is
  * the safe way round for a banner.
  */
-function actingForFromToken(): string | null {
+function demoRealUserFromToken(): string | null {
   const token = localStorage.getItem(ACCESS_TOKEN);
   if (!token) return null;
 
@@ -204,8 +290,8 @@ function actingForFromToken(): string | null {
       payload.length + ((4 - (payload.length % 4)) % 4), '='));
     const claims = JSON.parse(json) as Record<string, unknown>;
 
-    if (claims['impersonated_by'] === undefined) return null;
-    return (claims['impersonated_by_name'] as string) ?? 'an administrator';
+    if (claims['demo'] !== 'true' && claims['demo'] !== true) return null;
+    return (claims['demo_real_user_name'] as string) ?? 'your own account';
   } catch {
     return null;
   }

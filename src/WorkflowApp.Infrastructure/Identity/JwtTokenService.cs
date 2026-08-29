@@ -19,15 +19,20 @@ public static class AppClaimTypes
     public const string DisplayName = "display_name";
 
     /// <summary>
-    /// The real human, when this token was issued by acting-as. Absent on an ordinary session.
-    ///
-    /// It rides on the token rather than being held server-side because everything downstream that
-    /// needs it — the audit trail above all — already reads the caller from the token, and a second
-    /// store of "who is really behind this request" is a second thing to get out of step.
+    /// Marks a demo session. Its presence is what points this request's DbContext at the demo
+    /// catalog instead of the live one, which is why it rides on the signed token and nowhere
+    /// else — a header would let any client choose which database it writes to.
     /// </summary>
-    public const string ImpersonatedBy = "impersonated_by";
+    public const string Demo = "demo";
 
-    public const string ImpersonatedByName = "impersonated_by_name";
+    /// <summary>
+    /// The real account that started the demonstration, so exiting can hand them their own session
+    /// back. It names somebody in the <em>live</em> catalog, deliberately: the demo user is who the
+    /// app behaves as, this is who is actually sitting there.
+    /// </summary>
+    public const string DemoRealUser = "demo_real_user";
+
+    public const string DemoRealUserName = "demo_real_user_name";
 }
 
 /// <summary>
@@ -66,8 +71,9 @@ public sealed class JwtTokenService : ITokenService
         User user,
         IEnumerable<string> roles,
         IEnumerable<string> permissions,
-        long? impersonatedByUserId = null,
-        string? impersonatedByUserName = null)
+        bool isDemo = false,
+        long? demoRealUserId = null,
+        string? demoRealUserName = null)
     {
         var now = _clock.UtcNow;
         var expires = now.AddMinutes(_options.AccessTokenMinutes);
@@ -89,15 +95,18 @@ public sealed class JwtTokenService : ITokenService
         claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));
         claims.AddRange(permissions.Select(p => new Claim(AppClaimTypes.Permission, p)));
 
-        // Note what this token does *not* get: any of the impersonator's own permissions. Acting as
-        // somebody is acting as them, so the claims are theirs alone — which is the whole point,
-        // and also what stops the feature becoming a way to borrow authority.
-        if (impersonatedByUserId is { } realUserId)
+        // Note what a demo token does *not* get: any of the real administrator's permissions. It
+        // is a token for the demo user, with their claims alone, so the demonstration shows what
+        // that role actually sees rather than an administrator's view under a different name.
+        if (isDemo)
         {
-            claims.Add(new Claim(AppClaimTypes.ImpersonatedBy, realUserId.ToString()));
+            claims.Add(new Claim(AppClaimTypes.Demo, "true"));
 
-            if (!string.IsNullOrWhiteSpace(impersonatedByUserName))
-                claims.Add(new Claim(AppClaimTypes.ImpersonatedByName, impersonatedByUserName));
+            if (demoRealUserId is { } realUserId)
+                claims.Add(new Claim(AppClaimTypes.DemoRealUser, realUserId.ToString()));
+
+            if (!string.IsNullOrWhiteSpace(demoRealUserName))
+                claims.Add(new Claim(AppClaimTypes.DemoRealUserName, demoRealUserName));
         }
 
         var token = new JwtSecurityToken(

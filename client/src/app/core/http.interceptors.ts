@@ -33,6 +33,16 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
         return throwError(() => error);
       }
 
+      // A demo session has no refresh token, deliberately — see DemoController. So the honest
+      // response to a 401 inside one is to end the demonstration and hand the operator their own
+      // account back, not to sign them out of it. Signing somebody out because a *demo* token
+      // aged out would lose their real session for a reason that has nothing to do with it.
+      if (auth.inDemoMode()) {
+        auth.restoreLiveSession();
+        void router.navigate(['/']);
+        return throwError(() => error);
+      }
+
       if (!auth.refreshToken) {
         auth.clear();
         void router.navigate(['/login']);

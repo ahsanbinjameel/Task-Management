@@ -36,7 +36,7 @@ export const Perm = {
   adminManageRoles: 'Admin.ManageRoles',
   adminManageConfig: 'Admin.ManageConfig',
   adminViewAudit: 'Admin.ViewAudit',
-  adminImpersonate: 'Admin.Impersonate',
+  adminDemoMode: 'Admin.DemoMode',
 } as const;
 
 export type PermissionKey = (typeof Perm)[keyof typeof Perm];

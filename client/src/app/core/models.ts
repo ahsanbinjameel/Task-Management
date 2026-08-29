@@ -1046,9 +1046,6 @@ export interface AuditLogDto {
   createdAt: string;
   actorUserId?: number | null;
   actorDisplayName?: string | null;
-  /** The real human, when an administrator was acting as the actor. */
-  impersonatedByUserId?: number | null;
-  impersonatedByDisplayName?: string | null;
   action: string;
   entityType?: string | null;
   entityId?: number | null;
@@ -1301,10 +1298,32 @@ export interface FormSurfaceOptionDto {
   formName: string;
 }
 
-/** Somebody an administrator could act as. Enough to choose from, and nothing more. */
-export interface ImpersonationTargetDto {
+// --- demo mode -----------------------------------------------------------------------------------
+//
+// The same application against a separate database. Nothing here describes a different product —
+// these are just the shapes the switcher needs.
+
+export interface DemoUserDto {
   id: number;
   userName: string;
   displayName: string;
-  roles: string[];
+  role: string;
+  /** What that role is for, so the switcher explains itself. */
+  purpose: string;
+}
+
+export interface DemoStatusDto {
+  isAvailable: boolean;
+  isActive: boolean;
+  currentUserName?: string | null;
+  /** The real account a demonstration returns to. */
+  realUserName?: string | null;
+  cast: DemoUserDto[];
+}
+
+/** A demo session: an access token and no refresh token, deliberately. */
+export interface DemoTokenDto {
+  accessToken: string;
+  expiresAt: string;
+  user: UserDto;
 }

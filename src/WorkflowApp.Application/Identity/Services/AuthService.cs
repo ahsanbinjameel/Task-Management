@@ -15,19 +15,6 @@ namespace WorkflowApp.Application.Identity.Services;
 public interface IAuthService
 {
 
-    /// <summary>Who this administrator could act as.</summary>
-    Task<Result<IReadOnlyList<ImpersonationTargetDto>>> ImpersonationTargetsAsync(
-        long actingUserId, CancellationToken ct = default);
-
-    /// <summary>
-    /// Start acting as somebody else. The session returned carries the target's permissions and
-    /// none of the caller's, and records the caller as the real human behind it.
-    /// </summary>
-    Task<Result<AuthResponse>> ImpersonateAsync(
-        long actingUserId, long targetUserId, CancellationToken ct = default);
-
-    /// <summary>Stop acting, and get your own session back.</summary>
-    Task<Result<AuthResponse>> StopImpersonatingAsync(CancellationToken ct = default);
     Task<Result<AuthResponse>> LoginAsync(LoginRequest request, CancellationToken ct = default);
     Task<Result<AuthResponse>> RefreshAsync(RefreshTokenRequest request, CancellationToken ct = default);
     Task<Result> LogoutAsync(RefreshTokenRequest request, CancellationToken ct = default);
@@ -337,161 +324,19 @@ public sealed class AuthService : IAuthService
             Error.Unauthorized(InvalidCredentialsCode, InvalidCredentialsMessage));
     }
 
-    /// <summary>
-    /// Who an administrator could act as.
-    ///
-    /// Everybody active except themselves, and except anyone who could act as *them* — see
-    /// <see cref="ImpersonateAsync"/> for why that one is excluded.
-    /// </summary>
-    public async Task<Result<IReadOnlyList<ImpersonationTargetDto>>> ImpersonationTargetsAsync(
-        long actingUserId, CancellationToken ct = default)
-    {
-        var canImpersonate = await RoleIdsGranting(Permissions.AdminImpersonate, ct);
-
-        var users = await _db.Users.AsNoTracking()
-            .Where(u => u.IsActive && u.Id != actingUserId)
-            .Where(u => !_db.UserRoles.Any(ur => ur.UserId == u.Id && canImpersonate.Contains(ur.RoleId)))
-            .OrderBy(u => u.DisplayName)
-            .Select(u => new { u.Id, u.UserName, u.DisplayName })
-            .ToListAsync(ct);
-
-        var ids = users.Select(u => u.Id).ToList();
-
-        var roles = await (
-            from ur in _db.UserRoles.AsNoTracking()
-            join r in _db.Roles.AsNoTracking() on ur.RoleId equals r.Id
-            where ids.Contains(ur.UserId)
-            select new { ur.UserId, r.Name }).ToListAsync(ct);
-
-        var byUser = roles.GroupBy(r => r.UserId)
-            .ToDictionary(g => g.Key, g => (IReadOnlyList<string>)g.Select(r => r.Name).OrderBy(n => n).ToList());
-
-        return Result<IReadOnlyList<ImpersonationTargetDto>>.Success(
-            users.Select(u => new ImpersonationTargetDto(
-                    u.Id, u.UserName, u.DisplayName,
-                    byUser.TryGetValue(u.Id, out var names) ? names : Array.Empty<string>()))
-                .ToList());
-    }
-
-    /// <summary>
-    /// Issue a session that behaves exactly as the target user, with the real human recorded on it.
-    ///
-    /// The session it hands back carries the <em>target's</em> permissions and nothing of the
-    /// administrator's, so acting-as can only ever narrow what the caller can do. That is what makes
-    /// it safe to offer and also what makes it useful: a demonstration of the reviewer's screen is
-    /// worth nothing if the person demonstrating still has every button.
-    ///
-    /// Three refusals, and each one is a real hole rather than a formality.
-    ///
-    /// You cannot act as somebody who is themselves allowed to act as others. Without that, an
-    /// administrator whose own account is later restricted could step through a colleague's account
-    /// to get the power back, and the audit trail would show the colleague doing it.
-    ///
-    /// You cannot act as an inactive account, because a deactivated account is supposed to be a
-    /// door that is shut.
-    ///
-    /// And acting-as does not chain. Starting a second one while already acting keeps the original
-    /// administrator as the recorded human, so the trail always names somebody real rather than a
-    /// chain of borrowed identities.
-    /// </summary>
-    public async Task<Result<AuthResponse>> ImpersonateAsync(
-        long actingUserId, long targetUserId, CancellationToken ct = default)
-    {
-        if (actingUserId == targetUserId)
-            return Result<AuthResponse>.Failure(Error.Validation(
-                "impersonation.self", "You are already signed in as yourself."));
-
-        var actor = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == actingUserId, ct);
-        if (actor is null)
-            return Result<AuthResponse>.Failure(Error.NotFound("user.not_found", "User not found."));
-
-        var target = await _db.Users.FirstOrDefaultAsync(u => u.Id == targetUserId, ct);
-        if (target is null)
-            return Result<AuthResponse>.Failure(Error.NotFound("user.not_found", "User not found."));
-
-        if (!target.IsActive)
-            return Result<AuthResponse>.Failure(Error.Validation(
-                "impersonation.inactive", "That account is deactivated."));
-
-        var canImpersonate = await RoleIdsGranting(Permissions.AdminImpersonate, ct);
-
-        if (await _db.UserRoles.AnyAsync(
-                ur => ur.UserId == targetUserId && canImpersonate.Contains(ur.RoleId), ct))
-        {
-            return Result<AuthResponse>.Failure(Error.Forbidden(
-                "impersonation.target_is_administrator",
-                "That account can act as other people itself, so it cannot be acted as."));
-        }
-
-        var response = await IssueTokensAsync(target, ct, actor.Id, actor.DisplayName);
-
-        _audit.Record(
-            AuditActions.ImpersonationStarted,
-            actorUserId: actor.Id,
-            entityType: nameof(User),
-            entityId: target.Id,
-            newValues: new { ActingAs = target.UserName, ActingAsDisplayName = target.DisplayName });
-
-        await _db.SaveChangesAsync(ct);
-
-        _logger.LogWarning(
-            "User {ActorId} ({ActorName}) started acting as {TargetId} ({TargetName})",
-            actor.Id, actor.UserName, target.Id, target.UserName);
-
-        return Result<AuthResponse>.Success(response);
-    }
-
-    /// <summary>
-    /// Hand the administrator their own session back.
-    ///
-    /// Takes the real human from the caller's own token rather than from anything the client sends,
-    /// so the way back cannot be pointed at somebody else.
-    /// </summary>
-    public async Task<Result<AuthResponse>> StopImpersonatingAsync(CancellationToken ct = default)
-    {
-        if (_currentUser.ImpersonatedByUserId is not { } realUserId)
-            return Result<AuthResponse>.Failure(Error.Validation(
-                "impersonation.not_acting", "You are not acting as anybody."));
-
-        var actor = await _db.Users.FirstOrDefaultAsync(u => u.Id == realUserId, ct);
-        if (actor is null || !actor.IsActive)
-            return Result<AuthResponse>.Failure(Error.Unauthorized(
-                "impersonation.actor_unavailable", "Your own account is no longer available. Sign in again."));
-
-        var response = await IssueTokensAsync(actor, ct);
-
-        _audit.Record(
-            AuditActions.ImpersonationStopped,
-            actorUserId: actor.Id,
-            entityType: nameof(User),
-            entityId: _currentUser.UserId,
-            newValues: new { StoppedActingAs = _currentUser.UserName });
-
-        await _db.SaveChangesAsync(ct);
-
-        return Result<AuthResponse>.Success(response);
-    }
-
-    /// <summary>The roles that grant a permission — the same shape the assignable-user query uses.</summary>
-    private async Task<List<long>> RoleIdsGranting(string permissionKey, CancellationToken ct) =>
-        await (
-            from rp in _db.RolePermissions.AsNoTracking()
-            join p in _db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
-            where p.Key == permissionKey
-            select rp.RoleId).Distinct().ToListAsync(ct);
-
     /// <summary>Builds the access + refresh pair and stages the refresh token row.</summary>
     private async Task<AuthResponse> IssueTokensAsync(
         User user,
         CancellationToken ct,
-        long? impersonatedByUserId = null,
-        string? impersonatedByUserName = null)
+        bool isDemo = false,
+        long? demoRealUserId = null,
+        string? demoRealUserName = null)
     {
         var roles = await _permissions.GetRolesAsync(user.Id, ct);
         var permissions = await _permissions.GetPermissionsAsync(user.Id, ct);
 
         var access = _tokenService.CreateAccessToken(
-            user, roles, permissions, impersonatedByUserId, impersonatedByUserName);
+            user, roles, permissions, isDemo, demoRealUserId, demoRealUserName);
         var refresh = _tokenService.CreateRefreshToken();
 
         _db.RefreshTokens.Add(new RefreshToken
@@ -543,7 +388,12 @@ public static class PasswordPolicy
     }
 }
 
-internal static class UserMapper
+/// <summary>
+/// Maps a user onto the shape a client gets. Public because demo mode mints tokens outside
+/// AuthService and needs the same projection — one mapping, so a demo session and a live one
+/// describe a user identically.
+/// </summary>
+public static class UserMapper
 {
     public static UserDto ToDto(User user, IReadOnlyList<string> roles, IReadOnlyList<string> permissions) =>
         new(user.Id,

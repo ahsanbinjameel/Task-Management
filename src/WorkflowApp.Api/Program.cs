@@ -33,6 +33,9 @@ builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, CurrentUserService>();
 
+// Demo mode is read from the token before the DbContext is built — it is what selects the catalog.
+builder.Services.AddScoped<IDemoSession, DemoSessionService>();
+
 // Rendering, not business logic: it holds no state and takes no dependencies, so a singleton.
 //
 // PDFsharp resolves fonts through one process-wide hook rather than through DI, so it is set here
@@ -196,8 +199,14 @@ var app = builder.Build();
 // system roles and their grants, the pause reasons, the bootstrap administrator. It is idempotent
 // and safe to repeat, so it runs everywhere by default. These used to be nested, which meant a
 // production database came up with a perfectly good schema and no roles in it.
-var applyMigrations = app.Configuration.GetValue(
-    "Database:ApplyMigrationsOnStartup", app.Environment.IsDevelopment());
+//
+// Migrations run on startup **everywhere** by default, not only in Development. Starting the
+// application on a machine that has never run it should give a working application: `MigrateAsync`
+// creates the database when it is absent and brings an existing one up to date, so a fresh clone on
+// a second machine needs SQL Server and nothing else. A site that would rather apply schema changes
+// by hand — during a controlled release, say — still turns it off with
+// `Database:ApplyMigrationsOnStartup: false`, and `scripts/sql/` holds the idempotent script.
+var applyMigrations = app.Configuration.GetValue("Database:ApplyMigrationsOnStartup", true);
 var seedOnStartup = app.Configuration.GetValue("Database:SeedOnStartup", true);
 
 if (applyMigrations || seedOnStartup)

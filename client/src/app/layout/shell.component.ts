@@ -14,6 +14,7 @@ import { AuthService } from '../core/auth.service';
 import { NAV_GROUPS, NavGroup } from '../core/navigation';
 import { NotificationBellComponent } from './notification-bell.component';
 import { ShiftWidgetComponent } from './shift-widget.component';
+import { DemoSwitcherComponent } from './demo-switcher.component';
 import { ConfirmDialog, ConfirmData } from '../shared/dialogs';
 import { readRailPreference, writeRailPreference } from './nav-preference';
 
@@ -33,7 +34,7 @@ interface VisibleNavItem {
   imports: [
     RouterOutlet, RouterLink, MatIconModule, MatButtonModule, MatMenuModule,
     MatBadgeModule, MatTooltipModule, MatSidenavModule, MatDividerModule,
-    NotificationBellComponent, ShiftWidgetComponent,
+    NotificationBellComponent, ShiftWidgetComponent, DemoSwitcherComponent,
   ],
   template: `
     <div class="shell" [class.nav-open]="navOpen()" [class.rail]="collapsed()">
@@ -69,6 +70,7 @@ interface VisibleNavItem {
 
           <div class="spacer"></div>
 
+          <app-demo-switcher />
           <app-shift-widget />
           <app-notification-bell />
 
@@ -106,15 +108,15 @@ interface VisibleNavItem {
           A quiet indicator in a corner is exactly the wrong shape for that: this sits across the
           top of every screen and carries its own way out.
         -->
-        @if (auth.isActingAsSomeoneElse()) {
+        @if (auth.inDemoMode()) {
           <div class="acting" role="status">
-            <mat-icon>visibility</mat-icon>
+            <mat-icon>groups</mat-icon>
             <span>
-              You are acting as <strong>{{ auth.displayName() }}</strong>.
-              Anything you do is recorded as theirs, with your name alongside.
+              <strong>Demo mode</strong> — showing {{ auth.displayName() }}.
+              This is separate data; nothing here reaches live.
             </span>
             <button matButton class="stop" (click)="stopActing()">
-              Back to {{ auth.actingFor() }}
+              Leave demo mode
             </button>
           </div>
         }
@@ -160,14 +162,9 @@ export class ShellComponent {
   /** Collapsed to an icon rail, remembered across visits. Shared with the Settings page. */
   readonly collapsed = signal(readRailPreference());
 
-  /** Hand the administrator their own session back, and start again from Home. */
+  /** End the demonstration and go back to the real account. */
   stopActing(): void {
-    this.auth.stopImpersonating().subscribe({
-      next: () => void this.router.navigateByUrl('/'),
-      // A failure here means the token is no longer usable either way; signing out is the honest
-      // answer rather than leaving somebody stuck inside a session they cannot leave.
-      error: () => this.auth.logout(),
-    });
+    this.auth.exitDemo().subscribe(() => void this.router.navigateByUrl('/'));
   }
 
   toggleRail(): void {
