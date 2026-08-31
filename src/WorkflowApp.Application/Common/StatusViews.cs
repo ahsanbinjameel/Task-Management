@@ -245,7 +245,22 @@ public static class StatusViews
 
     /// <summary>
     /// Reviewers and coordinators keep the intake states in full — telling Submitted from
-    /// In Review from Needs Information is their job, and the task side is not their concern here.
+    /// In Review from Needs Information is their job, and the requester's single "Under Review"
+    /// tile would lose the distinction they act on.
+    ///
+    /// **Everything after Approved is the same journey the requester sees, in internal words.**
+    /// These entries used to carry no task statuses at all, on the reasoning that intake is the
+    /// reviewer's concern and it stops at approval. What that produced was a request that reached
+    /// "Approved" and then never moved again: the tile it sat in was the last one on the strip, so
+    /// the screen said the same thing on the day it was approved and a fortnight later with the
+    /// work closed. Anyone reading requests through this table — which is anyone holding a task
+    /// permission, including a requester who also checks or works — had no way to answer "where
+    /// has it got to" without leaving for the task screen and matching it up by hand.
+    ///
+    /// This is not the coordinator's task board rebuilt on the request screen. Paused reads as
+    /// In Progress and rework reads as In Progress, exactly as they do for the requester, because
+    /// the question a request answers is "how far along is what I asked for" — the finer
+    /// distinctions a coordinator acts on live on Tasks, where the actions are.
     /// </summary>
     private static readonly IReadOnlyList<RequestStatusView> ReviewerViews = new[]
     {
@@ -260,39 +275,63 @@ public static class StatusViews
         // them is the reviewer's job.
         new RequestStatusView("verifying", "Being verified",
             new[] { RequestStatus.UnderVerification }, Array.Empty<WorkTaskStatus>()),
-        new RequestStatusView("approved", "Approved",
-            new[] { RequestStatus.Approved }, Array.Empty<WorkTaskStatus>()),
         new RequestStatusView("escalated", "Escalated",
             new[] { RequestStatus.Escalated }, Array.Empty<WorkTaskStatus>()),
-        new RequestStatusView("declined", "Rejected",
-            new[] { RequestStatus.Rejected, RequestStatus.Duplicate }, Array.Empty<WorkTaskStatus>()),
+        // Approved keeps the request status beside the task one as a belt-and-braces pairing.
+        // Triage approval always creates a task, so in practice the task side is what answers —
+        // but a request left Approved with no task must land somewhere rather than vanish.
+        new RequestStatusView("approved", "Approved",
+            new[] { RequestStatus.Approved }, new[] { WorkTaskStatus.ReadyForAssignment }),
+        new RequestStatusView("assigned", "Assigned",
+            Array.Empty<RequestStatus>(),
+            new[] { WorkTaskStatus.Assigned, WorkTaskStatus.ReadyToStart, WorkTaskStatus.Reopened }),
+        new RequestStatusView("working", "In progress",
+            Array.Empty<RequestStatus>(),
+            new[]
+            {
+                WorkTaskStatus.InProgress, WorkTaskStatus.Paused, WorkTaskStatus.QCFailedRework,
+            }),
+        new RequestStatusView("blocked", "Blocked",
+            Array.Empty<RequestStatus>(),
+            new[] { WorkTaskStatus.Blocked, WorkTaskStatus.OnHold, WorkTaskStatus.Deferred }),
+        new RequestStatusView("checking", "Quality check",
+            Array.Empty<RequestStatus>(),
+            new[] { WorkTaskStatus.CompletedReadyForQC, WorkTaskStatus.QCReview }),
+        new RequestStatusView("passed", "Ready for closure",
+            Array.Empty<RequestStatus>(),
+            new[] { WorkTaskStatus.QCPassed, WorkTaskStatus.ReadyForClosure }),
+        new RequestStatusView("done", "Completed",
+            Array.Empty<RequestStatus>(), new[] { WorkTaskStatus.Closed }),
         new RequestStatusView("waiting", "Postponed",
             new[] { RequestStatus.Deferred }, Array.Empty<WorkTaskStatus>()),
+        new RequestStatusView("declined", "Rejected",
+            new[] { RequestStatus.Rejected, RequestStatus.Duplicate },
+            new[] { WorkTaskStatus.Cancelled, WorkTaskStatus.Duplicate }),
     };
 
     /// <summary>
-    /// Whether this audience's request status follows the generated task.
+    /// **A request's status follows its generated task, for every audience.**
     ///
-    /// **The single answer to that question.** It was decided independently in four places — the
-    /// view table, the label, the list filter and the tile counts — and any two of them disagreeing
-    /// produces a silently empty screen, which is exactly what happened twice.
+    /// There used to be a <c>RequestStatusFollowsTask(audience)</c> predicate here, answering
+    /// "does this person triage work?" with <c>audience != Coordinator</c>. It existed because the
+    /// same question had been re-derived independently in four places — the view table, the label,
+    /// the list filter and the tile counts — and any two of them disagreeing empties a screen in
+    /// silence, which is exactly what happened twice.
     ///
-    /// The test is "does this person triage work?", not "do they do work?". Only a coordinator
-    /// stops at intake, because approving is where their involvement ends. Everyone else reading a
-    /// request is reading their own, and for them the request is the record of the work: once it is
-    /// approved the request itself stops moving and only the task has anything left to say.
+    /// It is gone because the premise underneath it was the real fault. A coordinator did not fold
+    /// onto the task *because their table had no task statuses to fold onto* — not because they
+    /// were better served by a status that stops dead at approval. Both halves are fixed together:
+    /// <see cref="ReviewerViews"/> now carries the journey through to Completed, so folding is
+    /// correct for everyone and there is no longer a branch to keep in step.
     ///
-    /// A **worker** counts as a requester here, which is the whole reason this exists. The Worker
-    /// role holds <c>Request.Create</c> deliberately — someone who fields a call and finds real
-    /// work behind it has to be able to raise it — but <see cref="AudienceFor"/> classifies from
-    /// *task* permissions, so their own request was being read with the reviewer's table and froze
-    /// on "Approved" forever.
+    /// The audience still decides **which table** is read — the reviewer keeps the intake states
+    /// split, the requester gets them folded into "Under Review" — but no longer decides *whether*
+    /// the request tracks the work. That was the half that produced frozen requests: a worker, a
+    /// checker or an administrator raising a request is classified from *task* permissions, so
+    /// their own request was read with the reviewer's table and froze on "Approved" forever.
     /// </summary>
-    public static bool RequestStatusFollowsTask(StatusAudience audience) =>
-        audience != StatusAudience.Coordinator;
-
     public static IReadOnlyList<RequestStatusView> ForRequests(StatusAudience audience) =>
-        RequestStatusFollowsTask(audience) ? RequesterViews : ReviewerViews;
+        audience == StatusAudience.Coordinator ? ReviewerViews : RequesterViews;
 
     public static RequestStatusView? FindRequestView(StatusAudience audience, string? key) =>
         string.IsNullOrWhiteSpace(key) || key.Equals(AllKey, StringComparison.OrdinalIgnoreCase)
@@ -308,7 +347,7 @@ public static class StatusViews
     {
         var views = ForRequests(audience);
 
-        if (taskStatus is { } live && RequestStatusFollowsTask(audience))
+        if (taskStatus is { } live)
         {
             var byTask = views.FirstOrDefault(v => v.TaskStatuses.Contains(live));
             if (byTask is not null) return byTask;

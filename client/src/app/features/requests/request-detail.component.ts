@@ -22,7 +22,7 @@ import { ConfirmDialog, ConfirmData, ReasonDialog, ReasonData } from '../../shar
 import { AuthService } from '../../core/auth.service';
 import { ToastService } from '../../core/toast.service';
 import { Perm } from '../../core/permissions';
-import { saveBlob } from '../../core/format';
+import { detailBelowTitle, saveBlob } from '../../core/format';
 import { requestTypeLabel } from '../../core/labels';
 import { Priority, RequestDetailDto, RequestType, TriageOutcome, TriageResultDto } from '../../core/models';
 import { enumOptions, SearchSelectComponent, SelectOption } from '../../shared/search-select.component';
@@ -191,8 +191,10 @@ import {
                 </span>
               </div>
 
-              <h2 class="card-title top-gap">Description</h2>
-              <p class="body-text">{{ r.description }}</p>
+              @if (detail(r.title, r.description); as body) {
+                <h2 class="card-title top-gap">Description</h2>
+                <p class="body-text">{{ body }}</p>
+              }
 
               @if (r.businessImpact) {
                 <h2 class="card-title top-gap">Business impact</h2>
@@ -837,6 +839,9 @@ export class RequestDetailComponent implements OnInit {
   readonly checkerOptions = signal<SelectOption[]>([]);
 
   label = (value: string) => requestTypeLabel(value as RequestType);
+
+  /** What the description adds over the title in the page header. See `detailBelowTitle`. */
+  readonly detail = detailBelowTitle;
 
   /**
    * Colour follows what the view means, not the internal status name — the reader is being shown

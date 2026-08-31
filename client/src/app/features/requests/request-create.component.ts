@@ -1,4 +1,7 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, OnInit, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, of } from 'rxjs';
+import { catchError, debounceTime, distinctUntilChanged, startWith, switchMap } from 'rxjs/operators';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { MatAutocompleteModule } from '@angular/material/autocomplete';
@@ -92,7 +95,8 @@ const DETAIL_FIELDS: { key: string; label: string }[] = [
         -->
         <mat-form-field class="client">
           <mat-label>Client</mat-label>
-          <input matInput name="client" [(ngModel)]="clientName" [matAutocomplete]="clientList" />
+          <input matInput name="client" autocomplete="off" [(ngModel)]="clientName"
+                 (ngModelChange)="typedClient.set($event); clientTerm.next($event)" [matAutocomplete]="clientList" />
           <mat-autocomplete #clientList>
             @for (name of clientSuggestions(); track name) {
               <mat-option [value]="name">{{ name }}</mat-option>
@@ -338,6 +342,7 @@ export class RequestCreateComponent implements OnInit {
   private readonly router = inject(Router);
   private readonly toast = inject(ToastService);
   private readonly dialog = inject(MatDialog);
+  private readonly destroyRef = inject(DestroyRef);
 
   readonly detailFields = DETAIL_FIELDS;
 
@@ -350,13 +355,53 @@ export class RequestCreateComponent implements OnInit {
   /** Which point is being typed into, so a pasted screenshot lands on that one. */
   readonly focused = signal(0);
   readonly busy = signal(false);
-  readonly clientSuggestions = signal<string[]>([]);
+  /**
+   * The client box is a combobox, not a picker: an unmatched name is kept and the API creates the
+   * client the first time it sees it, which is what stops anyone having to maintain a register.
+   * That is why this is not `app-search-select` — that control discards anything unmatched on
+   * blur, by design, so the value can only ever be one of the options.
+   *
+   * What it does have to do is narrow. `mat-autocomplete` does not filter its own options — it
+   * shows exactly the list it is given — so without this the panel offered every client on file
+   * however much of a name had been typed, and the control read as a dropdown that ignores you.
+   * `typedClient` exists because `clientName` is a plain field and a computed cannot react to one.
+   */
+  private readonly knownClients = signal<string[]>([]);
+  readonly typedClient = signal('');
+
+  /**
+   * What has been typed, on its way to the server.
+   *
+   * The local filter below is not enough on its own and never was: `ClientsAsync` answers with a
+   * capped, alphabetical page, so filtering in the browser can only ever search the part of the
+   * register that happened to arrive. At 197 clients that was A to about F — typing a name from
+   * the back half found nothing and gave no hint that anything had been left out. The term goes to
+   * the server, which matches it across the whole table.
+   *
+   * Debounced because this is a keystroke on a network call; `startWith('')` because the panel
+   * opens on focus, before anything has been typed, and an empty list there reads as "no clients".
+   */
+  readonly clientTerm = new Subject<string>();
+
+  /**
+   * Narrowed again locally, over what the server sent back. Not redundant: it keeps the list
+   * moving on every keystroke rather than in 250ms steps, and the two agree because both are a
+   * case-insensitive contains on the same term.
+   */
+  readonly clientSuggestions = computed(() => {
+    const term = this.typedClient().trim().toLowerCase();
+    const all = this.knownClients();
+    return term ? all.filter((name) => name.toLowerCase().includes(term)) : all;
+  });
 
   ngOnInit(): void {
-    this.api.clients().subscribe({
-      next: (clients) => this.clientSuggestions.set(clients.map((c) => c.name)),
-      error: () => undefined,
-    });
+    this.clientTerm.pipe(
+      startWith(''),
+      debounceTime(250),
+      distinctUntilChanged(),
+      switchMap((term) => this.api.clients(term.trim() || undefined).pipe(catchError(() => of([])))),
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe((clients) => this.knownClients.set(clients.map((c) => c.name)));
   }
 
   addPoint(): void {

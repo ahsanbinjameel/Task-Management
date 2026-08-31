@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using WorkflowApp.Application.Admin.Dtos;
 using WorkflowApp.Application.Requests.Dtos;
 using WorkflowApp.Application.Common;
+using WorkflowApp.Domain.Entities.Requests;
 using WorkflowApp.Domain.Enums;
 using Xunit;
 
@@ -290,5 +291,38 @@ public class ProductCatalogTests
 
         // Nothing placed at all, so a screen can leave the line out rather than print a label.
         Assert.Null(ProductLocation.Format(null, null, null));
+    }
+
+    /// <summary>
+    /// A client that sorts past the type-ahead's cap is still findable by typing its name.
+    ///
+    /// The cap was 50 and the register had grown to nearly 200 — so the browser was handed A
+    /// through roughly F and filtered inside that. Every name after it was unreachable: not in the
+    /// request form's suggestions, not in a grid's client filter, and giving no sign of having
+    /// been left out. This is the property that makes the size of the cap stop mattering: the
+    /// term is matched by the database, over every row, not by whoever received the first page.
+    /// </summary>
+    [Fact]
+    public async Task A_client_past_the_lookup_cap_is_still_found_by_searching_for_it()
+    {
+        using var h = await CatalogAsync();
+
+        for (var i = 0; i < 120; i++)
+            h.Db.Clients.Add(new Client { Name = $"Client {i:D3}", IsActive = true });
+
+        h.Db.Clients.Add(new Client { Name = "Zenith Holdings", IsActive = true });
+        await h.Db.SaveChangesAsync();
+
+        // Unsearched, the whole active register comes back — the grid filter's option list needs
+        // every value or a column can be narrowed by something it never offers.
+        var all = await h.Lookups.ClientsAsync(null);
+        Assert.Equal(121, all.Count);
+        Assert.Contains(all, c => c.Name == "Zenith Holdings");
+
+        // And the name at the far end of the alphabet answers to being typed — in any case, which
+        // is asserted rather than left to the database's collation, because the browser narrows the
+        // same list again with a plain toLowerCase().includes() and the two must not disagree.
+        var found = await h.Lookups.ClientsAsync("zenith");
+        Assert.Equal("Zenith Holdings", Assert.Single(found).Name);
     }
 }

@@ -82,7 +82,19 @@ export function enumOptions<T extends string>(
 
       <mat-icon matSuffix class="arrow" (click)="focusBox()">arrow_drop_down</mat-icon>
 
+      <!--
+        hideSingleSelectionIndicator, or the selected option shows two ticks.
+
+        MatOption renders a trailing pseudo-checkbox whenever it is selected and its parent has not
+        opted out, and MatAutocomplete's default for that opt-out is false — so it sat alongside the
+        leading tick this template already draws, on the same row, in every dropdown in the app.
+        Ours is the one kept: it is placed where the rest of the app places it, it covers the
+        nullLabel row, and it does not depend on a Material default that has changed before.
+        (Multiple mode never shows two either way — see visible(), which drops chosen options from
+        the list because they are already standing there as chips.)
+      -->
       <mat-autocomplete #auto [autoActiveFirstOption]="true" [displayWith]="display"
+                        [hideSingleSelectionIndicator]="true"
                         (optionSelected)="pick($event)">
         @for (option of visible(); track option) {
           <mat-option [value]="option" [disabled]="!!option.disabled">

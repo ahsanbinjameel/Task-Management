@@ -134,6 +134,25 @@ public sealed class LookupService : ILookupService
             .ToListAsync(ct);
     }
 
+    /// <summary>
+    /// The cap is a safety valve, not a page size — and it is far looser here than on the catalog
+    /// lookups above.
+    ///
+    /// It used to be 50, which was wrong in a way that could not be seen from the screen. This
+    /// endpoint serves two jobs: the type-ahead on a request form, where the caller sends what has
+    /// been typed, and the option list behind a grid's client column, where it sends nothing and
+    /// wants the lot. Fifty is a defensible answer for the first and silently wrong for the second
+    /// — at 197 clients the browser was handed A through roughly F and filtered inside that, so
+    /// three-quarters of the register could not be found by typing, picked from a filter, or
+    /// discovered to be missing. Nothing errored; the name simply was not there.
+    ///
+    /// Clients are also the one lookup with no administrator behind it — <see cref="ResolveClientAsync"/>
+    /// creates them from real use — so the list grows on its own and any cap chosen as a policy is
+    /// a wall somebody walks into later without being told. Modules and forms keep their tighter
+    /// 200 because a curated catalog only grows when someone decides it should.
+    /// </summary>
+    private const int ClientLimit = 1000;
+
     public async Task<IReadOnlyList<ClientOptionDto>> ClientsAsync(
         string? search, CancellationToken ct = default)
     {
@@ -141,14 +160,19 @@ public sealed class LookupService : ILookupService
 
         if (!string.IsNullOrWhiteSpace(search))
         {
-            var term = search.Trim();
-            query = query.Where(c => c.Name.Contains(term));
+            // Lower-cased on both sides rather than left to the database's collation, which is the
+            // same thing ResolveClientAsync does a few lines below and for the same reason. It also
+            // has to agree with the browser, which narrows the returned list again with a plain
+            // toLowerCase().includes() — two filters over one list that disagree about case would
+            // make the panel change its mind as each server answer lands.
+            var term = search.Trim().ToLower();
+            query = query.Where(c => c.Name.ToLower().Contains(term));
         }
 
         return await query
             .OrderBy(c => c.Name)
             .Select(c => new ClientOptionDto(c.Id, c.Name))
-            .Take(50)
+            .Take(ClientLimit)
             .ToListAsync(ct);
     }
 

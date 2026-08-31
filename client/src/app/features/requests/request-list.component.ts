@@ -335,14 +335,28 @@ export class RequestListComponent implements OnInit {
     void this.router.navigate(['/requests', request.id]);
   }
 
-  /** Colour follows the meaning of the view, not the internal status name. */
+  /**
+   * Colour follows the meaning of the view, not the internal status name.
+   *
+   * Both audiences' keys are handled here, because which table a reader gets is decided on the
+   * server from their permissions — the screen only ever sees the key that came back. Missing one
+   * is not a crash, it is a chip that quietly renders neutral, so the reviewer's post-approval
+   * keys are listed explicitly rather than left to the default.
+   *
+   * The names must come from the palette in `styles.scss`, which is
+   * `neutral | running | good | warn | danger | review | done | muted` — there is no `success`,
+   * and `tone-success` was silently painting every completed request neutral because a class that
+   * does not exist looks exactly like a class that was never applied.
+   */
   tone(request: RequestSummaryDto): string {
     switch (request.viewKey) {
-      case 'done': return 'success';
+      case 'done': return 'done';
+      case 'confirm': case 'passed': return 'good';
       case 'declined': return 'danger';
-      case 'input': return 'warn';
-      case 'waiting': return 'warn';
-      case 'working': case 'checking': return 'running';
+      case 'blocked': return 'danger';
+      case 'input': case 'waiting': return 'warn';
+      case 'checking': case 'verifying': return 'review';
+      case 'working': case 'assigned': return 'running';
       default: return 'neutral';
     }
   }

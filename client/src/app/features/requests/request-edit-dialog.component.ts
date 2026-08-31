@@ -1,5 +1,7 @@
 import { Component, DestroyRef, OnInit, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, of } from 'rxjs';
+import { catchError, debounceTime, distinctUntilChanged, startWith, switchMap } from 'rxjs/operators';
 import { FormsModule } from '@angular/forms';
 import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { MatAutocompleteModule } from '@angular/material/autocomplete';
@@ -56,7 +58,7 @@ import { enumOptions, SearchSelectComponent } from '../../shared/search-select.c
         <mat-form-field>
           <mat-label>Client (optional)</mat-label>
           <input matInput name="clientname" [(ngModel)]="clientName"
-                 (ngModelChange)="typed.set($event)" [matAutocomplete]="clients" />
+                 (ngModelChange)="typed.set($event); term.next($event)" [matAutocomplete]="clients" />
           <mat-autocomplete #clients>
             @for (name of suggestions(); track name) {
               <mat-option [value]="name">{{ name }}</mat-option>
@@ -132,6 +134,14 @@ export class RequestEditDialog implements OnInit {
   readonly typed = signal(this.clientName);
   private readonly known = signal<string[]>([]);
 
+  /**
+   * The typed name, on its way to the server. Same reasoning as the New Request form: the lookup
+   * answers with a capped alphabetical page, so filtering only in the browser searches whatever
+   * part of the register happened to arrive rather than the register.
+   */
+  readonly term = new Subject<string>();
+
+  /** Narrowed again locally so the list keeps up with the keystrokes between server answers. */
   readonly suggestions = computed(() => {
     const term = this.typed().trim().toLowerCase();
     const all = this.known();
@@ -140,9 +150,16 @@ export class RequestEditDialog implements OnInit {
 
   ngOnInit(): void {
     this.ref.disableClose = true;
-    this.api.clients()
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe((list) => this.known.set(list.map((c) => c.name)));
+
+    // Primed with the name already on the request, so the dialog opens with its own client
+    // reachable even when that client sorts past the cap.
+    this.term.pipe(
+      startWith(this.clientName),
+      debounceTime(250),
+      distinctUntilChanged(),
+      switchMap((value) => this.api.clients(value.trim() || undefined).pipe(catchError(() => of([])))),
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe((list) => this.known.set(list.map((c) => c.name)));
   }
 
   ready = () => this.title.trim().length > 0 && this.description.trim().length > 0;

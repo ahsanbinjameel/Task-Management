@@ -452,28 +452,18 @@ public sealed class RequestService : IRequestService
 
         if (includeStatus && StatusViews.FindRequestView(query.Audience, query.View) is { } view)
         {
+            // Two halves of one question: a request with no task yet answers for itself, and one
+            // that has a task answers with the task's status. Unconditional — every audience's
+            // table now carries the journey past approval, so there is no audience for which
+            // folding would judge a request against an empty task list and silently drop it.
             var requestStatuses = view.RequestStatuses.ToList();
+            var taskStatuses = view.TaskStatuses.ToList();
 
-            // Fold for an audience whose views carry no task statuses and the screen empties
-            // itself: an approved request always has a generated task, so it would be judged
-            // against an empty list and match nothing. The tile counted it and the list did not.
-            // One rule, asked in one place — see StatusViews.RequestStatusFollowsTask.
-            if (StatusViews.RequestStatusFollowsTask(query.Audience))
-            {
-                // Two halves of one question: a request with no task yet answers for itself, and
-                // one that has a task answers with the task's status.
-                var taskStatuses = view.TaskStatuses.ToList();
-
-                requests = requests.Where(r =>
-                    (r.GeneratedTaskId == null && requestStatuses.Contains(r.Status))
-                    || (r.GeneratedTaskId != null && _db.Tasks
-                            .Where(t => t.Id == r.GeneratedTaskId)
-                            .Any(t => taskStatuses.Contains(t.Status))));
-            }
-            else
-            {
-                requests = requests.Where(r => requestStatuses.Contains(r.Status));
-            }
+            requests = requests.Where(r =>
+                (r.GeneratedTaskId == null && requestStatuses.Contains(r.Status))
+                || (r.GeneratedTaskId != null && _db.Tasks
+                        .Where(t => t.Id == r.GeneratedTaskId)
+                        .Any(t => taskStatuses.Contains(t.Status))));
         }
 
         if (query.Type is { } type)
@@ -610,21 +600,20 @@ public sealed class RequestService : IRequestService
 
         // Requests nobody has approved yet answer for themselves...
         var byRequestStatus = await filtered
-            .Where(r => !StatusViews.RequestStatusFollowsTask(query.Audience) || r.GeneratedTaskId == null)
+            .Where(r => r.GeneratedTaskId == null)
             .GroupBy(r => r.Status)
             .Select(g => new { Status = g.Key, Count = g.Count() })
             .ToListAsync(ct);
 
-        // ...and the approved ones answer with their task, for anyone whose status follows it. A
-        // coordinator's tiles are about intake, which stops at approval.
-        var byTaskStatus = StatusViews.RequestStatusFollowsTask(query.Audience)
-            ? await (from r in filtered
-                     where r.GeneratedTaskId != null
-                     join t in _db.Tasks on r.GeneratedTaskId equals t.Id
-                     group t by t.Status into g
-                     select new { Status = g.Key, Count = g.Count() })
-                .ToListAsync(ct)
-            : new();
+        // ...and the approved ones answer with their task. The two halves must split the set on
+        // exactly the condition ApplyFilters splits it on, or a tile counts what the list will not
+        // show — which is how the Approved tile once read two above a list of none.
+        var byTaskStatus = await (from r in filtered
+                                  where r.GeneratedTaskId != null
+                                  join t in _db.Tasks on r.GeneratedTaskId equals t.Id
+                                  group t by t.Status into g
+                                  select new { Status = g.Key, Count = g.Count() })
+            .ToListAsync(ct);
 
         var requestCounts = byRequestStatus.ToDictionary(c => c.Status, c => c.Count);
         var taskCounts = byTaskStatus.ToDictionary(c => c.Status, c => c.Count);

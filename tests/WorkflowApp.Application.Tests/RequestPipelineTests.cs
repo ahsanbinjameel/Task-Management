@@ -422,10 +422,11 @@ public class RequestPipelineTests
     /// <summary>
     /// The regression behind an Approved tile that counted two and listed none.
     ///
-    /// An approved request always has a generated task, and the reviewer's views carry no task
-    /// statuses on purpose — intake is their concern and it stops at approval. The list folded
-    /// request onto task for every audience while the counts folded only for the requester, so the
-    /// one view where the two disagreed silently returned nothing.
+    /// An approved request always has a generated task, so the tile and the list have to split the
+    /// set on exactly the same condition. They once did not: the list folded request onto task for
+    /// every audience while the counts folded only for the requester, and the one view where they
+    /// disagreed silently returned nothing. Both fold unconditionally now, which is what this
+    /// pins — the assertion is the equality, not the number.
     /// </summary>
     [Fact]
     public async Task Approved_view_lists_the_same_requests_the_tile_counts_for_a_reviewer()
@@ -448,6 +449,52 @@ public class RequestPipelineTests
         Assert.Equal(1, tile.Count);
         Assert.Equal(tile.Count, listed.Items.Count);
         Assert.Equal("Approve me", Assert.Single(listed.Items).Title);
+    }
+
+    /// <summary>
+    /// A reviewer's request does not stop at "Approved" either.
+    ///
+    /// `ReviewerViews` used to carry no task statuses at all, so an approved request sat in the
+    /// last tile on the strip and stayed there — the screen read the same on the day it was
+    /// approved and a fortnight later with the work closed. Anyone classified as a coordinator
+    /// from *task* permissions read requests through that table, which is a checker, a worker and
+    /// an administrator as well as an actual reviewer, so "where has my request got to?" had no
+    /// answer on the requests screen at all.
+    /// </summary>
+    [Fact]
+    public async Task A_reviewers_request_follows_the_task_past_approval()
+    {
+        var (h, requester, reviewer) = await ReadyAsync();
+        using var _d = h;
+
+        var created = await h.Requests.CreateAsync(requester, NewRequest("Follow it through"));
+        var decision = await h.Triage.DecideAsync(created.Value!.Id, reviewer,
+            new TriageDecisionDto { Outcome = TriageOutcome.Approve });
+
+        var taskId = decision.Value!.CreatedTaskId!.Value;
+        var coordinator = StatusAudience.Coordinator;
+
+        // Approved, and the task is waiting to be handed out.
+        Assert.Equal("approved", (await h.Requests.GetAsync(created.Value!.Id, coordinator)).Value!.ViewKey);
+
+        var worker = await h.CreateUserAsync("wilf", roles: DefaultRoles.Worker);
+        await h.Assignment.AssignAsync(taskId, reviewer, new AssignTaskDto { AssigneeUserId = worker.Id });
+
+        Assert.Equal("assigned", (await h.Requests.GetAsync(created.Value!.Id, coordinator)).Value!.ViewKey);
+
+        await h.StartShiftAsync(worker.Id);
+        await h.WorkSessions.StartAsync(taskId, worker.Id);
+
+        Assert.Equal("working", (await h.Requests.GetAsync(created.Value!.Id, coordinator)).Value!.ViewKey);
+
+        // And the tile the reader would click agrees with the list underneath it, all the way
+        // along — the invariant the Approved tile once broke.
+        var counts = await h.Requests.StatusCountsAsync(new RequestQuery { Audience = coordinator });
+        var listed = await h.Requests.ListAsync(
+            new RequestQuery { Audience = coordinator, View = "working" }, new PageQuery());
+
+        Assert.Equal(1, counts.Single(c => c.Key == "working").Count);
+        Assert.Equal("Follow it through", Assert.Single(listed.Items).Title);
     }
 
     /// <summary>The requester's fold is the half that must keep working: their status follows the task.</summary>

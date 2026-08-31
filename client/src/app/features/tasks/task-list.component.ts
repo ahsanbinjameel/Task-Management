@@ -78,7 +78,8 @@ export class TaskListComponent implements OnInit {
    * and an "open only" toggle. Every one of them described a column in the grid below.
    *
    * "Open only" is the exception and is simply gone: the status tiles already answer it, and a view
-   * like "To Do" cannot contain closed work anyway.
+   * like "To Do" cannot contain closed work anyway. Which is why every call below sends
+   * `openOnly: false` — see `reload()`.
    */
   readonly filters = columnFilters(() => { this.pageIndex = 0; this.reload(); });
 
@@ -219,7 +220,7 @@ export class TaskListComponent implements OnInit {
   private loadFilterOptions(): void {
     this.api.taskFilterOptions({
       view: this.view() ?? undefined,
-      openOnly: true,
+      openOnly: false,
       ...this.filters.asObject(),
     }).subscribe({
       next: (o) => this.options.set(o.columns),
@@ -230,7 +231,7 @@ export class TaskListComponent implements OnInit {
 
   /** Counts ignore the filter row — see the request grid for why a tile must not move as you type. */
   private loadCounts(): void {
-    this.api.taskStatusCounts({ openOnly: true }).subscribe((c) => this.counts.set(c));
+    this.api.taskStatusCounts({ openOnly: false }).subscribe((c) => this.counts.set(c));
   }
 
   /** One place to leave a load, whether it succeeded or not. */
@@ -240,13 +241,23 @@ export class TaskListComponent implements OnInit {
     this.refreshing.set(false);
   }
 
+  /**
+   * `openOnly: false` on all three calls, deliberately.
+   *
+   * The server defaults it to true, which drops Closed / Cancelled / Duplicate before anything else
+   * runs — so the coordinator's "Closed" and "Not Doing" tiles counted zero and listed nothing, and
+   * the unfiltered screen showed only live work. On a board whose finished work outnumbers its
+   * running work that reads as a scoping bug rather than a filter: an administrator with one paused
+   * task of their own and three closed ones sees exactly their own task and concludes the screen is
+   * personal. The tiles are what narrow this list; they cannot narrow what they were never given.
+   */
   reload(): void {
     this.loadCounts();
     this.loadFilterOptions();
     if (this.loaded) this.refreshing.set(true); else this.loading.set(true);
     this.api.tasks({
       view: this.view() ?? undefined,
-      openOnly: true,
+      openOnly: false,
       sortBy: this.sort().by ?? undefined,
       sortDescending: this.sort().descending,
       page: this.pageIndex + 1,

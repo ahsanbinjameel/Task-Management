@@ -606,17 +606,82 @@ running the API instead (`--launch-profile Development`), which does load user-s
 - **Fonts and icons are self-hosted** (`@fontsource/roboto`, `material-icons`). The CSP is
   `'self'`-only and an internal LAN box may have no internet; a CDN font that silently fails leaves
   an icon set rendered as raw words.
-- **`StatusViews.RequestStatusFollowsTask` is the only place that decides whether a request's
-  status follows its task.** The rule was re-derived independently in four places — the view table,
-  the label, the list filter and the tile counts — and it produced two separate empty-screen bugs
-  before being consolidated. (1) `ApplyFilters` folded for *every* audience, so a coordinator's
-  approved request was judged against `ReviewerViews`' deliberately-empty task list and vanished:
-  the tile counted three and the list showed none. (2) The test was `== Requester`, but
-  `AudienceFor` classifies from **task** permissions and the Worker role holds `Request.Create` by
-  design — so a worker's own request was read with the reviewer's table and froze on "Approved"
-  forever. The rule is now "does this person triage work?" (`!= Coordinator`), asked once. Covered
-  by `Approved_view_lists_the_same_requests_the_tile_counts_for_a_reviewer` and
+- **A request's status follows its task, for every audience — there is no longer a predicate.**
+  `StatusViews.RequestStatusFollowsTask(audience)` existed because the question had been re-derived
+  in four places (the view table, the label, the list filter, the tile counts) and any two of them
+  disagreeing empties a screen in silence, which happened twice: (1) `ApplyFilters` folded for
+  *every* audience, so a coordinator's approved request was judged against `ReviewerViews`'
+  deliberately-empty task list and vanished — the tile counted three and the list showed none;
+  (2) the test was `== Requester`, but `AudienceFor` classifies from **task** permissions and the
+  Worker role holds `Request.Create` by design, so a worker's own request was read with the
+  reviewer's table and froze on "Approved" forever.
+  Consolidating it to `!= Coordinator` fixed the disagreement and left the premise — which was the
+  actual fault. A coordinator did not fold *because their table had no task statuses to fold onto*,
+  not because a status that stops dead at approval served them better. So `ReviewerViews` now
+  carries the journey through to Completed (in internal words: Approved, Assigned, In progress,
+  Blocked, Quality check, Ready for closure, Completed) and the predicate is gone, along with both
+  branches it fed. The audience still picks **which table** is read — the reviewer keeps the intake
+  states split, the requester gets them folded into "Under Review" — but no longer decides
+  *whether* the request tracks the work.
+  That was the half producing frozen requests, and it caught more people than the Worker case
+  already documented: **`Task.QCReview` makes someone a coordinator**, so a requester who also
+  checks read their own request through the reviewer's table and watched it stop at "Approved" with
+  nowhere left to look. Covered by `A_reviewers_request_follows_the_task_past_approval`,
+  `Approved_view_lists_the_same_requests_the_tile_counts_for_a_reviewer` and
   `A_requester_who_also_works_still_sees_their_request_follow_the_task`.
+- **A chip tone must name a colour the palette actually defines.** `styles.scss` generates
+  `.chip.tone-*` from `(neutral, running, good, warn, danger, review, done, muted)`. The request
+  list's `tone()` returned `'success'` for completed requests — no such rule exists, so it painted
+  them the base neutral, and a class that does not exist looks exactly like a class that was never
+  applied. There is nothing to fail here, which is why it survived: prefer `statusTone`'s
+  vocabulary when adding a case.
+- **The client lookup's cap is a safety valve, and the typed term goes to the server.** Two faults
+  sat on top of each other, and fixing only the visible one would have left the screen still lying.
+  `ClientsAsync` took `search` and every caller passed nothing, so the browser received a capped
+  alphabetical page and filtered inside it — and the cap was **50** against a register that had
+  reached **197**. The result was A to about F: three-quarters of the clients could not be typed
+  for, could not be picked from a grid's client filter, and gave no sign of having been left out.
+  So the term now reaches the server (debounced, `startWith('')` because the panel opens before
+  anything is typed) and is matched against every row; the local filter stays as a refinement
+  between keystrokes. The cap is 1000, and it is loose on purpose: clients are the one lookup with
+  no administrator behind it — `ResolveClientAsync` creates them from real use — so the register
+  grows on its own, and a cap chosen as a policy becomes a wall somebody walks into unannounced.
+  Modules and forms keep 200, because a curated catalog only grows when someone decides it should.
+  **The search is lower-cased on both sides rather than left to the collation.** Not tidiness: the
+  browser narrows the returned list again with `toLowerCase().includes()`, and two filters over one
+  list that disagree about case make the panel change its mind as each server answer lands. It also
+  matches `ResolveClientAsync`, so finding a client and resolving one answer the same way. Pinned
+  by `A_client_past_the_lookup_cap_is_still_found_by_searching_for_it`, which asserts the
+  case-insensitive hit — EF Core InMemory is case-*sensitive*, so a test relying on SQL Server's
+  collation would have passed there and told you nothing.
+- **`mat-autocomplete` does not filter its own options — the component supplying them must.** It
+  renders exactly the list it is handed, so a static list is a panel that ignores what is typed.
+  The client box on **New Request** was doing that: every client on file, however much of a name
+  had been entered. The edit dialog had had the filter since it was written, which is what made the
+  create form look like a working control rather than a broken one.
+  These two are the **only** places a raw `mat-autocomplete` is correct, and they are correct for a
+  reason: the client field is a *combobox*, not a picker. An unmatched name is kept and
+  `ResolveClientAsync` creates the client the first time it sees it, which is what stops anyone
+  having to maintain a register — whereas `app-search-select` discards anything unmatched on blur
+  by design, so its value can only ever be one of the options. Reaching for the shared control here
+  would silently drop every new client name. Everything else in the app is `app-search-select`,
+  which filters in `visible()`; the grid's filter row is the third pattern and filters in `shown()`.
+- **`app-search-select` hides Material's own selection tick.** `MatOption` renders a trailing
+  pseudo-checkbox whenever it is selected and the parent has not opted out, and
+  `MatAutocomplete.hideSingleSelectionIndicator` defaults to **false** — so every chosen option in
+  every dropdown in the app showed *two* ticks, ours leading and Material's trailing. Ours is the
+  one that stays: Material's marks only the option it considers current, so in multiple mode it
+  lights the last one picked and leaves the rest bare, which is the wrong answer for a multi-select.
+  The other two `mat-autocomplete`s (the client type-ahead on New Request and on the edit dialog)
+  draw no tick of their own and are left alone.
+- **A description that only repeats the title is not shown.** A request is raised as one piece of
+  text: `titleOf` takes its first line and `describe` keeps the whole thing, so a point long enough
+  to need a summary still keeps its full wording. For the ordinary one-line point those two are the
+  same sentence, and the detail page and the quick-view drawer each printed it twice — once as the
+  heading, once under "Description" — which reads as though the form had filled a field in on the
+  requester's behalf. `detailBelowTitle` in `core/format.ts` returns what the description *adds*,
+  and the block is omitted when that is nothing. Presentation only: `CreateRequestDto.Description`
+  is `[Required]` and `Request.Description` is non-nullable, so the stored value is unchanged.
 - **Reference data is retired, never deleted.** A client with requests against it, a pause reason
   in someone's timeline, a role somebody holds — deleting any of them rewrites history that other
   screens still read, turning a report into blanks. So `SetupService` offers deactivate, and every
@@ -708,6 +773,16 @@ running the API instead (`--launch-profile Development`), which does load user-s
   structurally — `ApplyColumnFilters` is called in `ListAsync` only, not inside the shared
   `ApplyFilters` that `StatusCountsAsync` also uses. A comment was not enough: the first attempt
   put it in the shared method and the tiles moved.
+- **The Tasks screen sends `openOnly: false`; the tiles are what narrow it.** `TaskQuery.OpenOnly`
+  drops Closed / Cancelled / Duplicate and the endpoint defaults it to **true**, so a client that
+  simply omits it gets the working set. The screen's own "open only" toggle was removed on the
+  grounds that the status tiles already answer that question — but the three calls kept sending
+  `openOnly: true`, which is the one arrangement where the tiles *cannot*: the coordinator's
+  "Closed" and "Not Doing" tiles counted zero and listed nothing, `Cancelled` and `Duplicate` were
+  unreachable from any tile, and the unfiltered screen showed only live work. It reads as a scoping
+  bug rather than a filter, which is how it was reported: an administrator holding one paused task
+  of their own alongside three closed ones saw exactly their own task and concluded the screen was
+  personal. A filter the tiles are supposed to own must not also be applied underneath them.
 - **A column filter holds several values, and they travel separated by a `|`.**
   "Critical and High" is the question people actually ask of a priority column, so a select is
   multi-value; within a column the values are OR'd, across columns they are AND'd. **The separator
@@ -1279,7 +1354,7 @@ capabilities. Both are client-only — no endpoint, permission, guard, route or 
 nothing was deleted. Steps 3–7 (My Tasks, requester acceptance, assignment, the ERP catalog at
 triage, fast multi-point intake) are still to come.
 
-**Tests:** 440 passing (`dotnet test`) — 29 domain state machines, 411 application services.
+**Tests:** 442 passing (`dotnet test`) — 29 domain state machines, 413 application services.
 All on EF Core InMemory or pure functions, so the suite runs with no SQL Server.
 
 ## 9. SQL Server: done and still outstanding

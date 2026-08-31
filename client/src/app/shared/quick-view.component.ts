@@ -5,7 +5,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { ApiService } from '../core/api.service';
 import { RequestDetailDto, TaskDetailDto } from '../core/models';
-import { DurationPipe, sinceLabel } from '../core/format';
+import { DurationPipe, detailBelowTitle, sinceLabel } from '../core/format';
 import { requestTypeLabel } from '../core/labels';
 import { ChipComponent, FieldComponent, LoadingComponent } from './ui';
 
@@ -83,8 +83,10 @@ export interface QuickViewTarget {
               }
             </div>
 
-            <h3 class="sub">Description</h3>
-            <p class="body-text">{{ d.description }}</p>
+            @if (detail(d.title, d.description); as body) {
+              <h3 class="sub">Description</h3>
+              <p class="body-text">{{ body }}</p>
+            }
           </div>
         } @else if (request(); as d) {
           <div class="body">
@@ -116,8 +118,10 @@ export interface QuickViewTarget {
               }
             }
 
-            <h3 class="sub">Description</h3>
-            <p class="body-text">{{ d.description }}</p>
+            @if (detail(d.title, d.description); as body) {
+              <h3 class="sub">Description</h3>
+              <p class="body-text">{{ body }}</p>
+            }
           </div>
         } @else {
           <div class="body"><p class="muted">That is not available.</p></div>
@@ -172,6 +176,9 @@ export class QuickViewComponent {
 
   type = (value: string) => requestTypeLabel(value as never);
   readonly since = sinceLabel;
+
+  /** What the description adds over the heading already shown. See `detailBelowTitle`. */
+  readonly detail = detailBelowTitle;
 
   readonly number = computed(() =>
     this.task()?.taskNumber ?? this.request()?.requestNumber ?? '');

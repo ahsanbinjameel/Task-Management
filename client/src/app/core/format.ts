@@ -184,3 +184,30 @@ export function isoDate(date: Date = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
+
+/**
+ * The description with the title stripped off the front of it, or null when nothing is left.
+ *
+ * A request is raised as one piece of text: its first line becomes the Title and the whole thing
+ * becomes the Description, so that a point long enough to need a summary still keeps its full
+ * wording. For the ordinary one-line point those two are the *same sentence*, and every screen
+ * showing both printed it twice — once as the heading and once under "Description", which reads
+ * as though the form filled a field in on the requester's behalf.
+ *
+ * Stripping rather than hiding, because the multi-line case is the same fault in miniature: the
+ * first line is already the heading directly above, so repeating it wastes the one line a reader
+ * scans. What is returned is what the description actually adds.
+ */
+export function detailBelowTitle(title: string, description: string | null | undefined): string | null {
+  const body = (description ?? '').trim();
+  const heading = (title ?? '').trim();
+
+  if (!body) return null;
+  if (!heading) return body;
+
+  const rest = body === heading
+    ? ''
+    : body.startsWith(heading) ? body.slice(heading.length).trim() : body;
+
+  return rest.length ? rest : null;
+}

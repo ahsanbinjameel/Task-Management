@@ -171,6 +171,17 @@ is not extra bureaucracy: it is what stops work existing that nobody agreed to a
 
 `![screenshot: triage](images/triage.png)`
 
+### Follow a request after you have approved it
+
+The tiles on **Requests** do not stop at Approved. Once a request has become a task, its tile
+follows the work: **Assigned**, **In progress**, **Blocked**, **Quality check**, **Ready for
+closure**, **Completed**. So "where did REQ-000012 get to?" is answered on the screen you approved
+it from, without going to Tasks and matching it up by hand.
+
+The finer distinctions a coordinator acts on — paused as against blocked, rework as against fresh
+work — stay on **Tasks**, where the actions are. Here, paused and rework both read as In progress:
+the question a request answers is how far along it is, not what the worker is doing this minute.
+
 ### Send something for a Check
 
 If you cannot tell whether a request describes a real problem — a defect, a configuration mistake,
