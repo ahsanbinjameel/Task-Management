@@ -215,9 +215,12 @@ public sealed class TasksController : ApiControllerBase
     public async Task<IActionResult> PauseReasons(CancellationToken ct)
         => Ok(await _queries.PauseReasonsAsync(ct));
 
-    /// <summary>The caller's currently running work session, if any.</summary>
+    /// <summary>
+    /// The caller's running timer, if any. 204 when nothing is running, so a client can tell
+    /// "no timer" from "no answer".
+    /// </summary>
     [HttpGet("active-session")]
-    [ProducesResponseType(typeof(WorkSessionDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ActiveWorkDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> ActiveSession(CancellationToken ct)
     {
         var session = await _sessions.ActiveSessionAsync(CurrentUserId, ct);

@@ -2,7 +2,7 @@ import { HttpClient, HttpContext, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
-  AcceptanceCriteriaDto, ActiveWorkforceDto, ActivityEventDto, AssignableUserDto,
+  AcceptanceCriteriaDto, ActiveWorkDto, ActiveWorkforceDto, ActivityEventDto, AssignableUserDto,
   AssignmentCandidateDto, AttachmentDto, DemoStatusDto, FormDto, FormOptionDto, FormSurfaceDto,
   FormSurfaceOptionDto, ModuleDto,
   AttachmentKind,
@@ -444,8 +444,9 @@ export class ApiService {
     return this.http.get<PauseReasonDto[]>('/api/tasks/pause-reasons');
   }
 
-  activeSession(): Observable<WorkSessionDto | null> {
-    return this.http.get<WorkSessionDto | null>('/api/tasks/active-session');
+  /** 204 when nothing is running, which HttpClient hands back as null. */
+  activeSession(): Observable<ActiveWorkDto | null> {
+    return this.http.get<ActiveWorkDto | null>('/api/tasks/active-session');
   }
 
   transition(id: number, body: {

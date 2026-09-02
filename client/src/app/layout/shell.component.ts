@@ -14,6 +14,7 @@ import { AuthService } from '../core/auth.service';
 import { NAV_GROUPS, NavGroup } from '../core/navigation';
 import { NotificationBellComponent } from './notification-bell.component';
 import { ShiftWidgetComponent } from './shift-widget.component';
+import { WorkTimerWidgetComponent } from './work-timer-widget.component';
 import { DemoSwitcherComponent } from './demo-switcher.component';
 import { ConfirmDialog, ConfirmData } from '../shared/dialogs';
 import { readRailPreference, writeRailPreference } from './nav-preference';
@@ -35,6 +36,7 @@ interface VisibleNavItem {
     RouterOutlet, RouterLink, MatIconModule, MatButtonModule, MatMenuModule,
     MatBadgeModule, MatTooltipModule, MatSidenavModule, MatDividerModule,
     NotificationBellComponent, ShiftWidgetComponent, DemoSwitcherComponent,
+    WorkTimerWidgetComponent,
   ],
   template: `
     <div class="shell" [class.nav-open]="navOpen()" [class.rail]="collapsed()">
@@ -71,6 +73,12 @@ interface VisibleNavItem {
           <div class="spacer"></div>
 
           <app-demo-switcher />
+          <!--
+            Left of the shift widget on purpose: the task clock is the one that is wrong most
+            expensively. A shift left open overstates a day; a task timer left running does that
+            *and* charges the time to the wrong piece of work.
+          -->
+          <app-work-timer-widget />
           <app-shift-widget />
           <app-notification-bell />
 

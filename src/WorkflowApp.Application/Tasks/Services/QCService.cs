@@ -232,6 +232,14 @@ public sealed class QCService : IQCService
             },
             request.Comments, NotificationService.LinkTask, task.Id);
 
+        // A pass is also the cue for the person who asked (PRODUCT-CORE §7). Our own check passing
+        // is what puts the work in front of them, and until now nothing told them so: the request
+        // quietly entered "Ready for Confirmation" and sat there until somebody sent a message
+        // out-of-band — the last hop of exactly the relay this is meant to remove. Addressed to
+        // their *request*, not to the task, because a requester is never sent to the task screen.
+        if (request.Result == QCResult.Passed)
+            await NotifyRequesterToConfirmAsync(task, reviewerId, ct);
+
         _audit.Record(
             request.Result == QCResult.Passed ? AuditActions.QCPassed : AuditActions.QCFailed,
             actorUserId: reviewerId,
@@ -253,6 +261,40 @@ public sealed class QCService : IQCService
             attemptNumber, task.TaskNumber, reviewerId, request.Result);
 
         return await _queries.GetAsync(taskId, ct);
+    }
+
+    /// <summary>
+    /// Asks the person who raised the request whether it is actually fixed.
+    ///
+    /// Nothing here moves the task. <see cref="WorkTaskStatus.QCPassed"/> is already a state a
+    /// requester may confirm from — <c>ClosureService.GuardRequesterAsync</c> accepts it and
+    /// <c>CloseAsync</c> walks the remaining step itself — so no coordinator has to shift the task
+    /// on to <see cref="WorkTaskStatus.ReadyForClosure"/> before the confirmation is offered.
+    /// Waiting for that shift is what left work sitting between a passed check and a requester who
+    /// had not been told there was anything to look at.
+    ///
+    /// Work with no request behind it — one raised internally, or a subtask — has nobody to ask,
+    /// and gets no notification rather than an invented recipient. Same policy as
+    /// <c>ClosureService.RequesterAsync</c>, and the same reason.
+    /// </summary>
+    private async Task NotifyRequesterToConfirmAsync(WorkTask task, long reviewerId, CancellationToken ct)
+    {
+        if (task.RequestId is not { } requestId) return;
+
+        var request = await _db.Requests.AsNoTracking()
+            .Where(r => r.Id == requestId)
+            .Select(r => new { r.Id, r.RequestNumber, r.RequestedByUserId })
+            .FirstOrDefaultAsync(ct);
+
+        if (request is null) return;
+
+        // RaiseFor rather than Raise: a requester who checked their own work is already looking at
+        // it, and telling somebody what they just did is noise.
+        _notifications.RaiseFor(
+            new[] { (long?)request.RequestedByUserId }, reviewerId,
+            $"{request.RequestNumber}: please confirm this is fixed",
+            "We think this is done. Check it on your side and tell us whether it is fixed.",
+            NotificationService.LinkRequest, request.Id);
     }
 
     public async Task<Result<AcceptanceCriteriaDto>> CriteriaAsync(long taskId, CancellationToken ct = default)

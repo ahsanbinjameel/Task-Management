@@ -4,6 +4,7 @@ import {
   OnDestroy,
   OnInit,
   computed,
+  effect,
   inject,
   input,
   signal,
@@ -18,6 +19,7 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatDialog } from '@angular/material/dialog';
 import { ApiService } from '../../core/api.service';
+import { WorkTimerService } from '../../core/work-timer.service';
 import { BreadcrumbsComponent, Crumb } from '../../shared/breadcrumbs.component';
 import { BackLinkComponent } from '../../shared/back-link.component';
 import { AuthService } from '../../core/auth.service';
@@ -136,6 +138,17 @@ import { AttachmentUploadComponent } from '../../shared/attachment-upload.compon
           </div>
 
           <div class="actions">
+            <!--
+              The number the worker actually came for. It sits with the controls rather than in the
+              facts panel because it is only true while it is moving: the moment Pause is pressed
+              it stops being a clock and becomes "Time logged", which the panel already shows.
+            -->
+            @if (timer.isRunning(t.id)) {
+              <span class="live-clock" matTooltip="This sitting. Total on the task is in the facts below.">
+                <mat-icon>timer</mat-icon>
+                <span class="mono">{{ timer.clock() }}</span>
+              </span>
+            }
             @if (canStart()) {
               <button matButton="filled" (click)="start()" [disabled]="busy()">
                 <mat-icon>play_arrow</mat-icon> Start work
@@ -452,7 +465,20 @@ import { AttachmentUploadComponent } from '../../shared/attachment-upload.compon
               <app-field label="Estimate">
                 {{ t.estimatedEffortHours ? t.estimatedEffortHours + 'h' : '—' }}
               </app-field>
-              <app-field label="Time logged">{{ t.totalWorkedTime | duration }}</app-field>
+              <!--
+                totalWorkedTime counts *ended* sessions only (TaskQueryService.TotalWorked), so
+                on a running task it silently under-reports by however long the worker has been
+                sitting at it — which is exactly when someone looks. While the clock is ours it
+                carries the running sitting too, and says that it is still counting.
+              -->
+              <app-field label="Time logged">
+                @if (timer.isRunning(t.id)) {
+                  <span>{{ timer.totalHuman() }}</span>
+                  <span class="muted small counting">counting</span>
+                } @else {
+                  {{ t.totalWorkedTime | duration }}
+                }
+              </app-field>
               }
               <app-field label="Due">
                 @if (t.dueDate) {
@@ -515,6 +541,21 @@ import { AttachmentUploadComponent } from '../../shared/attachment-upload.compon
       margin-left: auto;
       flex-wrap: wrap;
     }
+    /* Reads as a readout, not a button — there is nothing to press here. */
+    .live-clock {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 12px;
+      border-radius: 999px;
+      background: var(--tone-running-bg);
+      color: var(--tone-running-fg);
+      font-weight: 600;
+      /* Or the whole action bar shuffles sideways once a second. */
+      font-variant-numeric: tabular-nums;
+    }
+    .live-clock mat-icon { font-size: 18px; width: 18px; height: 18px; }
+    .counting { margin-left: 6px; }
     .complete {
       --mdc-filled-button-container-color: #17603a;
     }
@@ -583,6 +624,7 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
   private readonly dialog = inject(MatDialog);
   private readonly toast = inject(ToastService);
   private readonly router = inject(Router);
+  readonly timer = inject(WorkTimerService);
 
   readonly task = signal<TaskDetailDto | null>(null);
   readonly loading = signal(true);
@@ -776,6 +818,18 @@ export class TaskDetailComponent implements OnInit, OnDestroy {
 
     return t.availableTransitions.filter((s) => !handledElsewhere.includes(s));
   });
+
+  constructor() {
+    // Every path that changes this task — start, pause, blocked, complete, assign, transition,
+    // reload, a realtime re-fetch — ends by writing the `task` signal, so adopting from an effect
+    // is the one place that cannot be forgotten when a ninth action is added. `adopt` leaves the
+    // clock alone for a task that is not the caller's running one, so simply opening somebody
+    // else's work never disturbs it.
+    effect(() => {
+      const t = this.task();
+      if (t) this.timer.adopt(t);
+    });
+  }
 
   ngOnInit(): void {
     this.taskId = Number(this.id());

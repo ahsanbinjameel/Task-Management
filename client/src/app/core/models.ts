@@ -382,6 +382,21 @@ export interface WorkSessionDto {
   interruptedByTaskId?: number | null;
 }
 
+/**
+ * The caller's running timer, in the shape a clock needs.
+ *
+ * `previouslyLogged` is a .NET TimeSpan string and deliberately excludes the running session —
+ * that half is ticked in the browser, so the two are added rather than one being re-fetched.
+ */
+export interface ActiveWorkDto {
+  sessionId: number;
+  taskId: number;
+  taskNumber: string;
+  title: string;
+  startedAt: string;
+  previouslyLogged: string;
+}
+
 export interface AcceptanceCriterionDto {
   index: number;
   text: string;

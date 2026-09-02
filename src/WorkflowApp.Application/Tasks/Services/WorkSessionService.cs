@@ -42,8 +42,11 @@ public interface IWorkSessionService
     /// </summary>
     Task<Result<TaskDetailDto>> InterruptAsync(long userId, InterruptDto request, CancellationToken ct = default);
 
-    /// <summary>The user's currently running session, if any.</summary>
-    Task<WorkSessionDto?> ActiveSessionAsync(long userId, CancellationToken ct = default);
+    /// <summary>
+    /// The user's running timer, if any — what it is on, since when, and what the task had already
+    /// banked before this sitting. Everything a clock needs and nothing else.
+    /// </summary>
+    Task<ActiveWorkDto?> ActiveSessionAsync(long userId, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -305,15 +308,33 @@ public sealed class WorkSessionService : IWorkSessionService
         return await _queries.GetAsync(request.TaskId, ct);
     }
 
-    public async Task<WorkSessionDto?> ActiveSessionAsync(long userId, CancellationToken ct = default)
+    public async Task<ActiveWorkDto?> ActiveSessionAsync(long userId, CancellationToken ct = default)
     {
         var session = await _db.WorkSessions.AsNoTracking()
             .FirstOrDefaultAsync(s => s.UserId == userId && s.Status == WorkSessionStatus.Active, ct);
 
         if (session is null) return null;
 
-        var reasons = await _db.PauseReasons.AsNoTracking().ToDictionaryAsync(p => p.Id, p => p.Name, ct);
-        return TaskQueryService.ToDto(session, reasons);
+        var task = await _db.Tasks.AsNoTracking()
+            .Where(t => t.Id == session.TaskId)
+            .Select(t => new { t.TaskNumber, t.Title })
+            .FirstOrDefaultAsync(ct);
+
+        // A session whose task has gone is not a state the schema allows; answering "nothing is
+        // running" beats throwing at the one caller whose whole job is to render a small clock.
+        if (task is null) return null;
+
+        // Everyone's ended sessions on this task, not only the caller's: the clock answers "how
+        // long has this task taken", which is a fact about the work rather than about who did it.
+        // The running session is excluded on purpose — see ActiveWorkDto.
+        var banked = await _db.WorkSessions.AsNoTracking()
+            .Where(s => s.TaskId == session.TaskId && s.SessionEnd != null)
+            .Select(s => s.SessionEnd!.Value - s.SessionStart)
+            .ToListAsync(ct);
+
+        return new ActiveWorkDto(
+            session.Id, session.TaskId, task.TaskNumber, task.Title, session.SessionStart,
+            banked.Aggregate(TimeSpan.Zero, (sum, d) => sum + d));
     }
 
     // --- shared machinery ----------------------------------------------------------------

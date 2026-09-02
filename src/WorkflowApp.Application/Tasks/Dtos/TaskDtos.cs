@@ -197,6 +197,27 @@ public sealed record WorkSessionDto(
     long? InterruptedByTaskId);
 
 /// <summary>
+/// The caller's running timer, in the shape a clock needs rather than the shape the table has.
+///
+/// <see cref="WorkSessionDto"/> is the session record — correct inside a task, where the task is
+/// already on the screen, and useless on its own: a top-bar clock cannot say <em>what</em> is
+/// running from a task id. So this carries the number and the title with it, and the time the task
+/// had already banked before this session, because a worker asking "how long have I been on this?"
+/// means the task, not this sitting.
+///
+/// <see cref="PreviouslyLogged"/> deliberately excludes the running session — that is the half the
+/// client is ticking, and adding it server-side would freeze at whatever the clock said when the
+/// response was serialised.
+/// </summary>
+public sealed record ActiveWorkDto(
+    long SessionId,
+    long TaskId,
+    string TaskNumber,
+    string Title,
+    DateTimeOffset StartedAt,
+    TimeSpan PreviouslyLogged);
+
+/// <summary>
 /// What was originally asked for, carried onto the task that came out of it.
 ///
 /// The two records stay separate — a request is not a task, and merging them would wreck the one

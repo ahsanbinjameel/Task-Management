@@ -182,6 +182,36 @@ public sealed class DashboardService : IDashboardService
                 AddTask(t, "Passed its check and can be closed", 4);
         }
 
+        // Everyone, whatever else they do: the one thing only the person who asked can answer
+        // (PRODUCT-CORE §7). Deliberately not gated on a permission — whether the thing is really
+        // fixed is not a question authority answers — so it appears for whoever raised the request
+        // and for nobody else, the coordinator who raised one of their own included.
+        //
+        // Keyed off the task passing its check, not off anyone shifting it on to ReadyForClosure:
+        // that shift is a coordinator's housekeeping and the requester was never waiting on it.
+        var awaitingConfirmation = openTasks
+            .Where(t => t.Status is WorkTaskStatus.QCPassed or WorkTaskStatus.ReadyForClosure)
+            .Select(t => t.Id)
+            .ToList();
+
+        var mineToConfirm = await _db.Requests.AsNoTracking()
+            .Where(r => r.RequestedByUserId == userId
+                        && r.GeneratedTaskId != null
+                        && awaitingConfirmation.Contains(r.GeneratedTaskId!.Value))
+            .Select(r => new
+            {
+                r.Id, r.RequestNumber, r.Title, r.RequestedUrgency, r.TargetDate, r.GeneratedTaskId,
+            })
+            .ToListAsync(ct);
+
+        // The row points at the request, not the task: that is where the two buttons live, and a
+        // requester is never sent to the task screen.
+        items.AddRange(mineToConfirm.Select(r => new AttentionItemDto(
+            AttentionSubject.Request, r.Id, r.RequestNumber, r.Title,
+            "Waiting for you to confirm it is fixed", 0, (Priority)(int)r.RequestedUrgency,
+            enteredAt.TryGetValue(r.GeneratedTaskId!.Value, out var passedAt) ? passedAt : now,
+            r.TargetDate, false)));
+
         // Everyone, whatever else they do: a question addressed to them on something they raised.
         var myQuestions = await _db.RequestClarifications.AsNoTracking()
             .Where(c => c.AnsweredAt == null)

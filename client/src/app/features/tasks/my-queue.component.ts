@@ -7,6 +7,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { ApiService } from '../../core/api.service';
+import { WorkTimerService } from '../../core/work-timer.service';
 import { ToastService } from '../../core/toast.service';
 import { RealtimeService } from '../../core/realtime.service';
 import { TaskSummaryDto } from '../../core/models';
@@ -53,7 +54,17 @@ import { ViewTabsComponent } from '../../shared/view-tabs.component';
                 <div class="line1">
                   <span class="mono muted small">{{ task.taskNumber }}</span>
                   <strong class="truncate">{{ task.title }}</strong>
-                  @if (task.hasActiveSession) {
+                  <!--
+                    A bolt said "running"; it could not say "running since when". On the one screen
+                    a worker keeps open all day that is the difference between noticing a timer left
+                    going over lunch and not. This queue is the caller's own work, so the shared
+                    clock is necessarily theirs — no per-row fetch and no second interval.
+                  -->
+                  @if (timer.isRunning(task.id)) {
+                    <span class="running-clock mono" matTooltip="Timer running on this task">
+                      <mat-icon>timer</mat-icon>{{ timer.clock() }}
+                    </span>
+                  } @else if (task.hasActiveSession) {
                     <mat-icon class="running" matTooltip="Timer running">bolt</mat-icon>
                   }
                 </div>
@@ -86,7 +97,11 @@ import { ViewTabsComponent } from '../../shared/view-tabs.component';
                       Due {{ task.dueDate | date: 'MMM d' }}
                     </span>
                   }
-                  <span class="small muted">{{ task.totalWorkedTime | duration }} logged</span>
+                  @if (timer.isRunning(task.id)) {
+                    <span class="small muted">{{ timer.totalHuman() }} logged</span>
+                  } @else {
+                    <span class="small muted">{{ task.totalWorkedTime | duration }} logged</span>
+                  }
                   @if (task.attachmentCount > 0) {
                     <span class="small muted attach"
                           [matTooltip]="task.attachmentCount === 1
@@ -148,6 +163,15 @@ import { ViewTabsComponent } from '../../shared/view-tabs.component';
     .attach { display: inline-flex; align-items: center; gap: 2px; }
     .attach mat-icon { font-size: 15px; width: 15px; height: 15px; }
     .running { color: var(--tone-running-fg); font-size: 18px; width: 18px; height: 18px; }
+    .running-clock {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--tone-running-fg);
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .running-clock mat-icon { font-size: 18px; width: 18px; height: 18px; }
     .cdk-drag-preview { box-shadow: 0 8px 24px rgba(16,24,40,0.18); border-radius: 8px; }
     .cdk-drag-placeholder { opacity: 0.35; }
   `,
@@ -155,6 +179,7 @@ import { ViewTabsComponent } from '../../shared/view-tabs.component';
 export class MyQueueComponent implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(ApiService);
+  readonly timer = inject(WorkTimerService);
   private readonly router = inject(Router);
   private readonly toast = inject(ToastService);
   private readonly realtime = inject(RealtimeService);

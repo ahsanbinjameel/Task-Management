@@ -727,11 +727,6 @@ export class RequestDetailComponent implements OnInit {
     this.request()?.requestedByUserId === this.auth.user()?.id);
 
   /**
-   * Whether to offer the two confirmation buttons: the work is waiting on a human answer, and the
-   * reader is the human who has to give it. `confirm` is the server's own view key, so this cannot
-   * drift from the statuses the tile counts.
-   */
-  /**
    * A follow-up is for a point found after this request was decided on — which is precisely when
    * editing stops being offered. Before that, changing the request itself is the honest move and a
    * second linked request would just be clutter.
@@ -761,8 +756,27 @@ export class RequestDetailComponent implements OnInit {
       });
   }
 
+  /**
+   * Whether to offer the two confirmation buttons: the work is waiting on a human answer, and the
+   * reader is the human who has to give it.
+   *
+   * **Read from the task's own status, not from the view key.** It used to test
+   * `viewKey === 'confirm'`, which is the requester audience's name for those two statuses — and
+   * the audience is resolved from *task* permissions, not from who raised the request. So anyone
+   * who also reviews, assigns, checks or works read their own request through the reviewer's
+   * table, where the same statuses are called `passed` / "Ready for closure", and the buttons
+   * never appeared: the work sat waiting on a confirmation the only person who could give it was
+   * never offered. The same class of fault as the frozen "Approved" request in CLAUDE.md §6, and
+   * the same fix — stop deriving an audience-independent fact from an audience-shaped label.
+   *
+   * These are the two statuses `ClosureService.GuardRequesterAsync` accepts, which is why the
+   * quality check passing is enough on its own: nobody has to move the task to Ready for Closure
+   * first, and the server has never asked them to.
+   */
   canConfirm(request: RequestDetailDto): boolean {
-    return request.viewKey === 'confirm' && this.isRequester();
+    const status = request.progress?.taskStatus;
+    return this.isRequester()
+      && (status === 'QCPassed' || status === 'ReadyForClosure');
   }
 
   acceptFix(request: RequestDetailDto): void {

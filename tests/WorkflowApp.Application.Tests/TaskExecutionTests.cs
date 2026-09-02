@@ -614,6 +614,80 @@ public class TaskExecutionTests
             Assert.Equal(final.Value.StatusHistory[i - 1].ToStatus, final.Value.StatusHistory[i].FromStatus);
         }
     }
+
+    // --- the running clock ---------------------------------------------------------------
+
+    /// <summary>
+    /// What the top-bar clock is drawn from. The shape matters as much as the values: a clock
+    /// cannot say *what* is running from a task id, so the number and the title travel with it.
+    /// </summary>
+    [Fact]
+    public async Task The_active_session_says_what_is_running_since_when_and_what_it_had_banked()
+    {
+        var f = await AssignedAndOnShiftAsync();
+        using var _d = f.H;
+
+        // One sitting already banked, so PreviouslyLogged has something to be wrong about.
+        await f.H.WorkSessions.StartAsync(f.TaskId, f.WorkerId);
+        f.H.Clock.Advance(TimeSpan.FromMinutes(90));
+        var paused = await f.H.WorkSessions.PauseAsync(
+            f.TaskId, f.WorkerId, new StopWorkDto { Comment = "Lunch" });
+        Assert.True(paused.IsSuccess);
+
+        var startedAt = f.H.Clock.UtcNow;
+        await f.H.WorkSessions.StartAsync(f.TaskId, f.WorkerId);
+        f.H.Clock.Advance(TimeSpan.FromMinutes(20));
+
+        var active = await f.H.WorkSessions.ActiveSessionAsync(f.WorkerId);
+
+        Assert.NotNull(active);
+        Assert.Equal(f.TaskId, active!.TaskId);
+        Assert.StartsWith("TSK-", active.TaskNumber);
+        Assert.False(string.IsNullOrWhiteSpace(active.Title));
+        Assert.Equal(startedAt, active.StartedAt);
+
+        // The 90 minutes already banked, and *not* the 20 the client is ticking — adding the
+        // running sitting server-side would freeze it at whatever the clock said on serialisation.
+        Assert.Equal(TimeSpan.FromMinutes(90), active.PreviouslyLogged);
+    }
+
+    [Fact]
+    public async Task Pausing_and_completing_both_stop_the_clock()
+    {
+        var f = await AssignedAndOnShiftAsync();
+        using var _d = f.H;
+
+        await f.H.WorkSessions.StartAsync(f.TaskId, f.WorkerId);
+        Assert.NotNull(await f.H.WorkSessions.ActiveSessionAsync(f.WorkerId));
+
+        f.H.Clock.Advance(TimeSpan.FromMinutes(10));
+        var paused = await f.H.WorkSessions.PauseAsync(
+            f.TaskId, f.WorkerId, new StopWorkDto { Comment = "Phone call" });
+        Assert.True(paused.IsSuccess);
+        Assert.Null(await f.H.WorkSessions.ActiveSessionAsync(f.WorkerId));
+
+        await f.H.WorkSessions.StartAsync(f.TaskId, f.WorkerId);
+        f.H.Clock.Advance(TimeSpan.FromMinutes(5));
+        await f.H.WorkSessions.CompleteAsync(f.TaskId, f.WorkerId, "Done.");
+
+        Assert.Null(await f.H.WorkSessions.ActiveSessionAsync(f.WorkerId));
+    }
+
+    /// <summary>
+    /// The clock is personal. One-active-per-user is a database guarantee, so "whose timer is
+    /// running" can only ever have one answer per person — and never somebody else's.
+    /// </summary>
+    [Fact]
+    public async Task One_persons_running_timer_is_never_reported_to_another()
+    {
+        var f = await AssignedAndOnShiftAsync();
+        using var _d = f.H;
+
+        await f.H.WorkSessions.StartAsync(f.TaskId, f.WorkerId);
+
+        Assert.NotNull(await f.H.WorkSessions.ActiveSessionAsync(f.WorkerId));
+        Assert.Null(await f.H.WorkSessions.ActiveSessionAsync(f.CoordinatorId));
+    }
 }
 
 public class NumberGeneratorTests

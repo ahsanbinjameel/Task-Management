@@ -1,4 +1,8 @@
 using Microsoft.EntityFrameworkCore;
+using WorkflowApp.Application.Common;
+using WorkflowApp.Application.Common.Models;
+using WorkflowApp.Application.Notifications;
+using WorkflowApp.Application.Reporting;
 using WorkflowApp.Application.Requests.Dtos;
 using WorkflowApp.Application.Tasks.Dtos;
 using WorkflowApp.Domain.Enums;
@@ -264,6 +268,85 @@ public class RequesterAcceptanceTests
 
         Assert.True(closed.IsSuccess);
         Assert.Equal(WorkTaskStatus.Closed, closed.Value!.Status);
+    }
+
+    /// <summary>
+    /// The half of §7 that lives on the *request* screen, and the one that was broken.
+    ///
+    /// The confirmation is offered by reading the task's status back onto the request, and the
+    /// view key the client used to test is the requester audience's name for it. Audience is
+    /// resolved from task permissions, so a requester who also reviews, assigns, checks or works
+    /// read their own request through the reviewer's table — where the same two statuses are
+    /// called "Ready for closure" — and was never offered the buttons.
+    ///
+    /// The client no longer reads the key, but the fact it now reads instead has to be present for
+    /// both audiences, so this asserts on the status the panel is driven from rather than on the
+    /// wording either audience sees.
+    /// </summary>
+    [Fact]
+    public async Task A_requester_who_also_coordinates_is_still_told_the_work_is_waiting_on_them()
+    {
+        var f = await AwaitingConfirmationAsync();
+        using var _d = f.H;
+
+        var requestId = await f.H.Db.Requests.Select(r => r.Id).SingleAsync();
+
+        foreach (var audience in new[] { StatusAudience.Requester, StatusAudience.Coordinator })
+        {
+            var detail = await f.H.Requests.GetAsync(requestId, audience);
+
+            Assert.Equal(WorkTaskStatus.QCPassed, detail.Value!.Progress!.TaskStatus);
+        }
+    }
+
+    /// <summary>
+    /// Passing the check is what puts the work in front of the requester. Nobody has to walk the
+    /// task on to ReadyForClosure first — that shift is a coordinator's housekeeping, and waiting
+    /// for it is what left finished work sitting on a confirmation nobody had been asked for.
+    /// </summary>
+    [Fact]
+    public async Task Passing_the_check_asks_the_requester_to_confirm_without_any_further_step()
+    {
+        var f = await AwaitingConfirmationAsync();
+        using var _d = f.H;
+
+        var task = await f.H.Db.Tasks.AsNoTracking().SingleAsync();
+        Assert.Equal(WorkTaskStatus.QCPassed, task.Status);
+
+        var inbox = await f.H.Notifications.ListAsync(f.RequesterId, unreadOnly: false, new PageQuery());
+        var ask = Assert.Single(inbox.Items, n => n.Title.Contains("confirm"));
+
+        // Points at the request, not the task: that is where the two buttons live, and a requester
+        // is never sent to the task screen.
+        Assert.Equal(NotificationService.LinkRequest, ask.LinkEntityType);
+
+        // And it is genuinely actionable from here — no ReadyForClosure step in between.
+        var confirmed = await f.H.Closure.AcceptAsync(f.TaskId, f.RequesterId, new AcceptFixDto());
+        Assert.True(confirmed.IsSuccess);
+    }
+
+    /// <summary>
+    /// The home screen half. A requester's own request is the only thing on the board that nobody
+    /// else can act on, so it is not gated on a permission.
+    /// </summary>
+    [Fact]
+    public async Task The_home_screen_tells_the_requester_the_work_is_waiting_on_their_word()
+    {
+        var f = await AwaitingConfirmationAsync();
+        using var _d = f.H;
+
+        var home = await f.H.Dashboards.HomeAsync(f.RequesterId, new HashSet<string>());
+        var row = Assert.Single(home.NeedsAttention);
+
+        Assert.Equal(AttentionSubject.Request, row.Subject);
+        Assert.Contains("confirm", row.Reason, StringComparison.OrdinalIgnoreCase);
+
+        // Nobody else is asked. The checker holds every task permission there is and still sees
+        // no row about somebody else's confirmation.
+        var checker = await f.H.Dashboards.HomeAsync(f.QCUserId, new HashSet<string>());
+        Assert.DoesNotContain(
+            checker.NeedsAttention,
+            i => i.Reason.Contains("confirm", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

@@ -301,6 +301,7 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | POST | `/api/tasks/{id}/attachments?kind=` | authenticated; `CompletionProof` assignee only, `QCEvidence` needs `Task.QCReview` |
 | GET/DELETE | `/api/attachments/{id}` | authenticated (uploader only to delete) |
 | GET | `/api/tasks`, `/api/tasks/{id}`, `/my-queue`, `/pause-reasons`, `/active-session` | authenticated |
+| | `/active-session` answers with `ActiveWorkDto` — number, title, started-at, banked-before-this-sitting — or **204** when nothing is running |
 | GET | `/api/tasks/assignment-queue`, `/assignable-users` | `Task.Assign` |
 | GET | `/api/tasks/{id}/assignment-candidates` | `Task.Assign` |
 | GET | `/api/tasks/workload` | `Workforce.ViewAll` |
@@ -390,6 +391,7 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | `src/app/core/navigation.ts` | **The sidebar as the user's job.** Six groups; the queues are *views inside* them, not destinations. Read by the rail and by `app-view-tabs`, so the two cannot disagree |
 | `src/app/core/parked.ts` | `PARKED` — capabilities built, kept and deliberately not offered (PRODUCT-CORE §10). Flipping one back to `false` is the whole decision |
 | `src/app/core/format.ts` | TimeSpan parsing, `sinceLabel` ("3 days"), status→tone mapping, CSV/blob download |
+| `src/app/core/work-timer.service.ts` | **The worker's running clock — one for the whole app.** Holds what is running, ticks once a second *only while something is*, and is kept in step by `adopt(task)` off any response the caller's own action returned. `formatClock` lives here so no two screens format the same number differently |
 | `src/app/shared/` | Chips, stats, empty/loading states, the standard grid, the shared task table, confirm + reason dialogs |
 | `src/app/shared/search-select.component.ts` | `app-search-select` — **the** dropdown. Type-to-filter, single or multi (chips). Works with `ngModel` and `formControlName`; `enumOptions()` builds the options for enum lists |
 | `src/app/shared/data-grid.component.ts` | **`app-data-grid` — the one grid.** Every list in the app is one of these. Owns the card, the scroll wrapper, the header, the generated filter row, the sortable headings, the dimmed reload, the empty state, the "nothing matches" strip and the paginator. A screen declares `GridColumn[]` and, for anything richer than text, an `<ng-template gridCell="key">`. `mode="local"` filters and sorts in place for a grid that arrived whole |
@@ -404,6 +406,7 @@ running the API instead (`--launch-profile Development`), which does load user-s
 | `src/app/shared/attachment-upload.component.ts` | `app-attachment-upload` — the same three ways in, but straight onto a record that already exists. Carries the `kind`, and takes **exactly one** of `taskId`/`verificationId`, mirroring the server's owner rule |
 | `src/app/layout/` | Shell, permission-filtered nav, notification bell, shift widget, quick-work widget (live clock) |
 | `src/app/layout/demo-switcher.component.ts` | The header control shown only during a demonstration: change who is being shown, reset, leave |
+| `src/app/layout/work-timer-widget.component.ts` | The running clock in the top bar. Shows and does not act — clicking goes to the task, where the stop controls already live |
 | `src/app/layout/nav-preference.ts` | The sidebar-rail preference. Shared, because both the rail's toggle and the Settings page write it |
 | `src/app/features/` | One folder per area: dashboard, tasks (+ `panels/`), requests (incl. `batch-detail`), qc, verifications, workforce, reports, admin, me |
 | `src/app/features/verifications/` | The checks list — `app-data-grid` in `mode="local"`, which is correct here because the whole set is loaded in one call. Plus the detail where a checker takes it and reports, and the dialogs that raise and assign |
@@ -629,6 +632,64 @@ running the API instead (`--launch-profile Development`), which does load user-s
   nowhere left to look. Covered by `A_reviewers_request_follows_the_task_past_approval`,
   `Approved_view_lists_the_same_requests_the_tile_counts_for_a_reviewer` and
   `A_requester_who_also_works_still_sees_their_request_follow_the_task`.
+- **The requester's confirmation is offered on the task's status, never on a view key.** The two
+  buttons on the request screen tested `viewKey === 'confirm'` — which is the *requester audience's*
+  name for `QCPassed`/`ReadyForClosure`. Audience is resolved from **task** permissions, not from
+  who raised the request, so anyone who also reviews, assigns, checks or works read their own
+  request through `ReviewerViews`, where those same two statuses are called `passed` / "Ready for
+  closure", and the buttons never appeared at all. The work then sat finished, waiting on a
+  confirmation the only person entitled to give it was never offered — and no amount of moving the
+  task on to Ready for Closure helped, because the label was already the reviewer's. Exactly the
+  fault documented above for the frozen "Approved" request, and the same fix: an
+  audience-independent fact is not derived from an audience-shaped label. `canConfirm` now reads
+  `progress.taskStatus` against the two statuses `ClosureService.GuardRequesterAsync` accepts.
+- **Passing the quality check is what asks the requester, and it asks them itself.** `QCService`
+  notified only the assignee, so a pass put the request into "Ready for Confirmation" and told
+  nobody — the requester found out when somebody messaged them, which is the last hop of the relay
+  §7 exists to remove. A pass now raises a notification addressed to the requester and pointing at
+  their **request** (never the task — a requester is not sent to the task screen), and
+  `DashboardService.HomeAsync` carries a matching needs-attention row. That row is deliberately
+  **not** gated on a permission: whether the thing is really fixed is not a question authority
+  answers, so it appears for whoever raised the request and for nobody else. Both key off
+  `QCPassed` rather than `ReadyForClosure` — that step is a coordinator's housekeeping, the server
+  has always accepted a confirmation from `QCPassed`, and `CloseAsync` walks the remaining hop in
+  the same commit. Pinned by three tests in `RequesterAcceptanceTests`.
+- **The timer is core, so it is visible while it runs.** Start/Pause/Complete has always been
+  `KEEP (core)` in PRODUCT-CORE §10, but nothing on screen moved while a session was open: the only
+  evidence was a bolt icon on a queue row, and "Time logged" is built from
+  `TaskQueryService.TotalWorked`, which sums **ended** sessions only — so the one number a worker
+  wanted, *how long have I been on this*, was the one number no screen showed, and it under-reported
+  by exactly the sitting they were in. A running clock now sits in the top bar on every screen, on
+  the task detail beside the controls, and on the My Queue row. The top bar is the load-bearing one:
+  the failure this prevents — a session left going through lunch, a meeting, the afternoon — happens
+  precisely while the worker is looking at something else, so a clock that only exists on the task
+  you have open cannot catch it.
+- **One clock, one interval, adopted rather than re-fetched** (`core/work-timer.service.ts`). Three
+  components rendering their own `setInterval` would drift apart within a minute and would each need
+  a copy of the fetch, the realtime subscription and the teardown. So there is a single service: it
+  ticks **only while something is running** (an effect starts and clears the interval, so an idle
+  tab is not waking change detection every second forever), and `adopt(task)` reads the answer off
+  the `TaskDetailDto` that start / pause / block / complete already return — asking the server what
+  we just told it costs a round trip during which the clock says the wrong thing. The task detail
+  calls `adopt` from an **effect on its `task` signal** rather than at each of the eight call sites,
+  which is what stops the ninth action being the one that forgets. A `taskChanged` for the caller's
+  own task triggers a re-fetch (never a patch — the payload is a pointer), and that is what keeps a
+  second tab honest: one-active-session means starting work anywhere stops the clock everywhere.
+- **The widget shows and does not act.** Clicking it goes to the task; Pause, Blocked and Complete
+  stay where they already are, with their confirmations, their reason dialogs and the shift
+  handling. Stop controls in the top bar would be a second implementation of stopping work — the
+  same trap My Queue avoids by routing Start through the task detail with `?start=1`.
+- **`ActiveWorkDto`, not `WorkSessionDto`, on `/api/tasks/active-session`.** The session record is
+  the right shape *inside* a task, where the task is already on screen, and useless on its own: a
+  top-bar clock cannot say what is running from a task id. So the number and title travel with it,
+  along with what the task had banked before this sitting — and `PreviouslyLogged` deliberately
+  **excludes** the running session, because that half is what the browser is ticking and adding it
+  server-side would freeze it at whatever the clock said when the response was serialised. The old
+  shape had no consumer, so nothing had to be migrated.
+- **The live clock is only ever the reader's own.** My Queue is the caller's own work, so the shared
+  timer is necessarily theirs and no row needs its own fetch — which is why `TaskSummaryDto` gained
+  nothing. On the general task list, where a running session may be somebody else's, the bolt icon
+  stays: a clock there would be either wrong or a per-row query.
 - **A chip tone must name a colour the palette actually defines.** `styles.scss` generates
   `.chip.tone-*` from `(neutral, running, good, warn, danger, review, done, muted)`. The request
   list's `tone()` returned `'success'` for completed requests — no such rule exists, so it painted
@@ -1354,7 +1415,7 @@ capabilities. Both are client-only — no endpoint, permission, guard, route or 
 nothing was deleted. Steps 3–7 (My Tasks, requester acceptance, assignment, the ERP catalog at
 triage, fast multi-point intake) are still to come.
 
-**Tests:** 442 passing (`dotnet test`) — 29 domain state machines, 413 application services.
+**Tests:** 448 passing (`dotnet test`) — 29 domain state machines, 419 application services.
 All on EF Core InMemory or pure functions, so the suite runs with no SQL Server.
 
 ## 9. SQL Server: done and still outstanding
